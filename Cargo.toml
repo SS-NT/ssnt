@@ -1,0 +1,14 @@
+[package]
+name = "ssnt"
+version = "0.1.0"
+authors = ["Alain Siegrist <alainsiegrist02@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bevy = { version = "0.5", features = ["dynamic"] }
+nom = "6.1.2"
+cfg-if = "1.0.0"
+anyhow = "1.0.40"
+bevy_reflect = "0.5.0"

@@ -42,15 +42,26 @@ fn create_tile_data(
     map: &mut MapData,
     turf_definitions: &mut DefinitionLookup,
 ) -> Option<TileData> {
-    let object = tile
+    let turf_name = tile
         .components
         .iter()
-        .find(|o| o.path.starts_with("/turf"))?;
-    let turf_name = match object.path.strip_prefix("/turf/")? {
-        "closed/wall" => "wall",
-        "closed/wall/r_wall" => "reinforced wall",
-        _ => None?,
-    };
+        .map(|o| {
+            let priority = if o.path.starts_with("/obj") {
+                1
+            } else {
+                0
+            };
+            let name = match o.path.as_str() {
+                "/turf/closed/wall" => "wall",
+                "/turf/closed/wall/r_wall" => "reinforced wall",
+                "/obj/structure/grille" => "grille",
+                "/obj/effect/spawner/structure/window" => "window",
+                "/obj/effect/spawner/structure/window/reinforced" => "reinforced window",
+                _ => return None,
+            };
+            Some((priority, name))
+        }).flatten().max_by_key(|x| x.0)?.1;
+    
     let definition_id = *turf_definitions.entry(&turf_name).or_insert_with(|| {
         map.insert_turf_definition(TurfDefinition {
             name: turf_name.into(),

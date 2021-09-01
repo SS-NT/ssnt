@@ -1,7 +1,13 @@
 use crate::maps::spawning::{apply_chunk, despawn_chunk};
 
-use super::{components::*, spawning::SpawnedChunk, CHUNK_SIZE};
-use bevy::{math::{UVec2, Vec2, Vec3, Vec3Swizzles}, prelude::{Assets, Commands, Entity, GlobalTransform, Mesh, Query, ResMut, StandardMaterial, Transform, info}};
+use super::{components::*, CHUNK_SIZE};
+use bevy::{
+    math::{UVec2, Vec2, Vec3, Vec3Swizzles},
+    prelude::{
+        AssetServer, Assets, Commands, Entity, GlobalTransform, Query, Res, ResMut,
+        StandardMaterial, Transform,
+    },
+};
 
 fn absolute_tilemap_position(position: UVec2, tilemap_transform: &GlobalTransform) -> Vec3 {
     tilemap_transform.mul_vec3(Vec3::new(position.x as f32, 0.0, position.y as f32))
@@ -17,7 +23,8 @@ fn chunk_corners(map_size: UVec2, tilemap_transform: &GlobalTransform) -> (Vec2,
         )
         .xz(),
         absolute_tilemap_position(
-            UVec2::new(map_size.x - 1, map_size.y - 1) * chunk_size + UVec2::new(CHUNK_SIZE, CHUNK_SIZE),
+            UVec2::new(map_size.x - 1, map_size.y - 1) * chunk_size
+                + UVec2::new(CHUNK_SIZE, CHUNK_SIZE),
             tilemap_transform,
         )
         .xz(),
@@ -32,7 +39,8 @@ fn chunk_corners(map_size: UVec2, tilemap_transform: &GlobalTransform) -> (Vec2,
 fn line_intersects_circle(start: Vec2, end: Vec2, circle: Vec2, radius: f32) -> bool {
     let start_relative = start - circle;
     let end_relative = end - circle;
-    let a = (end_relative.x - start_relative.x).powi(2) + (end_relative.y - start_relative.y).powi(2);
+    let a =
+        (end_relative.x - start_relative.x).powi(2) + (end_relative.y - start_relative.y).powi(2);
     let b = 2.0
         * (start_relative.x * (end_relative.x - start_relative.x)
             + start_relative.y * (end_relative.y - start_relative.y));
@@ -86,7 +94,7 @@ pub fn tilemap_observer_check(
     mut tilemaps: Query<(&mut TileMap, &GlobalTransform, Entity)>,
     observers: Query<(&TileMapObserver, &Transform)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    asset_server: Res<AssetServer>,
 ) {
     for (observer, observer_transform) in observers.iter() {
         let observer_position = observer_transform.translation.xz();
@@ -123,11 +131,9 @@ pub fn tilemap_observer_check(
                                 &tilemap.data,
                                 tilemap_entity,
                                 &mut materials,
-                                &mut meshes
+                                &asset_server,
                             );
-                            tilemap
-                                .spawned_chunks
-                                .insert(position, spawned);
+                            tilemap.spawned_chunks.insert(position, spawned);
                         }
                     } else if is_spawned {
                         let spawned_chunk = tilemap.spawned_chunks.remove(&position);

@@ -21,6 +21,11 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugin(FlyCameraPlugin)
+        .insert_resource(ClearColor(Color::rgb(
+            44.0 / 255.0,
+            68.0 / 255.0,
+            107.0 / 255.0,
+        )))
         .add_asset::<byond::tgm::TileMap>()
         .add_asset_loader(TgmLoader)
         .add_startup_system(setup.system())
@@ -58,7 +63,11 @@ fn setup(
         ..Default::default()
     });
 
-    //commands.spawn().insert(DirectionalLight::default());
+    commands.spawn().insert(DirectionalLight::new(
+        Color::rgb(1.0, 1.0, 1.0),
+        5000.0,
+        Vec3::new(0.2, -0.8, 0.0),
+    ));
 
     commands
         .spawn_bundle(PerspectiveCameraBundle {
@@ -117,8 +126,11 @@ fn create_tilemap_from_converted(
 ) {
     for (entity, mut map_task) in map_tasks.iter_mut() {
         if let Some(map_data) = future::block_on(future::poll_once(&mut *map_task)) {
-            camera.single_mut().unwrap().translation = 
-             Vec3::new(map_data.spawn_position.x as f32, 0.0, map_data.spawn_position.y as f32);
+            camera.single_mut().unwrap().translation = Vec3::new(
+                map_data.spawn_position.x as f32,
+                0.0,
+                map_data.spawn_position.y as f32,
+            );
             commands
                 .entity(entity)
                 .remove::<Task<MapData>>()

@@ -1,6 +1,6 @@
 use bevy::{
     math::UVec2,
-    prelude::{Commands, Entity, Query, RemovedComponents},
+    prelude::{Entity, Query, RemovedComponents},
     utils::HashMap,
 };
 
@@ -24,35 +24,35 @@ impl Container {
     }
 
     pub fn remove_item(&mut self, entity: Entity) {
-        let entry = self.items.iter().filter(|(_, v)| v == &&entity).next();
+        let entry = self.items.iter().find(|(_, v)| v == &&entity);
         if let Some((&k, _)) = entry {
             self.items.remove(&k);
         }
     }
 }
 
-pub type ContainerQuery<'a> = Query<'a, (&'static Item,)>;
+pub type ContainerQuery<'world, 'state> = Query<'world, 'state, (&'static Item,)>;
 
-pub struct ContainerItemIterator<'a, 'b: 'a> {
-    query: &'a ContainerQuery<'b>,
+pub struct ContainerItemIterator<'a, 'world: 'a, 'state: 'a> {
+    query: &'a ContainerQuery<'world, 'state>,
     inner_iter: std::collections::hash_map::Iter<'a, UVec2, Entity>,
 }
 
-impl<'a, 'b> Iterator for ContainerItemIterator<'a, 'b> {
+impl<'a, 'world, 'state> Iterator for ContainerItemIterator<'a, 'world, 'state> {
     type Item = (&'a UVec2, &'a Item);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let entry = self.inner_iter.next()?;
-            if let Ok((item,)) = self.query.get(entry.1.clone()) {
+            if let Ok((item,)) = self.query.get(*entry.1) {
                 return Some((entry.0, item));
             }
         }
     }
 }
 
-impl<'a, 'b> From<&ContainerAccessor<'a, 'b>> for ContainerItemIterator<'a, 'b> {
-    fn from(accessor: &ContainerAccessor<'a, 'b>) -> Self {
+impl<'a, 'world, 'state> From<&ContainerAccessor<'a, 'world, 'state>> for ContainerItemIterator<'a, 'world, 'state> {
+    fn from(accessor: &ContainerAccessor<'a, 'world, 'state>) -> Self {
         Self {
             query: accessor.query,
             inner_iter: accessor.container.items.iter(),
@@ -60,13 +60,13 @@ impl<'a, 'b> From<&ContainerAccessor<'a, 'b>> for ContainerItemIterator<'a, 'b> 
     }
 }
 
-pub struct ContainerAccessor<'a, 'b: 'a> {
+pub struct ContainerAccessor<'a, 'world, 'state> {
     container: &'a Container,
-    query: &'a ContainerQuery<'b>,
+    query: &'a ContainerQuery<'world, 'state>,
 }
 
-impl<'a, 'b> ContainerAccessor<'a, 'b> {
-    pub fn new(container: &'a Container, query: &'a ContainerQuery<'b>) -> Self {
+impl<'a, 'world, 'state> ContainerAccessor<'a, 'world, 'state> {
+    pub fn new(container: &'a Container, query: &'a ContainerQuery<'world, 'state>) -> Self {
         Self { container, query }
     }
 
@@ -92,27 +92,23 @@ impl<'a, 'b> ContainerAccessor<'a, 'b> {
     }
 }
 
-pub struct ContainerWriter<'a> {
+pub struct ContainerWriter<'a, 'world, 'state> {
     container: &'a mut Container,
     entity: Entity,
-    query: &'a ContainerQuery<'a>,
+    query: &'a ContainerQuery<'world, 'state>,
 }
 
-impl<'a> ContainerWriter<'a> {
+impl<'a, 'world, 'state> ContainerWriter<'a, 'world, 'state> {
     pub fn new(
         container: &'a mut Container,
         entity: Entity,
-        query: &'a ContainerQuery<'a>,
+        query: &'a ContainerQuery<'world, 'state>,
     ) -> Self {
-        Self {
-            container,
-            query,
-            entity,
-        }
+        Self { container, entity, query }
     }
 
-    pub fn insert_item<'b>(&'a mut self, item: &mut Item, item_entity: Entity, position: UVec2) {
-        if !ContainerAccessor::new(self.container, self.query.clone()).can_fit(item, position) {
+    pub fn insert_item(&'a mut self, item: &mut Item, item_entity: Entity, position: UVec2) {
+        if !ContainerAccessor::new(self.container, self.query).can_fit(item, position) {
             return;
         }
 

@@ -6,7 +6,7 @@ use nom::{branch::alt, bytes::complete::tag, character::complete::{multispace0, 
 
 type IResult<I, O, E = VerboseError<I>> = nom::IResult<I, O, E>;
 
-pub fn parse(input: &str) -> IResult<&str, (HashMap<&str, Tile>, Vec<(UVec3, &str)>)> {
+pub fn parse(input: &str) -> IResult<&str, (Vec<(&str, Tile)>, Vec<(UVec3, &str)>)> {
     pair(ws(tile_definitions), ws(chunk_definitions))(input)
 }
 
@@ -22,9 +22,9 @@ fn chunk_definition(input: &str) -> IResult<&str, (UVec3, &str)> {
                 (
                     UVec3::new(
                         // TODO: don't crash if there's not 3 coords -_-
-                        floats.get(0).unwrap().clone() as u32,
-                        floats.get(1).unwrap().clone() as u32,
-                        floats.get(2).unwrap().clone() as u32,
+                        *floats.get(0).unwrap() as u32,
+                        *floats.get(1).unwrap() as u32,
+                        *floats.get(2).unwrap() as u32,
                     ),
                     name,
                 ),
@@ -33,12 +33,13 @@ fn chunk_definition(input: &str) -> IResult<&str, (UVec3, &str)> {
     )
 }
 
-pub fn tile_definitions(input: &str) -> IResult<&str, HashMap<&str, Tile>> {
+pub fn tile_definitions(input: &str) -> IResult<&str, Vec<(&str, Tile)>> {
     ws(fold_many1(
         ws(tile_definition),
-        HashMap::default(),
+        Vec::default(),
         |mut map, (key, tile)| {
-            map.insert(key, tile);
+            // We assume each tile definition is unique
+            map.push((key, tile));
             map
         },
     ))(input)

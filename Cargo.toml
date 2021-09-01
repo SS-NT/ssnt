@@ -8,7 +8,11 @@ edition = "2018"
 
 [dependencies]
 bevy = { version = "0.5", features = ["dynamic"] }
+bevy_fly_camera = { git = "https://github.com/aloucks/bevy_fly_camera", branch = "bevy_main" }
 nom = "6.1.2"
 cfg-if = "1.0.0"
 anyhow = "1.0.40"
-bevy_reflect = "0.5.0"
+futures-lite = "1.4.0"
+
+[patch.crates-io]
+bevy = { git = "https://github.com/bevyengine/bevy" }

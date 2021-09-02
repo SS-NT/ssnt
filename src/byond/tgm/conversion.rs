@@ -63,9 +63,7 @@ fn create_tile_data(
         }).flatten().max_by_key(|x| x.0)?.1;
     
     let definition_id = *turf_definitions.entry(&turf_name).or_insert_with(|| {
-        map.insert_turf_definition(TurfDefinition {
-            name: turf_name.into(),
-        })
+        map.insert_turf_definition(TurfDefinition::new(turf_name))
     });
     Some(TileData {
         turf: Some(TurfData { definition_id }),

@@ -1,13 +1,80 @@
-use crate::maps::spawning::{apply_chunk, despawn_chunk};
+use super::{CHUNK_SIZE, MapData, components::*, events::*, spawning::{apply_chunk, despawn_chunk}};
+use bevy::{math::{UVec2, Vec2, Vec3, Vec3Swizzles}, prelude::{Added, AssetServer, Assets, Commands, Entity, EventReader, EventWriter, GlobalTransform, Query, Res, ResMut, StandardMaterial, Transform}};
 
-use super::{components::*, CHUNK_SIZE};
-use bevy::{
-    math::{UVec2, Vec2, Vec3, Vec3Swizzles},
-    prelude::{
-        AssetServer, Assets, Commands, Entity, GlobalTransform, Query, Res, ResMut,
-        StandardMaterial, Transform,
-    },
-};
+pub fn tilemap_mesh_loading_system(
+    mut tilemaps: Query<&mut TileMap, Added<TileMap>>,
+    asset_server: Res<AssetServer>,
+) {
+    for mut tilemap in tilemaps.iter_mut() {
+        for definition in tilemap
+            .data
+            .turf_definitions
+            .iter_mut()
+            .filter(|d| d.mesh.is_none())
+        {
+            definition.mesh = Some(match definition.name.as_str() {
+                "wall" => asset_server
+                    .load("models/tilemap/walls windows.glb#Mesh29/Primitive0")
+                    .into(),
+                "reinforced wall" => asset_server
+                    .load("models/tilemap/walls windows.glb#Mesh24/Primitive0")
+                    .into(),
+                "grille" => asset_server
+                    .load("models/tilemap/girders.glb#Mesh1/Primitive0")
+                    .into(),
+                "window" => asset_server
+                    .load("models/tilemap/walls windows.glb#Mesh22/Primitive0")
+                    .into(),
+                "reinforced window" => asset_server
+                    .load("models/tilemap/walls windows.glb#Mesh39/Primitive0")
+                    .into(),
+                _ => continue,
+            });
+        }
+    }
+}
+
+pub fn tilemap_spawning_system(
+    mut commands: Commands,
+    mut tilemaps: Query<(&mut TileMap, Entity)>,
+    mut added_event: EventReader<ChunkObserverAddedEvent>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for event in added_event.iter() {
+        let (mut tilemap, tilemap_entity) = match tilemaps.get_mut(event.tilemap_entity) {
+            Ok(map) => map,
+            Err(_) => continue,
+        };
+        let chunk_index = event.chunk_index;
+        if tilemap.spawned_chunks.contains_key(&chunk_index) {
+            continue;
+        }
+
+        let spawned = apply_chunk(&mut commands, None, chunk_index, &tilemap.data, tilemap_entity, &mut materials);
+        tilemap.spawned_chunks.insert(chunk_index, spawned);
+    }
+}
+
+pub fn tilemap_despawning_system(
+    mut commands: Commands,
+    mut tilemaps: Query<&mut TileMap>,
+    mut removed_event: EventReader<ChunkObserverRemovedEvent>,
+) {
+    for event in removed_event.iter() {
+        let mut tilemap = match tilemaps.get_mut(event.tilemap_entity) {
+            Ok(map) => map,
+            Err(_) => continue,
+        };
+        let chunk_index = event.chunk_index;
+        // TODO: Check if any other observer is still observing the chunk
+        let spawned_chunk = match tilemap.spawned_chunks.remove(&chunk_index) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        despawn_chunk(&mut commands, spawned_chunk);
+    }
+}
 
 fn absolute_tilemap_position(position: UVec2, tilemap_transform: &GlobalTransform) -> Vec3 {
     tilemap_transform.mul_vec3(Vec3::new(position.x as f32, 0.0, position.y as f32))
@@ -89,24 +156,23 @@ fn rect_intersects_circle(a: Vec2, b: Vec2, c: Vec2, d: Vec2, circle: Vec2, radi
         || line_intersects_circle(d, a, circle, radius)
 }
 
-pub fn tilemap_observer_check(
-    mut commands: Commands,
-    mut tilemaps: Query<(&mut TileMap, &GlobalTransform, Entity)>,
-    observers: Query<(&TileMapObserver, &Transform)>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    asset_server: Res<AssetServer>,
+pub fn tilemap_observer_system(
+    tilemaps: Query<(&TileMap, &GlobalTransform, Entity)>,
+    mut observers: Query<(&mut TileMapObserver, &Transform, Entity)>,
+    mut added_event: EventWriter<ChunkObserverAddedEvent>,
+    mut removed_event: EventWriter<ChunkObserverRemovedEvent>,
 ) {
-    for (observer, observer_transform) in observers.iter() {
+    for (mut observer, observer_transform, observer_entity) in observers.iter_mut() {
         let observer_position = observer_transform.translation.xz();
         let range = observer.view_range;
-        for (mut tilemap, tilemap_transform, tilemap_entity) in tilemaps.iter_mut() {
+        for (tilemap, tilemap_transform, tilemap_entity) in tilemaps.iter() {
             let map_size = tilemap.data.size();
             let (a, b, c, d) = chunk_corners(map_size, tilemap_transform);
             if rect_intersects_circle(a, b, c, d, observer_position, range) {
-                let tilemap = tilemap.into_inner();
-                for (position, chunk) in tilemap.data.iter_chunks() {
-                    let is_spawned = tilemap.spawned_chunks.contains_key(&position);
+                for (index, _) in tilemap.data.iter_chunks() {
+                    let is_observed = observer.observing_chunk(tilemap_entity, index);
 
+                    let position = MapData::position_from_chunk_index(tilemap.data.size, index);
                     let x_offset = (CHUNK_SIZE * position.x) as f32;
                     let y_offset = (CHUNK_SIZE * position.y) as f32;
                     let offset = (tilemap_transform.local_x()
@@ -118,32 +184,33 @@ pub fn tilemap_observer_check(
                     b += offset;
                     c += offset;
                     d += offset;
-                    //println!("Corners: a={} b={} c={} d={}", a, b, c, d);
 
                     if rect_intersects_circle(a, b, c, d, observer_position, range) {
-                        if !is_spawned && !tilemap.spawning_chunks.contains_key(&position) {
-                            // TODO: Spawn chunk
-                            let spawned = apply_chunk(
-                                &mut commands,
-                                None,
-                                chunk,
-                                position,
-                                &tilemap.data,
+                        if !is_observed {
+                            observer.observe_chunk(tilemap_entity, index);
+                            added_event.send(ChunkObserverAddedEvent {
                                 tilemap_entity,
-                                &mut materials,
-                                &asset_server,
-                            );
-                            tilemap.spawned_chunks.insert(position, spawned);
+                                observer: observer_entity,
+                                chunk_index: index,
+                            });
                         }
-                    } else if is_spawned {
-                        let spawned_chunk = tilemap.spawned_chunks.remove(&position);
-                        despawn_chunk(&mut commands, spawned_chunk.unwrap());
+                    } else if is_observed {
+                        observer.remove_chunk(tilemap_entity, index);
+                        removed_event.send(ChunkObserverRemovedEvent {
+                            tilemap_entity,
+                            observer: observer_entity,
+                            chunk_index: index,
+                        });
                     }
                 }
-            } else {
-                for (_, chunk) in tilemap.spawned_chunks.drain() {
-                    despawn_chunk(&mut commands, chunk);
-                }
+            } else if let Some(chunks) = observer.remove_tilemap(tilemap_entity) {
+                removed_event.send_batch(chunks.iter().map(|&index| {
+                    ChunkObserverRemovedEvent {
+                        tilemap_entity,
+                        observer: observer_entity,
+                        chunk_index: index,
+                    }
+                }));
             }
         }
     }

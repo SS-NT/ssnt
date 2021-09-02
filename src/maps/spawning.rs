@@ -1,9 +1,11 @@
-use super::{Chunk, MapData, TileData, TurfData, CHUNK_LENGTH, CHUNK_SIZE};
+use crate::maps::TurfMesh;
+
+use super::{MapData, TileData, TurfData, CHUNK_LENGTH, CHUNK_SIZE};
 use bevy::{
     math::{UVec2, Vec3},
     pbr::PbrBundle,
     prelude::{
-        AssetServer, Assets, BuildChildren, Color, Commands, DespawnRecursiveExt, Entity, ResMut,
+        warn, Assets, BuildChildren, Color, Commands, DespawnRecursiveExt, Entity, ResMut,
         StandardMaterial, Transform,
     },
 };
@@ -31,13 +33,13 @@ pub struct SpawnedTile {
 pub fn apply_chunk(
     commands: &mut Commands,
     spawned_chunk: Option<SpawnedChunk>,
-    data: &Chunk,
-    chunk_position: UVec2,
+    chunk_index: usize,
     map_data: &MapData,
     tilemap_entity: Entity,
     materials: &mut ResMut<Assets<StandardMaterial>>,
-    asset_server: &AssetServer,
 ) -> SpawnedChunk {
+    let chunk_position = MapData::position_from_chunk_index(map_data.size, chunk_index);
+    let data = map_data.chunk(chunk_index).unwrap();
     let changed_indicies: Vec<usize> = match spawned_chunk {
         Some(_) => data
             .changed_tiles
@@ -69,15 +71,21 @@ pub fn apply_chunk(
             let turf_definition = map_data
                 .turf_definition(turf_data.definition_id)
                 .expect("Turf definition must be present if referenced by a tile");
-            let turf_mesh_name = match turf_definition.name.as_str() {
-                "wall" => "models/tilemap/walls windows.glb#Mesh29/Primitive0",
-                "reinforced wall" => "models/tilemap/walls windows.glb#Mesh24/Primitive0",
-                "grille" => "models/tilemap/girders.glb#Mesh1/Primitive0",
-                "window" => "models/tilemap/walls windows.glb#Mesh22/Primitive0",
-                "reinforced window" => "models/tilemap/walls windows.glb#Mesh39/Primitive0",
-                _ => panic!("Unknown turf definition name"),
+            let turf_mesh = match turf_definition.mesh.as_ref() {
+                Some(m) => m,
+                None => {
+                    warn!(
+                        "Mesh handle for turf {} is not available",
+                        turf_definition.name
+                    );
+                    continue;
+                }
             };
-            let turf_mesh = asset_server.load(turf_mesh_name);
+            let mesh_handle = match turf_mesh {
+                TurfMesh::Single(m) => m,
+                _ => todo!(),
+            }
+            .clone();
             let spawned_turf = &mut spawned_tile
                 .get_or_insert_with(Default::default)
                 .spawned_turf;
@@ -88,7 +96,7 @@ pub fn apply_chunk(
                         ..Default::default()
                     });
                     commands.entity(*entity).insert_bundle(PbrBundle {
-                        mesh: turf_mesh,
+                        mesh: mesh_handle,
                         material: wall_material_handle,
                         transform: Transform::from_translation(tile_position),
                         ..Default::default()
@@ -101,7 +109,7 @@ pub fn apply_chunk(
                 });
                 let turf = commands
                     .spawn_bundle(PbrBundle {
-                        mesh: turf_mesh,
+                        mesh: mesh_handle,
                         material: wall_material_handle,
                         transform: Transform::from_translation(tile_position),
                         ..Default::default()

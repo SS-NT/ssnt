@@ -21,6 +21,8 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugin(FlyCameraPlugin)
+        .add_event::<maps::events::ChunkObserverAddedEvent>()
+        .add_event::<maps::events::ChunkObserverRemovedEvent>()
         .insert_resource(ClearColor(Color::rgb(
             44.0 / 255.0,
             68.0 / 255.0,
@@ -31,14 +33,15 @@ fn main() {
         .add_startup_system(setup.system())
         .add_startup_system(load_map.system())
         .add_startup_system(test_containers.system())
-        /*.add_system_set(
-            SystemSet::new()
-                .with_run_criteria(FixedTimestep::steps_per_second(1f64))
-                .with_system(print_containers.system()),
-        )*/
-        //.add_system(create_map_models.system())
         .add_system(cleanup_removed_items_system.system())
-        .add_system(maps::systems::tilemap_observer_check)
+        .add_system(maps::systems::tilemap_observer_system.label("tilemap observer"))
+        .add_system(maps::systems::tilemap_mesh_loading_system.label("tilemap mesh loading"))
+        .add_system(
+            maps::systems::tilemap_spawning_system
+                .after("tilemap observer")
+                .after("tilemap mesh loading"),
+        )
+        .add_system(maps::systems::tilemap_despawning_system.after("tilemap observer"))
         .add_system(convert_tgm_map)
         .add_system(create_tilemap_from_converted)
         .run();
@@ -75,7 +78,7 @@ fn setup(
             ..Default::default()
         })
         .insert(MainCamera)
-        .insert(TileMapObserver { view_range: 20.0 })
+        .insert(TileMapObserver::new(20.0))
         .insert(FlyCamera::default());
 }
 

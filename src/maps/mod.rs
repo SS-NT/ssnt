@@ -1,6 +1,10 @@
-use bevy::{math::UVec2, prelude::Entity, tasks::Task};
+use bevy::{
+    math::UVec2,
+    prelude::{Handle, Mesh},
+};
 
 pub mod components;
+pub mod events;
 mod spawning;
 pub mod systems;
 
@@ -28,39 +32,45 @@ impl MapData {
         self.size
     }
 
-    pub fn iter_chunks(&self) -> impl Iterator<Item = (UVec2, &Chunk)> {
+    pub fn iter_chunks(&self) -> impl Iterator<Item = (usize, &Chunk)> {
         self.chunks
             .iter()
             .enumerate()
-            .map(move |(i, c)| {
-                let y = i as u32 / self.size.x;
-                let x = match y {
-                    0 => i as u32,
-                    _ => i as u32 % (y * self.size.x),
-                };
-                (UVec2::new(x, y), c)
-            })
             .filter_map(|(i, x)| x.as_ref().map(|x| (i, x.as_ref())))
+    }
+
+    pub fn chunk(&self, index: usize) -> Option<&Chunk> {
+        self.chunks.get(index)?.as_deref()
     }
 
     pub fn chunk_at(&self, position: UVec2) -> Option<&Chunk> {
         let index = self.index_from_chunk_position(position);
-        self.chunks.get(index)?.as_deref()
+        self.chunk(index)
+    }
+
+    pub fn chunk_mut(&mut self, index: usize) -> Option<&mut Option<Box<Chunk>>> {
+        self.chunks.get_mut(index)
     }
 
     pub fn chunk_at_mut(&mut self, position: UVec2) -> Option<&mut Option<Box<Chunk>>> {
         let index = self.index_from_chunk_position(position);
-        self.chunks.get_mut(index)
+        self.chunk_mut(index)
     }
 
     pub fn iter_tiles(&self) -> impl Iterator<Item = (UVec2, &TileData)> {
         self.iter_chunks()
-            .map(|(p, c)| (p * UVec2::new(CHUNK_SIZE, CHUNK_SIZE), c))
+            .map(move |(p, c)| {
+                (
+                    Self::position_from_chunk_index(self.size, p)
+                        * UVec2::new(CHUNK_SIZE, CHUNK_SIZE),
+                    c,
+                )
+            })
             .flat_map(|(p, c)| {
                 c.tiles
                     .iter()
                     .enumerate()
-                    .filter(|(i, t)| t.is_some())
+                    .filter(|(_, t)| t.is_some())
                     .map(move |(i, t)| {
                         let y = i as u32 / CHUNK_SIZE;
                         let x = match y {
@@ -113,8 +123,17 @@ impl MapData {
         self.index_from_chunk_position(chunk_position)
     }
 
-    fn index_from_chunk_position(&self, position: UVec2) -> usize {
+    pub fn index_from_chunk_position(&self, position: UVec2) -> usize {
         (position.y * self.size.x + position.x) as usize
+    }
+
+    pub fn position_from_chunk_index(size: UVec2, index: usize) -> UVec2 {
+        let y = index as u32 / size.x;
+        let x = match y {
+            0 => index as u32,
+            _ => index as u32 % (y * size.x),
+        };
+        UVec2::new(x, y)
     }
 
     pub fn insert_turf_definition(&mut self, definition: TurfDefinition) -> u32 {
@@ -170,8 +189,47 @@ impl Chunk {
 }
 
 #[derive(Clone)]
+pub enum TurfMesh {
+    Single(Handle<Mesh>),
+    Multiple(TurfMeshes),
+}
+
+impl From<Handle<Mesh>> for TurfMesh {
+    fn from(handle: Handle<Mesh>) -> Self {
+        Self::Single(handle)
+    }
+}
+
+#[derive(Clone)]
+pub struct TurfMeshes {
+    pub default: Handle<Mesh>,
+    // No neighbours
+    pub o: Handle<Mesh>,
+    // Connected north
+    pub u: Handle<Mesh>,
+    // Connected north & south
+    pub i: Handle<Mesh>,
+    // Connected north & east
+    pub l: Handle<Mesh>,
+    // Connected north & east & west
+    pub t: Handle<Mesh>,
+    // Connected in all 4 directions
+    pub x: Handle<Mesh>,
+}
+
+#[derive(Clone)]
 pub struct TurfDefinition {
     pub name: String,
+    pub mesh: Option<TurfMesh>,
+}
+
+impl TurfDefinition {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            mesh: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

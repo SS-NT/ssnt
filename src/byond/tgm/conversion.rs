@@ -42,7 +42,7 @@ fn create_tile_data(
     map: &mut MapData,
     turf_definitions: &mut DefinitionLookup,
 ) -> Option<TileData> {
-    let turf_name = tile
+    let turf_description = tile
         .components
         .iter()
         .map(|o| {
@@ -52,18 +52,18 @@ fn create_tile_data(
                 0
             };
             let name = match o.path.as_str() {
-                "/turf/closed/wall" => "wall",
-                "/turf/closed/wall/r_wall" => "reinforced wall",
-                "/obj/structure/grille" => "grille",
-                "/obj/effect/spawner/structure/window" => "window",
-                "/obj/effect/spawner/structure/window/reinforced" => "reinforced window",
+                "/turf/closed/wall" => ("wall", "wall"),
+                "/turf/closed/wall/r_wall" => ("reinforced wall", "wall"),
+                "/obj/structure/grille" => ("grille", "grille"),
+                "/obj/effect/spawner/structure/window" => ("window", "wall"),
+                "/obj/effect/spawner/structure/window/reinforced" => ("reinforced window", "wall"),
                 _ => return None,
             };
             Some((priority, name))
         }).flatten().max_by_key(|x| x.0)?.1;
     
-    let definition_id = *turf_definitions.entry(&turf_name).or_insert_with(|| {
-        map.insert_turf_definition(TurfDefinition::new(turf_name))
+    let definition_id = *turf_definitions.entry(&turf_description.0).or_insert_with(|| {
+        map.insert_turf_definition(TurfDefinition::new(turf_description.0, turf_description.1))
     });
     Some(TileData {
         turf: Some(TurfData { definition_id }),

@@ -11,3 +11,8 @@ pub struct ChunkObserverRemovedEvent {
     pub observer: Entity,
     pub chunk_index: usize,
 }
+
+pub struct ChunkSpawnedEvent {
+    pub tilemap_entity: Entity,
+    pub chunk_index: usize,
+}

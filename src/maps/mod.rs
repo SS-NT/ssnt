@@ -1,7 +1,4 @@
-use bevy::{
-    math::UVec2,
-    prelude::{Handle, Mesh},
-};
+use bevy::{math::{IVec2, UVec2}, prelude::{Handle, Mesh}};
 
 pub mod components;
 pub mod events;
@@ -220,13 +217,15 @@ pub struct TurfMeshes {
 #[derive(Clone)]
 pub struct TurfDefinition {
     pub name: String,
+    pub category: String,
     pub mesh: Option<TurfMesh>,
 }
 
 impl TurfDefinition {
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<String>, category: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            category: category.into(),
             mesh: None,
         }
     }
@@ -234,10 +233,35 @@ impl TurfDefinition {
 
 #[derive(Clone, Copy)]
 pub enum Direction {
-    North,
+    North = 0,
     East,
     South,
     West,
+}
+
+impl From<IVec2> for Direction {
+    fn from(vec: IVec2) -> Self {
+        if vec.x > 0 {
+            Self::East
+        } else if vec.x < 0 {
+            Self::West
+        } else if vec.y > 0 {
+            Self::South
+        } else {
+            Self::North
+        }
+    }
+}
+
+impl From<Direction> for IVec2 {
+    fn from(val: Direction) -> Self {
+        match val {
+            Direction::North => -IVec2::Y,
+            Direction::South => IVec2::Y,
+            Direction::East => IVec2::X,
+            Direction::West => -IVec2::X,
+        }
+    }
 }
 
 #[derive(Default, Clone, Copy)]

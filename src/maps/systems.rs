@@ -1,5 +1,10 @@
-use super::{CHUNK_SIZE, MapData, components::*, events::*, spawning::{apply_chunk, despawn_chunk}};
-use bevy::{math::{UVec2, Vec2, Vec3, Vec3Swizzles}, prelude::{Added, AssetServer, Assets, Commands, Entity, EventReader, EventWriter, GlobalTransform, Query, Res, ResMut, StandardMaterial, Transform}};
+use super::{
+    components::*,
+    events::*,
+    spawning::{apply_chunk, despawn_chunk, SpawnedTile},
+    Direction, MapData, TileData, TurfMesh, TurfMeshes, CHUNK_SIZE,
+};
+use bevy::{math::{UVec2, Vec2, Vec3, Vec3Swizzles}, prelude::{Added, AssetServer, Assets, Commands, Entity, EventReader, EventWriter, GlobalTransform, Handle, Mesh, Query, Res, ResMut, StandardMaterial, Transform, With}};
 
 pub fn tilemap_mesh_loading_system(
     mut tilemaps: Query<&mut TileMap, Added<TileMap>>,
@@ -13,21 +18,49 @@ pub fn tilemap_mesh_loading_system(
             .filter(|d| d.mesh.is_none())
         {
             definition.mesh = Some(match definition.name.as_str() {
-                "wall" => asset_server
-                    .load("models/tilemap/walls windows.glb#Mesh29/Primitive0")
-                    .into(),
-                "reinforced wall" => asset_server
-                    .load("models/tilemap/walls windows.glb#Mesh24/Primitive0")
-                    .into(),
+                "wall" => TurfMesh::Multiple(TurfMeshes {
+                    default: asset_server
+                        .load("models/tilemap/walls windows.glb#Mesh29/Primitive0"),
+                    o: asset_server.load("models/tilemap/walls windows.glb#Mesh29/Primitive0"),
+                    u: asset_server.load("models/tilemap/walls windows.glb#Mesh30/Primitive0"),
+                    i: asset_server.load("models/tilemap/walls windows.glb#Mesh25/Primitive0"),
+                    l: asset_server.load("models/tilemap/walls windows.glb#Mesh26/Primitive0"),
+                    t: asset_server.load("models/tilemap/walls windows.glb#Mesh27/Primitive0"),
+                    x: asset_server.load("models/tilemap/walls windows.glb#Mesh28/Primitive0"),
+                }),
+                "reinforced wall" => TurfMesh::Multiple(TurfMeshes {
+                    default: asset_server
+                        .load("models/tilemap/walls windows.glb#Mesh24/Primitive0"),
+                    o: asset_server.load("models/tilemap/walls windows.glb#Mesh24/Primitive0"),
+                    u: asset_server.load("models/tilemap/walls windows.glb#Mesh33/Primitive0"),
+                    i: asset_server.load("models/tilemap/walls windows.glb#Mesh23/Primitive0"),
+                    l: asset_server.load("models/tilemap/walls windows.glb#Mesh31/Primitive0"),
+                    t: asset_server.load("models/tilemap/walls windows.glb#Mesh42/Primitive0"),
+                    x: asset_server.load("models/tilemap/walls windows.glb#Mesh32/Primitive0"),
+                }),
                 "grille" => asset_server
                     .load("models/tilemap/girders.glb#Mesh1/Primitive0")
                     .into(),
-                "window" => asset_server
-                    .load("models/tilemap/walls windows.glb#Mesh22/Primitive0")
-                    .into(),
-                "reinforced window" => asset_server
-                    .load("models/tilemap/walls windows.glb#Mesh39/Primitive0")
-                    .into(),
+                "window" => TurfMesh::Multiple(TurfMeshes {
+                    default: asset_server
+                        .load("models/tilemap/walls windows.glb#Mesh22/Primitive0"),
+                    o: asset_server.load("models/tilemap/walls windows.glb#Mesh22/Primitive0"),
+                    u: asset_server.load("models/tilemap/walls windows.glb#Mesh21/Primitive0"),
+                    i: asset_server.load("models/tilemap/walls windows.glb#Mesh18/Primitive0"),
+                    l: asset_server.load("models/tilemap/walls windows.glb#Mesh0/Primitive0"),
+                    t: asset_server.load("models/tilemap/walls windows.glb#Mesh1/Primitive0"),
+                    x: asset_server.load("models/tilemap/walls windows.glb#Mesh2/Primitive0"),
+                }),
+                "reinforced window" => TurfMesh::Multiple(TurfMeshes {
+                    default: asset_server
+                        .load("models/tilemap/walls windows.glb#Mesh39/Primitive0"),
+                    o: asset_server.load("models/tilemap/walls windows.glb#Mesh39/Primitive0"),
+                    u: asset_server.load("models/tilemap/walls windows.glb#Mesh40/Primitive0"),
+                    i: asset_server.load("models/tilemap/walls windows.glb#Mesh41/Primitive0"),
+                    l: asset_server.load("models/tilemap/walls windows.glb#Mesh36/Primitive0"),
+                    t: asset_server.load("models/tilemap/walls windows.glb#Mesh37/Primitive0"),
+                    x: asset_server.load("models/tilemap/walls windows.glb#Mesh38/Primitive0"),
+                }),
                 _ => continue,
             });
         }
@@ -38,6 +71,7 @@ pub fn tilemap_spawning_system(
     mut commands: Commands,
     mut tilemaps: Query<(&mut TileMap, Entity)>,
     mut added_event: EventReader<ChunkObserverAddedEvent>,
+    mut spawned_event: EventWriter<ChunkSpawnedEvent>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for event in added_event.iter() {
@@ -50,8 +84,71 @@ pub fn tilemap_spawning_system(
             continue;
         }
 
-        let spawned = apply_chunk(&mut commands, None, chunk_index, &tilemap.data, tilemap_entity, &mut materials);
+        let spawned = apply_chunk(
+            &mut commands,
+            None,
+            chunk_index,
+            &tilemap.data,
+            tilemap_entity,
+            &mut materials,
+        );
         tilemap.spawned_chunks.insert(chunk_index, spawned);
+        spawned_event.send(ChunkSpawnedEvent {
+            tilemap_entity,
+            chunk_index,
+        });
+    }
+}
+
+pub fn tilemap_spawn_adjacency_update_system(
+    tilemaps: Query<&TileMap>,
+    mut turf_entities: Query<(&mut Transform, &mut Handle<Mesh>), With<TurfMarker>>,
+    mut spawned_event: EventReader<ChunkSpawnedEvent>,
+) {
+    for event in spawned_event.iter() {
+        let tilemap = match tilemaps.get(event.tilemap_entity) {
+            Ok(x) => x,
+            Err(_) => continue,
+        };
+        let chunk_position =
+            MapData::position_from_chunk_index(tilemap.data.size, event.chunk_index).as_i32();
+        for &dir in [
+            Direction::North,
+            Direction::South,
+            Direction::East,
+            Direction::West,
+        ]
+        .iter()
+        {
+            let adjacent_position = chunk_position + dir.into();
+            if adjacent_position.x < 0 || adjacent_position.y < 0 {
+                continue;
+            }
+            let adjacent_position = adjacent_position.as_u32();
+            let adjacent_index = tilemap.data.index_from_chunk_position(adjacent_position);
+            let adjacent_chunk = match tilemap.spawned_chunks.get(&adjacent_index) {
+                Some(x) => x,
+                _ => continue,
+            };
+            let tiles: Box<dyn Iterator<Item = (usize, &Option<SpawnedTile>)>> = match dir {
+                Direction::North => Box::new(adjacent_chunk.bottom_border()),
+                Direction::South => Box::new(adjacent_chunk.top_border()),
+                Direction::East => Box::new(adjacent_chunk.left_border()),
+                Direction::West => Box::new(adjacent_chunk.right_border()),
+            };
+            for (tile_index, tile) in tiles.filter_map(|(i, t)| t.as_ref().map(|t| (i, t))) {
+                if let Some((turf, turf_entity)) = tile.spawned_turf {
+                    let tile_position = adjacent_position * UVec2::new(CHUNK_SIZE, CHUNK_SIZE)
+                        + TileData::position_in_chunk(tile_index);
+                    let turf_definition = tilemap.data.turf_definition(turf.definition_id).unwrap();
+                    if let Some((mesh_handle, rotation)) = super::spawning::get_turf_mesh(turf_definition, tile_position, &tilemap.data) {
+                        let (mut transform, mut mesh) = turf_entities.get_mut(turf_entity).unwrap();
+                        transform.rotation = rotation;
+                        *mesh = mesh_handle;
+                    };
+                }
+            }
+        }
     }
 }
 
@@ -204,12 +301,10 @@ pub fn tilemap_observer_system(
                     }
                 }
             } else if let Some(chunks) = observer.remove_tilemap(tilemap_entity) {
-                removed_event.send_batch(chunks.iter().map(|&index| {
-                    ChunkObserverRemovedEvent {
-                        tilemap_entity,
-                        observer: observer_entity,
-                        chunk_index: index,
-                    }
+                removed_event.send_batch(chunks.iter().map(|&index| ChunkObserverRemovedEvent {
+                    tilemap_entity,
+                    observer: observer_entity,
+                    chunk_index: index,
                 }));
             }
         }

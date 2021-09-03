@@ -58,3 +58,5 @@ impl TileMapObserver {
         self.chunks_in_range.remove(&tilemap)
     }
 }
+
+pub struct TurfMarker;

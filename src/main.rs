@@ -23,6 +23,7 @@ fn main() {
         .add_plugin(FlyCameraPlugin)
         .add_event::<maps::events::ChunkObserverAddedEvent>()
         .add_event::<maps::events::ChunkObserverRemovedEvent>()
+        .add_event::<maps::events::ChunkSpawnedEvent>()
         .insert_resource(ClearColor(Color::rgb(
             44.0 / 255.0,
             68.0 / 255.0,
@@ -38,9 +39,11 @@ fn main() {
         .add_system(maps::systems::tilemap_mesh_loading_system.label("tilemap mesh loading"))
         .add_system(
             maps::systems::tilemap_spawning_system
+                .label("tilemap spawning")
                 .after("tilemap observer")
                 .after("tilemap mesh loading"),
         )
+        .add_system_to_stage(CoreStage::PostUpdate, maps::systems::tilemap_spawn_adjacency_update_system)
         .add_system(maps::systems::tilemap_despawning_system.after("tilemap observer"))
         .add_system(convert_tgm_map)
         .add_system(create_tilemap_from_converted)

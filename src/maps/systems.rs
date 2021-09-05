@@ -10,6 +10,7 @@ pub fn tilemap_mesh_loading_system(
     mut tilemaps: Query<&mut TileMap, Added<TileMap>>,
     asset_server: Res<AssetServer>,
 ) {
+    let mut material = None;
     for mut tilemap in tilemaps.iter_mut() {
         for definition in tilemap
             .data
@@ -17,6 +18,9 @@ pub fn tilemap_mesh_loading_system(
             .iter_mut()
             .filter(|d| d.mesh.is_none())
         {
+            let material = material.get_or_insert_with(|| asset_server.load("models/tilemap/walls windows.glb#Material0"));
+            definition.material = Some(material.clone());
+
             definition.mesh = Some(match definition.name.as_str() {
                 "wall" => TurfMesh::Multiple(TurfMeshes {
                     default: asset_server

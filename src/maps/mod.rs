@@ -1,4 +1,4 @@
-use bevy::{math::{IVec2, UVec2}, prelude::{Handle, Mesh}};
+use bevy::{math::{IVec2, UVec2}, prelude::{Handle, Mesh, StandardMaterial}};
 
 pub mod components;
 pub mod events;
@@ -219,6 +219,7 @@ pub struct TurfDefinition {
     pub name: String,
     pub category: String,
     pub mesh: Option<TurfMesh>,
+    pub material: Option<Handle<StandardMaterial>>,
 }
 
 impl TurfDefinition {
@@ -227,6 +228,7 @@ impl TurfDefinition {
             name: name.into(),
             category: category.into(),
             mesh: None,
+            material: None,
         }
     }
 }

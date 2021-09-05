@@ -71,7 +71,7 @@ fn setup(
 
     commands.spawn().insert(DirectionalLight::new(
         Color::rgb(1.0, 1.0, 1.0),
-        5000.0,
+        10000.0,
         Vec3::new(0.2, -0.8, 0.0),
     ));
 

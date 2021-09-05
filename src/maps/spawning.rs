@@ -261,16 +261,14 @@ pub fn apply_chunk(
                 ..Default::default()
             };
 
-            let wall_material_handle = materials.add(StandardMaterial {
-                base_color: Color::rgb(0.8, 0.8, 0.8),
-                ..Default::default()
-            });
+            let material = turf_definition.material.clone().unwrap();
+            let mesh = mesh_handle;
 
             if let Some((current_data, entity)) = spawned_turf {
                 if turf_data != *current_data {
                     commands.entity(*entity).insert_bundle(PbrBundle {
-                        mesh: mesh_handle,
-                        material: wall_material_handle,
+                        mesh,
+                        material,
                         transform: turf_transform,
                         ..Default::default()
                     });
@@ -278,8 +276,8 @@ pub fn apply_chunk(
             } else {
                 let turf = commands
                     .spawn_bundle(PbrBundle {
-                        mesh: mesh_handle,
-                        material: wall_material_handle,
+                        mesh,
+                        material,
                         transform: turf_transform,
                         ..Default::default()
                     })

@@ -18,6 +18,8 @@ use maps::components::{TileMap, TileMapObserver};
 use maps::MapData;
 
 fn main() {
+    env_logger::init();
+
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugin(FlyCameraPlugin)

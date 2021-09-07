@@ -1,4 +1,7 @@
-use bevy::{math::{IVec2, UVec2}, prelude::{Handle, Mesh, StandardMaterial}};
+use bevy::{
+    math::{IVec2, Quat, UVec2, Vec3},
+    prelude::{Handle, Mesh, StandardMaterial},
+};
 
 pub mod components;
 pub mod events;
@@ -10,6 +13,7 @@ pub struct MapData {
     size: UVec2,
     chunks: Vec<Option<Box<Chunk>>>,
     turf_definitions: Vec<TurfDefinition>,
+    pub furniture_definitions: Vec<FurnitureDefinition>,
     pub spawn_position: UVec2,
 }
 
@@ -21,6 +25,7 @@ impl MapData {
             size,
             chunks,
             turf_definitions: Default::default(),
+            furniture_definitions: Default::default(),
             spawn_position: UVec2::ZERO,
         }
     }
@@ -54,12 +59,12 @@ impl MapData {
         self.chunk_mut(index)
     }
 
-    pub fn iter_tiles(&self) -> impl Iterator<Item = (UVec2, &TileData)> {
+    pub fn iter_tiles(&mut self) -> impl Iterator<Item = (UVec2, &TileData)> {
+        let size = self.size;
         self.iter_chunks()
             .map(move |(p, c)| {
                 (
-                    Self::position_from_chunk_index(self.size, p)
-                        * UVec2::new(CHUNK_SIZE, CHUNK_SIZE),
+                    Self::position_from_chunk_index(size, p) * UVec2::new(CHUNK_SIZE, CHUNK_SIZE),
                     c,
                 )
             })
@@ -141,6 +146,15 @@ impl MapData {
     pub fn turf_definition(&self, index: u32) -> Option<&TurfDefinition> {
         self.turf_definitions.get(index as usize)
     }
+
+    pub fn insert_furniture_definition(&mut self, definition: FurnitureDefinition) -> u32 {
+        self.furniture_definitions.push(definition);
+        (self.furniture_definitions.len() - 1) as u32
+    }
+
+    pub fn furniture_definition(&self, index: u32) -> Option<&FurnitureDefinition> {
+        self.furniture_definitions.get(index as usize)
+    }
 }
 
 pub const CHUNK_SIZE: u32 = 16;
@@ -185,20 +199,30 @@ impl Chunk {
     }
 }
 
-#[derive(Clone)]
-pub enum TurfMesh {
-    Single(Handle<Mesh>),
-    Multiple(TurfMeshes),
+pub fn tile_neighbours(position: UVec2) -> impl Iterator<Item = (Direction, UVec2)> {
+    let position = position.as_i32();
+    DIRECTIONS
+        .iter()
+        .map(move |&dir| (dir, position + dir.into()))
+        .filter(|(_, p)| p.x >= 0 && p.y >= 0)
+        .map(|(dir, p)| (dir, p.as_u32()))
 }
 
-impl From<Handle<Mesh>> for TurfMesh {
+#[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
+pub enum TilemapMesh {
+    Single(Handle<Mesh>),
+    Multiple(AdjacencyMeshes),
+}
+
+impl From<Handle<Mesh>> for TilemapMesh {
     fn from(handle: Handle<Mesh>) -> Self {
         Self::Single(handle)
     }
 }
 
 #[derive(Clone)]
-pub struct TurfMeshes {
+pub struct AdjacencyMeshes {
     pub default: Handle<Mesh>,
     // No neighbours
     pub o: Handle<Mesh>,
@@ -214,11 +238,98 @@ pub struct TurfMeshes {
     pub x: Handle<Mesh>,
 }
 
+impl AdjacencyMeshes {
+    pub fn mesh_from_adjacency(&self, adjacency: AdjacencyInformation) -> (Handle<Mesh>, Quat) {
+        if adjacency.is_o() {
+            (self.o.clone(), Quat::IDENTITY)
+        } else if let Some(dir) = adjacency.is_u() {
+            (self.u.clone(), AdjacencyInformation::rotation_from_dir(dir))
+        } else if let Some(dir) = adjacency.is_i() {
+            (self.i.clone(), AdjacencyInformation::rotation_from_dir(dir))
+        } else if let Some(dir) = adjacency.is_l() {
+            (self.l.clone(), AdjacencyInformation::rotation_from_dir(dir))
+        } else if let Some(dir) = adjacency.is_t() {
+            (self.t.clone(), AdjacencyInformation::rotation_from_dir(dir))
+        } else if adjacency.is_x() {
+            (self.x.clone(), Quat::IDENTITY)
+        } else {
+            (self.default.clone(), Quat::IDENTITY)
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct AdjacencyInformation {
+    directions: [bool; 4],
+}
+
+impl AdjacencyInformation {
+    pub fn add(&mut self, direction: Direction) {
+        self.directions[direction as usize] = true;
+    }
+
+    pub fn is_o(&self) -> bool {
+        self.directions == [false, false, false, false]
+    }
+
+    pub fn is_u(&self) -> Option<Direction> {
+        match self.directions {
+            [true, false, false, false] => Some(Direction::North),
+            [false, true, false, false] => Some(Direction::East),
+            [false, false, true, false] => Some(Direction::South),
+            [false, false, false, true] => Some(Direction::West),
+            _ => None,
+        }
+    }
+
+    pub fn is_l(&self) -> Option<Direction> {
+        match self.directions {
+            [true, true, false, false] => Some(Direction::North),
+            [false, true, true, false] => Some(Direction::East),
+            [false, false, true, true] => Some(Direction::South),
+            [true, false, false, true] => Some(Direction::West),
+            _ => None,
+        }
+    }
+
+    pub fn is_t(&self) -> Option<Direction> {
+        match self.directions {
+            [true, true, false, true] => Some(Direction::North),
+            [true, true, true, false] => Some(Direction::East),
+            [false, true, true, true] => Some(Direction::South),
+            [true, false, true, true] => Some(Direction::West),
+            _ => None,
+        }
+    }
+
+    pub fn is_i(&self) -> Option<Direction> {
+        match self.directions {
+            [true, false, true, false] => Some(Direction::North),
+            [false, true, false, true] => Some(Direction::East),
+            _ => None,
+        }
+    }
+
+    pub fn is_x(&self) -> bool {
+        self.directions == [true, true, true, true]
+    }
+
+    pub fn rotation_from_dir(direction: Direction) -> Quat {
+        let corners = match direction {
+            Direction::North => 2,
+            Direction::East => 1,
+            Direction::South => 0,
+            Direction::West => 3,
+        };
+        Quat::from_axis_angle(Vec3::Y, std::f32::consts::FRAC_PI_2 * (corners as f32))
+    }
+}
+
 #[derive(Clone)]
 pub struct TurfDefinition {
     pub name: String,
     pub category: String,
-    pub mesh: Option<TurfMesh>,
+    pub mesh: Option<TilemapMesh>,
     pub material: Option<Handle<StandardMaterial>>,
 }
 
@@ -233,13 +344,48 @@ impl TurfDefinition {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, PartialEq)]
+pub enum FurnitureKind {
+    Door,
+    Table,
+}
+
+#[derive(Clone)]
+pub struct FurnitureDefinition {
+    pub name: String,
+    pub mesh: Option<TilemapMesh>,
+    pub material: Option<Handle<StandardMaterial>>,
+    pub kind: FurnitureKind,
+    // TODO: get rid of this
+    pub connector_mesh: Option<Handle<Mesh>>,
+}
+
+impl FurnitureDefinition {
+    pub fn new(name: impl Into<String>, kind: FurnitureKind) -> Self {
+        Self {
+            name: name.into(),
+            mesh: None,
+            material: None,
+            kind,
+            connector_mesh: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
 pub enum Direction {
     North = 0,
     East,
     South,
     West,
 }
+
+pub const DIRECTIONS: [Direction; 4] = [
+    Direction::North,
+    Direction::South,
+    Direction::East,
+    Direction::West,
+];
 
 impl From<IVec2> for Direction {
     fn from(vec: IVec2) -> Self {
@@ -288,8 +434,8 @@ pub struct TurfData {
     pub definition_id: u32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct FurnitureData {
     pub definition_id: u32,
-    pub direction: Direction,
+    pub direction: Option<Direction>,
 }

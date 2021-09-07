@@ -1,15 +1,15 @@
-use crate::maps::TurfMesh;
+use crate::maps::TilemapMesh;
 
 use super::{
-    components::TurfMarker, Direction, MapData, TileData, TurfData, TurfDefinition, CHUNK_LENGTH,
-    CHUNK_SIZE,
+    components::TurfMarker, tile_neighbours, AdjacencyInformation, FurnitureData,
+    FurnitureDefinition, FurnitureKind, MapData, TileData, TurfData, TurfDefinition, CHUNK_LENGTH,
+    CHUNK_SIZE, DIRECTIONS,
 };
 use bevy::{
     math::{Quat, UVec2, Vec3},
     pbr::PbrBundle,
     prelude::{
-        warn, Assets, BuildChildren, Color, Commands, DespawnRecursiveExt, Entity, Handle, Mesh,
-        ResMut, StandardMaterial, Transform,
+        warn, BuildChildren, Commands, DespawnRecursiveExt, Entity, Handle, Mesh, Transform,
     },
 };
 
@@ -63,73 +63,7 @@ impl Default for SpawnedChunk {
 #[derive(Clone, Copy, Default)]
 pub struct SpawnedTile {
     pub spawned_turf: Option<(TurfData, Entity)>,
-}
-
-#[derive(Default)]
-struct AdjacencyInformation {
-    directions: [bool; 4],
-}
-
-impl AdjacencyInformation {
-    pub fn add(&mut self, direction: Direction) {
-        self.directions[direction as usize] = true;
-    }
-
-    pub fn is_o(&self) -> bool {
-        self.directions == [false, false, false, false]
-    }
-
-    pub fn is_u(&self) -> Option<Quat> {
-        match self.directions {
-            [true, false, false, false] => Some(Self::rotation_from_dir(Direction::North)),
-            [false, true, false, false] => Some(Self::rotation_from_dir(Direction::East)),
-            [false, false, true, false] => Some(Self::rotation_from_dir(Direction::South)),
-            [false, false, false, true] => Some(Self::rotation_from_dir(Direction::West)),
-            _ => None,
-        }
-    }
-
-    pub fn is_l(&self) -> Option<Quat> {
-        match self.directions {
-            [true, true, false, false] => Some(Self::rotation_from_dir(Direction::North)),
-            [false, true, true, false] => Some(Self::rotation_from_dir(Direction::East)),
-            [false, false, true, true] => Some(Self::rotation_from_dir(Direction::South)),
-            [true, false, false, true] => Some(Self::rotation_from_dir(Direction::West)),
-            _ => None,
-        }
-    }
-
-    pub fn is_t(&self) -> Option<Quat> {
-        match self.directions {
-            [true, true, false, true] => Some(Self::rotation_from_dir(Direction::North)),
-            [true, true, true, false] => Some(Self::rotation_from_dir(Direction::East)),
-            [false, true, true, true] => Some(Self::rotation_from_dir(Direction::South)),
-            [true, false, true, true] => Some(Self::rotation_from_dir(Direction::West)),
-            _ => None,
-        }
-    }
-
-    pub fn is_i(&self) -> Option<Quat> {
-        match self.directions {
-            [true, false, true, false] => Some(Self::rotation_from_dir(Direction::North)),
-            [false, true, false, true] => Some(Self::rotation_from_dir(Direction::East)),
-            _ => None,
-        }
-    }
-
-    pub fn is_x(&self) -> bool {
-        self.directions == [true, true, true, true]
-    }
-
-    fn rotation_from_dir(direction: Direction) -> Quat {
-        let corners = match direction {
-            Direction::North => 2,
-            Direction::East => 1,
-            Direction::South => 0,
-            Direction::West => 3,
-        };
-        Quat::from_axis_angle(Vec3::Y, std::f32::consts::FRAC_PI_2 * (corners as f32))
-    }
+    pub spawned_furniture: Option<(FurnitureData, Entity)>,
 }
 
 fn get_turf_adjacency_information(
@@ -138,14 +72,37 @@ fn get_turf_adjacency_information(
     map: &MapData,
 ) -> AdjacencyInformation {
     let mut info = AdjacencyInformation::default();
-    for &dir in [
-        Direction::North,
-        Direction::South,
-        Direction::East,
-        Direction::West,
-    ]
-    .iter()
-    {
+    for (dir, position) in tile_neighbours(tile_position) {
+        if let Some(turf_data) = map.tile(position).and_then(|p| p.turf) {
+            let adjacent_definition = map
+                .turf_definition(turf_data.definition_id)
+                .expect("Turf definition must exist");
+            if adjacent_definition.category == definition.category {
+                info.add(dir);
+                continue;
+            }
+        }
+        if let Some(furniture_data) = map.tile(position).and_then(|p| p.furniture) {
+            let adjacent_definition = map
+                .furniture_definition(furniture_data.definition_id)
+                .expect("Furniture definition must exist");
+            if adjacent_definition.kind == FurnitureKind::Door {
+                info.add(dir);
+                continue;
+            }
+        }
+    }
+
+    info
+}
+
+fn get_furniture_adjacency_information(
+    definition: &FurnitureDefinition,
+    tile_position: UVec2,
+    map: &MapData,
+) -> AdjacencyInformation {
+    let mut info = AdjacencyInformation::default();
+    for &dir in DIRECTIONS.iter() {
         let adjacent_position = tile_position.as_i32() + dir.into();
         if adjacent_position.x < 0 || adjacent_position.y < 0 {
             continue;
@@ -154,14 +111,14 @@ fn get_turf_adjacency_information(
             Some(x) => x,
             None => continue,
         };
-        let adjacent_data = match tile.turf {
+        let adjacent_data = match tile.furniture {
             Some(x) => x,
             None => continue,
         };
         let adjacent_definition = map
-            .turf_definition(adjacent_data.definition_id)
-            .expect("Turf definition must exist");
-        if adjacent_definition.category != definition.category {
+            .furniture_definition(adjacent_data.definition_id)
+            .expect("Furniture definition must exist");
+        if adjacent_definition.kind != definition.kind {
             continue;
         }
         info.add(dir);
@@ -176,27 +133,26 @@ pub fn get_turf_mesh(
     map: &MapData,
 ) -> Option<(Handle<Mesh>, Quat)> {
     let meshes = match definition.mesh.as_ref()? {
-        TurfMesh::Single(h) => return Some((h.clone(), Quat::IDENTITY)),
-        TurfMesh::Multiple(m) => m,
+        TilemapMesh::Single(h) => return Some((h.clone(), Quat::IDENTITY)),
+        TilemapMesh::Multiple(m) => m,
     };
 
     let adjacency = get_turf_adjacency_information(definition, tile_position, map);
-    let info = if adjacency.is_o() {
-        (meshes.o.clone(), Quat::IDENTITY)
-    } else if let Some(quat) = adjacency.is_u() {
-        (meshes.u.clone(), quat)
-    } else if let Some(quat) = adjacency.is_i() {
-        (meshes.i.clone(), quat)
-    } else if let Some(quat) = adjacency.is_l() {
-        (meshes.l.clone(), quat)
-    } else if let Some(quat) = adjacency.is_t() {
-        (meshes.t.clone(), quat)
-    } else if adjacency.is_x() {
-        (meshes.x.clone(), Quat::IDENTITY)
-    } else {
-        (meshes.default.clone(), Quat::IDENTITY)
+    Some(meshes.mesh_from_adjacency(adjacency))
+}
+
+pub fn get_furniture_mesh(
+    definition: &FurnitureDefinition,
+    tile_position: UVec2,
+    map: &MapData,
+) -> Option<(Handle<Mesh>, Quat)> {
+    let meshes = match definition.mesh.as_ref()? {
+        TilemapMesh::Single(h) => return Some((h.clone(), Quat::IDENTITY)),
+        TilemapMesh::Multiple(m) => m,
     };
-    Some(info)
+
+    let adjacency = get_furniture_adjacency_information(definition, tile_position, map);
+    Some(meshes.mesh_from_adjacency(adjacency))
 }
 
 pub fn apply_chunk(
@@ -205,7 +161,6 @@ pub fn apply_chunk(
     chunk_index: usize,
     map_data: &MapData,
     tilemap_entity: Entity,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
 ) -> SpawnedChunk {
     let chunk_position = MapData::position_from_chunk_index(map_data.size, chunk_index);
     let data = map_data.chunk(chunk_index).unwrap();
@@ -236,73 +191,212 @@ pub fn apply_chunk(
             + TileData::position_in_chunk(index);
         let tile_position_3d = Vec3::new(tile_position.x as f32, 0.0, tile_position.y as f32);
 
-        if let Some(turf_data) = tile_data.and_then(|t| t.turf) {
-            let turf_definition = map_data
-                .turf_definition(turf_data.definition_id)
-                .expect("Turf definition must be present if referenced by a tile");
-            let (mesh_handle, rotation) =
-                match get_turf_mesh(turf_definition, tile_position, map_data) {
-                    Some(m) => m,
-                    None => {
-                        warn!(
-                            "Mesh handle for turf {} is not available",
-                            turf_definition.name
-                        );
-                        continue;
-                    }
-                };
-            let spawned_turf = &mut spawned_tile
-                .get_or_insert_with(Default::default)
-                .spawned_turf;
-
-            let turf_transform = Transform {
-                rotation,
-                translation: tile_position_3d,
-                ..Default::default()
-            };
-
-            let material = turf_definition.material.clone().unwrap();
-            let mesh = mesh_handle;
-
-            if let Some((current_data, entity)) = spawned_turf {
-                if turf_data != *current_data {
-                    commands.entity(*entity).insert_bundle(PbrBundle {
-                        mesh,
-                        material,
-                        transform: turf_transform,
-                        ..Default::default()
-                    });
-                }
-            } else {
-                let turf = commands
-                    .spawn_bundle(PbrBundle {
-                        mesh,
-                        material,
-                        transform: turf_transform,
-                        ..Default::default()
-                    })
-                    .insert(TurfMarker)
-                    .id();
-                commands.entity(tilemap_entity).push_children(&[turf]);
-                *spawned_turf = Some((turf_data, turf));
-            }
-        } else if tile_spawned {
-            let x = spawned_tile.as_mut().unwrap();
-            if x.spawned_turf.is_some() {
-                commands
-                    .entity(x.spawned_turf.unwrap().1)
-                    .despawn_recursive();
-                x.spawned_turf = None;
-            }
-        }
+        apply_turf(
+            tile_data.as_ref().and_then(|t| t.turf.as_ref()),
+            map_data,
+            tile_position,
+            tile_position_3d,
+            tilemap_entity,
+            spawned_tile,
+            commands,
+        );
+        apply_furniture(
+            tile_data.as_ref().and_then(|t| t.furniture.as_ref()),
+            map_data,
+            tile_position,
+            tile_position_3d,
+            tilemap_entity,
+            spawned_tile,
+            commands,
+        );
     }
 
     spawned_chunk
 }
 
+fn apply_turf(
+    turf_data: Option<&TurfData>,
+    map_data: &MapData,
+    tile_position: UVec2,
+    tile_position_3d: Vec3,
+    tilemap_entity: Entity,
+    spawned_tile: &mut Option<SpawnedTile>,
+    commands: &mut Commands,
+) {
+    if turf_data.is_none() {
+        if let Some(spawned_turf) = spawned_tile.as_mut().map(|t| &mut t.spawned_turf) {
+            if let Some((_, entity)) = spawned_turf {
+                commands.entity(*entity).despawn_recursive();
+            }
+            *spawned_turf = None;
+        }
+        return;
+    }
+
+    let turf_data = turf_data.unwrap();
+
+    let turf_definition = map_data
+        .turf_definition(turf_data.definition_id)
+        .expect("Turf definition must be present if referenced by a tile");
+    let (mesh_handle, rotation) = match get_turf_mesh(turf_definition, tile_position, map_data) {
+        Some(m) => m,
+        None => {
+            warn!(
+                "Mesh handle for turf {} is not available",
+                turf_definition.name
+            );
+            return;
+        }
+    };
+    let spawned_turf = &mut spawned_tile
+        .get_or_insert_with(Default::default)
+        .spawned_turf;
+
+    let turf_transform = Transform {
+        rotation,
+        translation: tile_position_3d,
+        ..Default::default()
+    };
+
+    let material = turf_definition.material.clone().unwrap();
+    let mesh = mesh_handle;
+
+    if let Some((current_data, entity)) = spawned_turf {
+        if turf_data != current_data {
+            commands
+                .entity(*entity)
+                .insert(mesh)
+                .insert(material)
+                .insert(turf_transform);
+        }
+    } else {
+        let turf = commands
+            .spawn_bundle(PbrBundle {
+                mesh,
+                material,
+                transform: turf_transform,
+                ..Default::default()
+            })
+            .insert(TurfMarker)
+            .id();
+        commands.entity(tilemap_entity).push_children(&[turf]);
+        *spawned_turf = Some((*turf_data, turf));
+    }
+}
+
+fn apply_furniture(
+    furniture_data: Option<&FurnitureData>,
+    map_data: &MapData,
+    tile_position: UVec2,
+    tile_position_3d: Vec3,
+    tilemap_entity: Entity,
+    spawned_tile: &mut Option<SpawnedTile>,
+    commands: &mut Commands,
+) {
+    if furniture_data.is_none() {
+        if let Some(spawned_furniture) = spawned_tile.as_mut().map(|t| &mut t.spawned_furniture) {
+            if let Some((_, entity)) = spawned_furniture {
+                commands.entity(*entity).despawn_recursive();
+            }
+            *spawned_furniture = None;
+        }
+        return;
+    }
+
+    let furniture_data = furniture_data.unwrap();
+
+    let furniture_definition = map_data
+        .furniture_definition(furniture_data.definition_id)
+        .expect("Furniture definition must be present if referenced by a tile");
+    let (mesh_handle, mut rotation) =
+        match get_furniture_mesh(furniture_definition, tile_position, map_data) {
+            Some(m) => m,
+            None => {
+                warn!(
+                    "Mesh handle for furniture {} is not available",
+                    furniture_definition.name
+                );
+                return;
+            }
+        };
+    let spawned_furniture = &mut spawned_tile
+        .get_or_insert_with(Default::default)
+        .spawned_furniture;
+
+    if let Some(dir) = furniture_data.direction {
+        rotation = Quat::from_axis_angle(
+            Vec3::Y,
+            std::f32::consts::FRAC_PI_2 * ((dir as u32 + 1) as f32),
+        );
+    }
+
+    let turf_transform = Transform {
+        rotation,
+        translation: tile_position_3d,
+        ..Default::default()
+    };
+
+    let material = furniture_definition.material.as_ref().unwrap();
+    let mesh = mesh_handle;
+
+    if let Some((current_data, entity)) = spawned_furniture {
+        if furniture_data != current_data {
+            commands
+                .entity(*entity)
+                .insert(mesh)
+                .insert(material.clone())
+                .insert(turf_transform);
+        }
+    } else {
+        let turf = commands
+            .spawn_bundle(PbrBundle {
+                mesh,
+                material: material.clone(),
+                transform: turf_transform,
+                ..Default::default()
+            })
+            .insert(TurfMarker)
+            .id();
+        if furniture_definition.kind == FurnitureKind::Door {
+            let connector_left = commands
+                .spawn_bundle(PbrBundle {
+                    mesh: furniture_definition.connector_mesh.clone().unwrap(),
+                    material: material.clone(),
+                    transform: Transform {
+                        translation: -Vec3::X,
+                        rotation: Quat::from_axis_angle(Vec3::Y, std::f32::consts::FRAC_PI_2),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .id();
+            let connector_right = commands
+                .spawn_bundle(PbrBundle {
+                    mesh: furniture_definition.connector_mesh.clone().unwrap(),
+                    material: material.clone(),
+                    transform: Transform {
+                        translation: Vec3::X,
+                        rotation: Quat::from_axis_angle(Vec3::Y, -std::f32::consts::FRAC_PI_2),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .id();
+            commands
+                .entity(turf)
+                .push_children(&[connector_left, connector_right]);
+        }
+        commands.entity(tilemap_entity).push_children(&[turf]);
+        *spawned_furniture = Some((*furniture_data, turf));
+    }
+}
+
 pub fn despawn_chunk(commands: &mut Commands, spawned_chunk: SpawnedChunk) {
     for tile in spawned_chunk.spawned_tiles.iter().flatten() {
         if let Some((_, entity)) = tile.spawned_turf {
+            commands.entity(entity).despawn_recursive();
+        }
+        if let Some((_, entity)) = tile.spawned_furniture {
             commands.entity(entity).despawn_recursive();
         }
     }

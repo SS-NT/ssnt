@@ -94,6 +94,27 @@ pub fn tilemap_mesh_loading_system(
                 "airlock maintenance" => asset_server
                     .load("models/tilemap/doors.glb#Mesh51/Primitive0")
                     .into(),
+                "airlock command" => asset_server
+                    .load("models/tilemap/doors.glb#Mesh19/Primitive0")
+                    .into(),
+                "airlock supply" => asset_server
+                    .load("models/tilemap/doors.glb#Mesh75/Primitive0")
+                    .into(),
+                "airlock security" => asset_server
+                    .load("models/tilemap/doors.glb#Mesh69/Primitive0")
+                    .into(),
+                "airlock engineering" => asset_server
+                    .load("models/tilemap/doors.glb#Mesh34/Primitive0")
+                    .into(),
+                "airlock atmospherics" => asset_server
+                    .load("models/tilemap/doors.glb#Mesh1/Primitive0")
+                    .into(),
+                "airlock research" => asset_server
+                    .load("models/tilemap/doors.glb#Mesh63/Primitive0")
+                    .into(),
+                "airlock medical" => asset_server
+                    .load("models/tilemap/doors.glb#Mesh57/Primitive0")
+                    .into(),
                 "table" => TilemapMesh::Multiple(AdjacencyMeshes {
                     default: asset_server.load("models/tilemap/tables.glb#Mesh71/Primitive0"),
                     o: asset_server.load("models/tilemap/tables.glb#Mesh71/Primitive0"),

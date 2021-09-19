@@ -198,6 +198,20 @@ fn create_furniture_definition(
             if o.path.contains("door/airlock") {
                 if o.path.contains("maintenance") {
                     Some(("airlock maintenance", FurnitureKind::Door))
+                } else if o.path.contains("command") {
+                    Some(("airlock command", FurnitureKind::Door))
+                } else if o.path.contains("mining") {
+                    Some(("airlock supply", FurnitureKind::Door))
+                } else if o.path.contains("security") {
+                    Some(("airlock security", FurnitureKind::Door))
+                } else if o.path.contains("engineering") {
+                    Some(("airlock engineering", FurnitureKind::Door))
+                } else if o.path.contains("atmos") {
+                    Some(("airlock atmospherics", FurnitureKind::Door))
+                } else if o.path.contains("research") {
+                    Some(("airlock research", FurnitureKind::Door))
+                } else if o.path.contains("medical") {
+                    Some(("airlock medical", FurnitureKind::Door))
                 } else {
                     Some(("airlock", FurnitureKind::Door))
                 }

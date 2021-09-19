@@ -135,17 +135,43 @@ fn create_turf_definition(
         .iter()
         .map(|o| {
             let priority = if o.path.starts_with("/obj") { 1 } else { 0 };
-            let name = match o.path.as_str() {
+            let mut name = match o.path.as_str() {
                 "/turf/closed/wall" => Some(("wall", "wall")),
                 "/turf/closed/wall/r_wall" => Some(("reinforced wall", "wall")),
                 "/obj/structure/grille" => Some(("grille", "grille")),
                 "/obj/effect/spawner/structure/window" => Some(("window", "wall")),
                 "/obj/effect/spawner/structure/window/reinforced" => {
                     Some(("reinforced window", "wall"))
+                },
+                "/turf/open/floor/plasteel" => {
+                    Some(("floor", "floor"))
+                },
+                "/turf/open/floor/plasteel/white" => {
+                    Some(("white floor", "floor"))
+                },
+                "/turf/open/floor/plasteel/white/corner" => {
+                    Some(("white floor", "floor"))
+                },
+                "/turf/open/floor/plasteel/dark" => {
+                    Some(("dark floor", "floor"))
+                },
+                "/turf/open/floor/plasteel/grimy" => {
+                    Some(("floor", "floor"))
+                },
+                "/turf/open/floor/plating" => {
+                    Some(("plating", "floor"))
+                },
+                "/turf/open/floor/wood" => {
+                    Some(("wood floor", "floor"))
                 }
                 _ => None,
-            }?;
-            Some((priority, name))
+            };
+            // Fallback for all floors
+            if name.is_none() && o.path.starts_with("/turf/open/floor") {
+                name = Some(("floor", "floor"));
+            }
+            
+            Some((priority, name?))
         })
         .flatten()
         .max_by_key(|x| x.0)?

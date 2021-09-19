@@ -7,14 +7,13 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { version = "0.5", features = ["dynamic"] }
+bevy = { version = "0.5", features = ["dynamic", "bevy_gltf"] }
 bevy_fly_camera = { git = "https://github.com/aloucks/bevy_fly_camera", branch = "bevy_main" }
 nom = "6.1.2"
 cfg-if = "1.0.0"
 anyhow = "1.0.40"
 futures-lite = "1.4.0"
-env_logger = "0.9.0"
 log = "0.4.8"
 
 [patch.crates-io]
-bevy = { git = "https://github.com/bevyengine/bevy" }
+bevy = { path = "../bevy" }

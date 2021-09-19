@@ -18,8 +18,6 @@ use maps::components::{TileMap, TileMapObserver};
 use maps::MapData;
 
 fn main() {
-    env_logger::init();
-
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugin(FlyCameraPlugin)
@@ -134,7 +132,7 @@ fn create_tilemap_from_converted(
 ) {
     for (entity, mut map_task) in map_tasks.iter_mut() {
         if let Some(map_data) = future::block_on(future::poll_once(&mut *map_task)) {
-            camera.single_mut().unwrap().translation = Vec3::new(
+            camera.single_mut().translation = Vec3::new(
                 map_data.spawn_position.x as f32,
                 0.0,
                 map_data.spawn_position.y as f32,
@@ -169,7 +167,7 @@ fn create_map_models(
             let middle = Vec3::new(map_middle.x as f32, 0.0, map_middle.y as f32);
             let mut cam = middle;
             cam.y = 300.0;
-            let mut camera_position = cameras.single_mut().unwrap();
+            let mut camera_position = cameras.single_mut();
             *camera_position = Transform::from_translation(cam);
             camera_position.rotation = Quat::from_euler(
                 bevy::math::EulerRot::YXZ,

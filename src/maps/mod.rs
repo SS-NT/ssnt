@@ -203,7 +203,7 @@ pub fn tile_neighbours(position: UVec2) -> impl Iterator<Item = (Direction, UVec
     let position = position.as_i32();
     DIRECTIONS
         .iter()
-        .map(move |&dir| (dir, position + dir.into()))
+        .map(move |&dir| { let o: IVec2 = dir.into(); (dir, position + o) })
         .filter(|(_, p)| p.x >= 0 && p.y >= 0)
         .map(|(dir, p)| (dir, p.as_u32()))
 }

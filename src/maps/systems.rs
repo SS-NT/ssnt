@@ -4,13 +4,7 @@ use super::{
     spawning::{apply_chunk, despawn_chunk, SpawnedTile},
     AdjacencyMeshes, Direction, MapData, TileData, TilemapMesh, CHUNK_SIZE,
 };
-use bevy::{
-    math::{UVec2, Vec2, Vec3, Vec3Swizzles},
-    prelude::{
-        Added, AssetServer, Commands, Entity, EventReader, EventWriter, GlobalTransform, Handle,
-        Mesh, Query, Res, Transform, With,
-    },
-};
+use bevy::{math::{IVec2, UVec2, Vec2, Vec3, Vec3Swizzles}, prelude::{Added, AssetServer, Commands, Entity, EventReader, EventWriter, GlobalTransform, Handle, Mesh, Query, Res, Transform, With}};
 
 pub fn tilemap_mesh_loading_system(
     mut tilemaps: Query<&mut TileMap, Added<TileMap>>,
@@ -163,7 +157,8 @@ pub fn tilemap_spawn_adjacency_update_system(
         ]
         .iter()
         {
-            let adjacent_position = chunk_position + dir.into();
+            let offset: IVec2 = dir.into();
+            let adjacent_position = chunk_position + offset;
             if adjacent_position.x < 0 || adjacent_position.y < 0 {
                 continue;
             }

@@ -5,13 +5,9 @@ use super::{
     FurnitureDefinition, FurnitureKind, MapData, TileData, TurfData, TurfDefinition, CHUNK_LENGTH,
     CHUNK_SIZE, DIRECTIONS,
 };
-use bevy::{
-    math::{Quat, UVec2, Vec3},
-    pbr::PbrBundle,
-    prelude::{
+use bevy::{math::{IVec2, Quat, UVec2, Vec3}, pbr::PbrBundle, prelude::{
         warn, BuildChildren, Commands, DespawnRecursiveExt, Entity, Handle, Mesh, Transform,
-    },
-};
+    }};
 
 const EMPTY_SPAWNED_TILE: Option<SpawnedTile> = None;
 
@@ -103,7 +99,8 @@ fn get_furniture_adjacency_information(
 ) -> AdjacencyInformation {
     let mut info = AdjacencyInformation::default();
     for &dir in DIRECTIONS.iter() {
-        let adjacent_position = tile_position.as_i32() + dir.into();
+        let offset: IVec2 = dir.into();
+        let adjacent_position = tile_position.as_i32() + offset;
         if adjacent_position.x < 0 || adjacent_position.y < 0 {
             continue;
         }

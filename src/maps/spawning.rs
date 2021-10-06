@@ -320,11 +320,30 @@ fn apply_furniture(
         .get_or_insert_with(Default::default)
         .spawned_furniture;
 
+    let is_single_mesh = furniture_definition.mesh.as_ref().map_or(false, |m| match m {
+        TilemapMesh::Single(_) => true,
+        TilemapMesh::Multiple(_) => false,
+    });
+
     if let Some(dir) = furniture_data.direction {
-        rotation = Quat::from_axis_angle(
-            Vec3::Y,
-            std::f32::consts::FRAC_PI_2 * ((dir as u32 + 1) as f32),
-        );
+        if is_single_mesh {
+            let mut dir_num = dir as u32;
+
+            if furniture_definition.kind == FurnitureKind::Door {
+                dir_num += 1;
+            }
+            if dir_num != 0 {
+                rotation = Quat::from_axis_angle(
+                    Vec3::Y,
+                    std::f32::consts::FRAC_PI_2 * (dir_num as f32),
+                );
+            } else {
+                rotation = Quat::from_axis_angle(
+                    Vec3::Y,
+                    std::f32::consts::FRAC_PI_2 * 2.0,
+                );
+            }
+        }
     }
 
     let turf_transform = Transform {

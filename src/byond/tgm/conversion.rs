@@ -2,8 +2,8 @@ use bevy::{math::UVec2, utils::HashMap};
 
 use super::{Tile, TileMap};
 use crate::maps::{
-    tile_neighbours, AdjacencyInformation, FurnitureData, FurnitureDefinition, FurnitureKind,
-    MapData, TileData, TurfData, TurfDefinition, CHUNK_SIZE,
+    tile_neighbours, AdjacencyInformation, Direction, FurnitureData, FurnitureDefinition,
+    FurnitureKind, MapData, TileData, TurfData, TurfDefinition, CHUNK_SIZE,
 };
 
 type DefinitionLookup<'a> = HashMap<&'a str, u32>;
@@ -23,9 +23,10 @@ pub fn to_map_data(tilemap: &TileMap) -> MapData {
             continue;
         }
         let (turf_definition, furniture_definition) = tile_definitions.unwrap();
-        let tile_data = create_tile_data(turf_definition, furniture_definition);
 
-        for (position, _) in tilemap.tiles.iter().filter(|(_, i)| **i == index) {
+        for (position, &definition_id) in tilemap.tiles.iter().filter(|(_, i)| **i == index) {
+            let original_tile = tilemap.definitions.get(definition_id).unwrap();
+            let tile_data = create_tile_data(original_tile, turf_definition, furniture_definition);
             map_data
                 .set_tile(UVec2::new(position.x, position.z), Some(tile_data))
                 .unwrap();
@@ -108,19 +109,35 @@ fn create_tile_definitions(
     Some((turf, furniture))
 }
 
-fn create_tile_data(turf_definition: Option<u32>, furniture_definition: Option<u32>) -> TileData {
-    /*if let Some(id) = furniture_definition {
-        let definition = map.furniture_definition(id).expect("Furniture definition must exist");
-        if definition.kind == FurnitureKind::Door {
-
+fn create_tile_data(
+    original_tile: &Tile,
+    turf_definition: Option<u32>,
+    furniture_definition: Option<u32>,
+) -> TileData {
+    let mut furniture_dir = None;
+    if furniture_definition.is_some() {
+        if let Some(dir) = original_tile
+            .components
+            .iter()
+            .find_map(|c| c.variable("dir"))
+        {
+            if let super::Value::Number(n) = dir.value {
+                furniture_dir = match n as i64 {
+                    1 => Some(Direction::North),
+                    2 => Some(Direction::South),
+                    4 => Some(Direction::East),
+                    8 => Some(Direction::West),
+                    _ => Some(Direction::North),
+                }
+            }
         }
-    }*/
+    }
 
     TileData {
         turf: turf_definition.map(|i| TurfData { definition_id: i }),
         furniture: furniture_definition.map(|i| FurnitureData {
             definition_id: i,
-            direction: None,
+            direction: furniture_dir,
         }),
     }
 }
@@ -142,35 +159,21 @@ fn create_turf_definition(
                 "/obj/effect/spawner/structure/window" => Some(("window", "wall")),
                 "/obj/effect/spawner/structure/window/reinforced" => {
                     Some(("reinforced window", "wall"))
-                },
-                "/turf/open/floor/plasteel" => {
-                    Some(("floor", "floor"))
-                },
-                "/turf/open/floor/plasteel/white" => {
-                    Some(("white floor", "floor"))
-                },
-                "/turf/open/floor/plasteel/white/corner" => {
-                    Some(("white floor", "floor"))
-                },
-                "/turf/open/floor/plasteel/dark" => {
-                    Some(("dark floor", "floor"))
-                },
-                "/turf/open/floor/plasteel/grimy" => {
-                    Some(("floor", "floor"))
-                },
-                "/turf/open/floor/plating" => {
-                    Some(("plating", "floor"))
-                },
-                "/turf/open/floor/wood" => {
-                    Some(("wood floor", "floor"))
                 }
+                "/turf/open/floor/plasteel" => Some(("floor", "floor")),
+                "/turf/open/floor/plasteel/white" => Some(("white floor", "floor")),
+                "/turf/open/floor/plasteel/white/corner" => Some(("white floor", "floor")),
+                "/turf/open/floor/plasteel/dark" => Some(("dark floor", "floor")),
+                "/turf/open/floor/plasteel/grimy" => Some(("floor", "floor")),
+                "/turf/open/floor/plating" => Some(("plating", "floor")),
+                "/turf/open/floor/wood" => Some(("wood floor", "floor")),
                 _ => None,
             };
             // Fallback for all floors
             if name.is_none() && o.path.starts_with("/turf/open/floor") {
                 name = Some(("floor", "floor"));
             }
-            
+
             Some((priority, name?))
         })
         .flatten()
@@ -217,6 +220,8 @@ fn create_furniture_definition(
                 }
             } else if o.path.starts_with("/obj/structure/table") {
                 Some(("table", FurnitureKind::Table))
+            } else if o.path.starts_with("/obj/structure/chair") {
+                Some(("chair", FurnitureKind::Chair))
             } else {
                 None
             }

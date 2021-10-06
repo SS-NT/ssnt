@@ -348,6 +348,7 @@ impl TurfDefinition {
 pub enum FurnitureKind {
     Door,
     Table,
+    Chair,
 }
 
 #[derive(Clone)]

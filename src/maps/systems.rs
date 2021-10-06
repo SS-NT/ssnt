@@ -124,6 +124,9 @@ pub fn tilemap_mesh_loading_system(
                     t: asset_server.load("models/tilemap/tables.glb#Mesh75/Primitive0"),
                     x: asset_server.load("models/tilemap/tables.glb#Mesh77/Primitive0"),
                 }),
+                "chair" => asset_server
+                    .load("models/tilemap/chairs.glb#Mesh0/Primitive0")
+                    .into(),
                 _ => continue,
             });
             definition.connector_mesh =

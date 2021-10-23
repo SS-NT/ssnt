@@ -49,15 +49,34 @@ pub fn top_down_camera_update_system(
     for (mut camera, mut transform) in camera_query.iter_mut() {
         // TODO: Interpolate
         let interpolate = time.delta_seconds() * 10.0;
-        camera.current_angle = camera.current_angle * (1.0 - interpolate) + camera.target_angle * interpolate;
+        camera.current_angle =
+            camera.current_angle * (1.0 - interpolate) + camera.target_angle * interpolate;
 
         let target_transform = match target_query.get(camera.target) {
             Ok(t) => t,
             Err(_) => continue,
         };
-        let offset_rotation = Quat::from_euler(bevy::math::EulerRot::XYZ, 0.0, camera.current_angle, 45.0 * 0.017453);
+        let offset_rotation = Quat::from_euler(
+            bevy::math::EulerRot::XYZ,
+            0.0,
+            camera.current_angle,
+            45.0 * 0.017453,
+        );
         let offset = offset_rotation.mul_vec3(Vec3::new(0.0, 15.0, 0.0));
         transform.translation = target_transform.translation + offset;
         transform.look_at(target_transform.translation, Vec3::Y);
+    }
+}
+
+pub struct CameraPlugin;
+
+impl Plugin for CameraPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_system(
+            top_down_camera_input_system
+                .label("camera input")
+                .after("movement"),
+        )
+        .add_system(top_down_camera_update_system.after("camera input"));
     }
 }

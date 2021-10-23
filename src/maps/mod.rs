@@ -1,6 +1,6 @@
 use bevy::{
     math::{IVec2, Quat, UVec2, Vec3},
-    prelude::{Handle, Mesh, StandardMaterial},
+    prelude::*,
 };
 
 pub mod components;
@@ -203,7 +203,10 @@ pub fn tile_neighbours(position: UVec2) -> impl Iterator<Item = (Direction, UVec
     let position = position.as_i32();
     DIRECTIONS
         .iter()
-        .map(move |&dir| { let o: IVec2 = dir.into(); (dir, position + o) })
+        .map(move |&dir| {
+            let o: IVec2 = dir.into();
+            (dir, position + o)
+        })
         .filter(|(_, p)| p.x >= 0 && p.y >= 0)
         .map(|(dir, p)| (dir, p.as_u32()))
 }
@@ -439,4 +442,27 @@ pub struct TurfData {
 pub struct FurnitureData {
     pub definition_id: u32,
     pub direction: Option<Direction>,
+}
+
+pub struct MapPlugin;
+
+impl Plugin for MapPlugin {
+    fn build(&self, app: &mut bevy::prelude::App) {
+        app.add_event::<events::ChunkObserverAddedEvent>()
+            .add_event::<events::ChunkObserverRemovedEvent>()
+            .add_event::<events::ChunkSpawnedEvent>()
+            .add_system(systems::tilemap_observer_system.label("tilemap observer"))
+            .add_system(systems::tilemap_mesh_loading_system.label("tilemap mesh loading"))
+            .add_system(
+                systems::tilemap_spawning_system
+                    .label("tilemap spawning")
+                    .after("tilemap observer")
+                    .after("tilemap mesh loading"),
+            )
+            .add_system_to_stage(
+                CoreStage::PostUpdate,
+                systems::tilemap_spawn_adjacency_update_system,
+            )
+            .add_system(systems::tilemap_despawning_system.after("tilemap observer"));
+    }
 }

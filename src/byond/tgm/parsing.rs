@@ -2,7 +2,7 @@ use std::hash::Hash;
 
 use crate::byond::tgm::*;
 use bevy::utils::HashMap;
-use nom::{branch::alt, bytes::complete::tag, character::complete::{multispace0, none_of, one_of}, combinator::{opt, recognize}, error::{ContextError, ParseError, VerboseError, context}, multi::{fold_many1, many0, many1, separated_list0, separated_list1}, number::complete::float, sequence::{delimited, pair, preceded, tuple}};
+use nom::{branch::alt, bytes::complete::{escaped, tag}, character::complete::{multispace0, none_of, one_of}, combinator::{opt, recognize}, error::{ContextError, ParseError, VerboseError, context}, multi::{fold_many1, many0, many1, separated_list0, separated_list1}, number::complete::float, sequence::{delimited, pair, preceded, tuple}};
 
 type IResult<I, O, E = VerboseError<I>> = nom::IResult<I, O, E>;
 
@@ -72,8 +72,8 @@ fn object(input: &str) -> IResult<&str, Object> {
 }
 
 fn string(input: &str) -> IResult<&str, &str> {
-    let contents = |sym| recognize(many0(none_of(sym)));
-    alt((delimited(tag("\""), contents("\""), tag("\"")), delimited(tag("'"), contents("'"), tag("'"))))(input)
+    let contents = |sym| escaped(none_of(sym), '\\', tag("\""));
+    alt((delimited(tag("\""), contents("\"\\"), tag("\"")), delimited(tag("'"), contents("'\\"), tag("'"))))(input)
 }
 
 fn value(input: &str) -> IResult<&str, Value> {

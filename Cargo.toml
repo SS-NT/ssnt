@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 bevy = { version = "0.5", features = ["dynamic", "bevy_gltf"] }
 bevy_fly_camera = { git = "https://github.com/aloucks/bevy_fly_camera", branch = "bevy_main" }
+bevy_egui = { git = "https://github.com/jakobhellermann/bevy_egui", branch = "bevy-main" }
 nom = "6.1.2"
 cfg-if = "1.0.0"
 anyhow = "1.0.40"
@@ -16,4 +17,7 @@ futures-lite = "1.4.0"
 log = "0.4.8"
 
 [patch.crates-io]
+bevy = { path = "../bevy" }
+
+[patch.'https://github.com/bevyengine/bevy']
 bevy = { path = "../bevy" }

@@ -5,6 +5,7 @@ mod maps;
 mod utils;
 mod components;
 mod movement;
+mod ui;
 
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::prelude::*;
@@ -29,6 +30,7 @@ fn main() {
         .add_plugin(camera::CameraPlugin)
         .add_plugin(maps::MapPlugin)
         .add_plugin(movement::MovementPlugin)
+        .add_plugin(ui::UiPlugin)
         .insert_resource(ClearColor(Color::rgb(
             44.0 / 255.0,
             68.0 / 255.0,
@@ -59,7 +61,7 @@ impl Default for Player {
     }
 }
 
-struct Map {
+pub struct Map {
     pub handle: Handle<byond::tgm::TileMap>,
     pub spawned: bool,
 }

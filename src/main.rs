@@ -1,12 +1,16 @@
 mod byond;
+mod camera;
 mod items;
 mod maps;
 mod utils;
+mod components;
+mod movement;
 
 use bevy::tasks::{AsyncComputeTaskPool, Task};
-use bevy::{core::FixedTimestep, prelude::*};
+use bevy::prelude::*;
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
 use byond::tgm::TgmLoader;
+use camera::TopDownCamera;
 use futures_lite::future;
 use items::{
     containers::{
@@ -16,6 +20,7 @@ use items::{
 };
 use maps::components::{TileMap, TileMapObserver};
 use maps::MapData;
+use components::{Disabled, EntityCommandsExt};
 
 fn main() {
     App::new()
@@ -35,6 +40,10 @@ fn main() {
         .add_startup_system(load_map.system())
         .add_startup_system(test_containers.system())
         .add_system(cleanup_removed_items_system.system())
+        .add_system(movement::movement_system.label("movement"))
+        .add_system(camera::top_down_camera_input_system.label("camera input").after("movement"))
+        .add_system(camera::top_down_camera_update_system.after("camera input"))
+        .add_system(switch_camera_system)
         .add_system(maps::systems::tilemap_observer_system.label("tilemap observer"))
         .add_system(maps::systems::tilemap_mesh_loading_system.label("tilemap mesh loading"))
         .add_system(
@@ -43,14 +52,28 @@ fn main() {
                 .after("tilemap observer")
                 .after("tilemap mesh loading"),
         )
-        .add_system_to_stage(CoreStage::PostUpdate, maps::systems::tilemap_spawn_adjacency_update_system)
+        .add_system_to_stage(
+            CoreStage::PostUpdate,
+            maps::systems::tilemap_spawn_adjacency_update_system,
+        )
         .add_system(maps::systems::tilemap_despawning_system.after("tilemap observer"))
         .add_system(convert_tgm_map)
         .add_system(create_tilemap_from_converted)
         .run();
 }
 
-struct MainCamera;
+pub struct Player {
+    pub velocity: Vec2,
+    pub acceleration: f32,
+    pub max_velocity: f32,
+    pub friction: f32,
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self { max_velocity: 3.0, acceleration: 1.0, friction: 0.5, velocity: Vec2::ZERO }
+    }
+}
 
 struct Map {
     pub handle: Handle<byond::tgm::TileMap>,
@@ -75,14 +98,44 @@ fn setup(
         Vec3::new(0.2, -0.8, 0.0),
     ));
 
+    let player = commands
+        .spawn()
+        .insert(Transform::default())
+        .insert(GlobalTransform::default())
+        .insert(Player::default())
+        .insert(TileMapObserver::new(20.0))
+        .id();
     commands
         .spawn_bundle(PerspectiveCameraBundle {
             transform: Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
             ..Default::default()
         })
-        .insert(MainCamera)
-        .insert(TileMapObserver::new(20.0))
-        .insert(FlyCamera::default());
+        .insert(TopDownCamera::new(player))
+        .insert(Disabled(FlyCamera::default()))
+        .insert(camera::MainCamera);
+}
+
+fn switch_camera_system(
+    mut commands: Commands,
+    keyboard_input: Res<Input<KeyCode>>,
+    fly_cams: Query<(Entity, &FlyCamera), (With<Disabled<TopDownCamera>>, Without<TopDownCamera>)>,
+    top_down_cams: Query<(Entity, &TopDownCamera), (With<Disabled<FlyCamera>>, Without<FlyCamera>)>,
+) {
+    if !keyboard_input.just_pressed(KeyCode::C) {
+        return;
+    }
+
+    for (entity, _) in fly_cams.iter() {
+        commands.entity(entity)
+                .disable_component::<FlyCamera>()
+                .enable_component::<TopDownCamera>();
+    }
+
+    for (entity, _) in top_down_cams.iter() {
+        commands.entity(entity)
+                .disable_component::<TopDownCamera>()
+                .enable_component::<FlyCamera>();
+    }
 }
 
 fn load_map(mut commands: Commands, server: Res<AssetServer>) {
@@ -128,11 +181,11 @@ fn convert_tgm_map(
 fn create_tilemap_from_converted(
     mut commands: Commands,
     mut map_tasks: Query<(Entity, &mut Task<MapData>)>,
-    mut camera: Query<&mut Transform, With<MainCamera>>,
+    mut player: Query<&mut Transform, With<Player>>,
 ) {
     for (entity, mut map_task) in map_tasks.iter_mut() {
         if let Some(map_data) = future::block_on(future::poll_once(&mut *map_task)) {
-            camera.single_mut().translation = Vec3::new(
+            player.single_mut().translation = Vec3::new(
                 map_data.spawn_position.x as f32,
                 0.0,
                 map_data.spawn_position.y as f32,
@@ -144,85 +197,6 @@ fn create_tilemap_from_converted(
                 .insert(Transform::default())
                 .insert(GlobalTransform::identity());
             info!("Map conversion finished and applied (entity={:?})", entity);
-        }
-    }
-}
-
-fn create_map_models(
-    mut commands: Commands,
-    map_resource: Option<ResMut<Map>>,
-    tilemaps: Res<Assets<byond::tgm::TileMap>>,
-    asset_server: Res<AssetServer>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut cameras: Query<&mut Transform, With<MainCamera>>,
-) {
-    if let Some(mut res) = map_resource {
-        if res.spawned {
-            return;
-        }
-
-        if let Some(map) = tilemaps.get(&res.handle) {
-            let map_middle = map.middle();
-            let middle = Vec3::new(map_middle.x as f32, 0.0, map_middle.y as f32);
-            let mut cam = middle;
-            cam.y = 300.0;
-            let mut camera_position = cameras.single_mut();
-            *camera_position = Transform::from_translation(cam);
-            camera_position.rotation = Quat::from_euler(
-                bevy::math::EulerRot::YXZ,
-                0.0,
-                -std::f32::consts::FRAC_PI_2,
-                0.0,
-            );
-
-            //let floor_handle= asset_server.load("models/tilemap/floors.glb#Mesh0/Primitive0");
-            let wall_material_handle = materials.add(StandardMaterial {
-                base_color: Color::rgb(0.8, 0.8, 0.8),
-                ..Default::default()
-            });
-            let window_material_handle = materials.add(StandardMaterial {
-                base_color: Color::rgb(0.1, 0.1, 0.9),
-                ..Default::default()
-            });
-            let door_material_handle = materials.add(StandardMaterial {
-                base_color: Color::rgb(0.0, 1.0, 0.0),
-                ..Default::default()
-            });
-            let mesh_handle = meshes.add(Mesh::from(shape::Cube { size: 1.0 }));
-
-            for (position, tile) in map.iter_tiles() {
-                if let Some(tile) = tile {
-                    for component in tile.components.iter() {
-                        let mut material = match component.path.as_str() {
-                            "/turf/closed/wall" | "/turf/closed/wall/r_wall" => {
-                                Some(wall_material_handle.clone())
-                            }
-                            "/obj/structure/window"
-                            | "/obj/structure/window/reinforced"
-                            | "/obj/effect/spawner/structure/window/reinforced"
-                            | "/obj/effect/spawner/structure/window" => {
-                                Some(window_material_handle.clone())
-                            }
-                            _ => None,
-                        };
-                        if component.path.contains("/obj/machinery/door/airlock") {
-                            material = Some(door_material_handle.clone());
-                        }
-                        if let Some(material) = material {
-                            commands.spawn_bundle(PbrBundle {
-                                mesh: mesh_handle.clone(),
-                                material,
-                                transform: Transform::from_translation((*position).as_f32()),
-                                ..Default::default()
-                            });
-                            break;
-                        }
-                    }
-                }
-            }
-
-            res.spawned = true;
         }
     }
 }

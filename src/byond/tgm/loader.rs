@@ -1,5 +1,7 @@
 use bevy::asset::{AssetLoader, LoadContext, LoadedAsset};
 
+use crate::utils::text::truncate;
+
 use super::{parsing, TileMap};
 
 #[derive(Default)]
@@ -44,9 +46,10 @@ async fn load_tgm<'a, 'b>(
         match err {
             nom::Err::Incomplete(_) => todo!(),
             nom::Err::Error(e) | nom::Err::Failure(e) => {
-                println!("Error: {}", e);
+                let full_error = e.to_string();
+                let truncated = truncate(full_error.as_str(), 2000);
                 return Err(TgmError {
-                    message: format!("{}", e),
+                    message: truncated.into_owned(),
                 }
                 .into());
             }

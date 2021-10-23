@@ -54,7 +54,9 @@ pub fn to_map_data(tilemap: &TileMap) -> MapData {
                         let furniture_definition = map_data
                             .furniture_definition(furniture_data.definition_id)
                             .unwrap();
-                        if furniture_definition.kind == FurnitureKind::Door {
+                        if furniture_definition.kind == FurnitureKind::Door
+                            || furniture_definition.kind == FurnitureKind::Table
+                        {
                             adjacency.add(dir);
                             continue;
                         }
@@ -156,8 +158,12 @@ fn create_turf_definition(
                 "/turf/closed/wall" => Some(("wall", "wall")),
                 "/turf/closed/wall/r_wall" => Some(("reinforced wall", "wall")),
                 "/obj/structure/grille" => Some(("grille", "grille")),
+                "/obj/structure/plasticflaps/opaque" => Some(("wall", "wall")),
                 "/obj/effect/spawner/structure/window" => Some(("window", "wall")),
                 "/obj/effect/spawner/structure/window/reinforced" => {
+                    Some(("reinforced window", "wall"))
+                }
+                "/obj/effect/spawner/structure/window/reinforced/tinted" => {
                     Some(("reinforced window", "wall"))
                 }
                 "/turf/open/floor/plasteel" => Some(("floor", "floor")),

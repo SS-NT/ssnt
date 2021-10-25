@@ -1,4 +1,4 @@
-use bevy::{prelude::Entity, utils::HashMap};
+use bevy::{prelude::*, utils::HashMap};
 
 use super::{spawning::SpawnedChunk, MapData};
 
@@ -59,4 +59,15 @@ impl TileMapObserver {
     }
 }
 
-pub struct TurfMarker;
+#[derive(Clone, Copy)]
+pub struct SpawnedTileObject {
+    pub tilemap: Entity,
+    pub position: UVec2,
+}
+
+#[derive(Bundle)]
+pub struct SpawnedTileObjectBundle {
+    pub tile_object: SpawnedTileObject,
+    #[bundle]
+    pub pbr: PbrBundle,
+}

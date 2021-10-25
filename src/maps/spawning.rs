@@ -1,10 +1,6 @@
 use crate::maps::TilemapMesh;
 
-use super::{
-    components::TurfMarker, tile_neighbours, AdjacencyInformation, FurnitureData,
-    FurnitureDefinition, FurnitureKind, MapData, TileData, TurfData, TurfDefinition, CHUNK_LENGTH,
-    CHUNK_SIZE, DIRECTIONS,
-};
+use super::{AdjacencyInformation, CHUNK_LENGTH, CHUNK_SIZE, DIRECTIONS, FurnitureData, FurnitureDefinition, FurnitureKind, MapData, TileData, TurfData, TurfDefinition, components::{SpawnedTileObject, SpawnedTileObjectBundle}, tile_neighbours};
 use bevy::{math::{IVec2, Quat, UVec2, Vec3}, pbr::PbrBundle, prelude::{
         warn, BuildChildren, Commands, DespawnRecursiveExt, Entity, Handle, Mesh, Transform,
     }};
@@ -258,23 +254,25 @@ fn apply_turf(
     let material = turf_definition.material.clone().unwrap();
     let mesh = mesh_handle;
 
+    let bundle = SpawnedTileObjectBundle {
+        tile_object: SpawnedTileObject { tilemap: tilemap_entity, position: tile_position },
+        pbr: PbrBundle {
+            mesh,
+            material,
+            transform: turf_transform,
+            ..Default::default()
+        }
+    };
+
     if let Some((current_data, entity)) = spawned_turf {
         if turf_data != current_data {
             commands
                 .entity(*entity)
-                .insert(mesh)
-                .insert(material)
-                .insert(turf_transform);
+                .insert_bundle(bundle);
         }
     } else {
         let turf = commands
-            .spawn_bundle(PbrBundle {
-                mesh,
-                material,
-                transform: turf_transform,
-                ..Default::default()
-            })
-            .insert(TurfMarker)
+            .spawn_bundle(bundle)
             .id();
         commands.entity(tilemap_entity).push_children(&[turf]);
         *spawned_turf = Some((*turf_data, turf));
@@ -355,23 +353,25 @@ fn apply_furniture(
     let material = furniture_definition.material.as_ref().unwrap();
     let mesh = mesh_handle;
 
+    let bundle = SpawnedTileObjectBundle {
+        tile_object: SpawnedTileObject { tilemap: tilemap_entity, position: tile_position },
+        pbr: PbrBundle {
+            mesh,
+            material: material.clone(),
+            transform: turf_transform,
+            ..Default::default()
+        }
+    };
+
     if let Some((current_data, entity)) = spawned_furniture {
         if furniture_data != current_data {
             commands
                 .entity(*entity)
-                .insert(mesh)
-                .insert(material.clone())
-                .insert(turf_transform);
+                .insert_bundle(bundle);
         }
     } else {
         let turf = commands
-            .spawn_bundle(PbrBundle {
-                mesh,
-                material: material.clone(),
-                transform: turf_transform,
-                ..Default::default()
-            })
-            .insert(TurfMarker)
+            .spawn_bundle(bundle)
             .id();
         if furniture_definition.kind == FurnitureKind::Door {
             let connector_left = commands

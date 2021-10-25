@@ -168,7 +168,7 @@ pub fn tilemap_spawning_system(
 
 pub fn tilemap_spawn_adjacency_update_system(
     tilemaps: Query<&TileMap>,
-    mut turf_entities: Query<(&mut Transform, &mut Handle<Mesh>), With<TurfMarker>>,
+    mut turf_entities: Query<(&mut Transform, &mut Handle<Mesh>), With<SpawnedTileObject>>,
     mut spawned_event: EventReader<ChunkSpawnedEvent>,
 ) {
     for event in spawned_event.iter() {

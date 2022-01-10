@@ -48,6 +48,7 @@ fn main() {
         .run();
 }
 
+#[derive(Component)]
 pub struct Player {
     pub velocity: Vec2,
     pub acceleration: f32,
@@ -78,11 +79,11 @@ fn setup(
         ..Default::default()
     });
 
-    commands.spawn().insert(DirectionalLight::new(
-        Color::rgb(1.0, 1.0, 1.0),
-        10000.0,
-        Vec3::new(0.2, -0.8, 0.0),
-    ));
+    // TODO: Replace with on-station lights
+    commands.insert_resource(AmbientLight {
+        brightness: 0.2,
+        ..Default::default()
+    });
 
     let player = commands
         .spawn()

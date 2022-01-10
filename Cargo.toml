@@ -2,22 +2,22 @@
 name = "ssnt"
 version = "0.1.0"
 authors = ["Alain Siegrist <alainsiegrist02@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { version = "0.5", features = ["dynamic", "bevy_gltf"] }
-bevy_fly_camera = { git = "https://github.com/aloucks/bevy_fly_camera", branch = "bevy_main" }
-bevy_egui = { git = "https://github.com/jakobhellermann/bevy_egui", branch = "bevy-main" }
+bevy = { version = "0.6", features = ["dynamic", "bevy_gltf"] }
+bevy_fly_camera = "0.8.0"
+bevy_egui = "0.10"
 nom = "6.1.2"
 cfg-if = "1.0.0"
 anyhow = "1.0.40"
 futures-lite = "1.4.0"
 log = "0.4.8"
 
-[patch.crates-io]
-bevy = { path = "../bevy" }
+[profile.dev.package."*"]
+opt-level = 3
 
-[patch.'https://github.com/bevyengine/bevy']
-bevy = { path = "../bevy" }
+[profile.dev]
+opt-level = 1

@@ -1,11 +1,12 @@
 use bevy::{
     math::UVec2,
-    prelude::{Entity, Query, RemovedComponents},
+    prelude::{Entity, Query, RemovedComponents, Component},
     utils::HashMap,
 };
 
 use super::Item;
 
+#[derive(Component)]
 pub struct Container {
     size: UVec2,
     items: HashMap<UVec2, Entity>,

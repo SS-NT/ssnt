@@ -200,7 +200,7 @@ impl Chunk {
 }
 
 pub fn tile_neighbours(position: UVec2) -> impl Iterator<Item = (Direction, UVec2)> {
-    let position = position.as_i32();
+    let position = position.as_ivec2();
     DIRECTIONS
         .iter()
         .map(move |&dir| {
@@ -208,7 +208,7 @@ pub fn tile_neighbours(position: UVec2) -> impl Iterator<Item = (Direction, UVec
             (dir, position + o)
         })
         .filter(|(_, p)| p.x >= 0 && p.y >= 0)
-        .map(|(dir, p)| (dir, p.as_u32()))
+        .map(|(dir, p)| (dir, p.as_uvec2()))
 }
 
 #[derive(Clone)]

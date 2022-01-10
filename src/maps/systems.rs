@@ -177,7 +177,7 @@ pub fn tilemap_spawn_adjacency_update_system(
             Err(_) => continue,
         };
         let chunk_position =
-            MapData::position_from_chunk_index(tilemap.data.size, event.chunk_index).as_i32();
+            MapData::position_from_chunk_index(tilemap.data.size, event.chunk_index).as_ivec2();
         for &dir in [
             Direction::North,
             Direction::South,
@@ -191,7 +191,7 @@ pub fn tilemap_spawn_adjacency_update_system(
             if adjacent_position.x < 0 || adjacent_position.y < 0 {
                 continue;
             }
-            let adjacent_position = adjacent_position.as_u32();
+            let adjacent_position = adjacent_position.as_uvec2();
             let adjacent_index = tilemap.data.index_from_chunk_position(adjacent_position);
             let adjacent_chunk = match tilemap.spawned_chunks.get(&adjacent_index) {
                 Some(x) => x,

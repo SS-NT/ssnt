@@ -6,6 +6,7 @@ use bevy::{
     prelude::{Entity, World},
 };
 
+#[derive(Component)]
 pub struct Disabled<T>(pub T);
 
 pub struct EnableComponent<T> {

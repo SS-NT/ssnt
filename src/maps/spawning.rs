@@ -96,11 +96,11 @@ fn get_furniture_adjacency_information(
     let mut info = AdjacencyInformation::default();
     for &dir in DIRECTIONS.iter() {
         let offset: IVec2 = dir.into();
-        let adjacent_position = tile_position.as_i32() + offset;
+        let adjacent_position = tile_position.as_ivec2() + offset;
         if adjacent_position.x < 0 || adjacent_position.y < 0 {
             continue;
         }
-        let tile = match map.tile(adjacent_position.as_u32()) {
+        let tile = match map.tile(adjacent_position.as_uvec2()) {
             Some(x) => x,
             None => continue,
         };

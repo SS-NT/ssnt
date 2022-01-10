@@ -1,7 +1,8 @@
-use bevy::{math::UVec2, prelude::Entity};
+use bevy::{math::UVec2, prelude::{Entity, Component}};
 
 pub mod containers;
 
+#[derive(Component)]
 pub struct Item {
     pub name: String,
     pub size: UVec2,

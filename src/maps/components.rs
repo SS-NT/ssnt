@@ -2,6 +2,7 @@ use bevy::{prelude::*, utils::HashMap};
 
 use super::{spawning::SpawnedChunk, MapData};
 
+#[derive(Component)]
 pub struct TileMap {
     pub data: MapData,
     pub spawned_chunks: HashMap<usize, SpawnedChunk>,
@@ -16,6 +17,7 @@ impl TileMap {
     }
 }
 
+#[derive(Component)]
 pub struct TileMapObserver {
     pub view_range: f32,
     chunks_in_range: HashMap<Entity, Vec<usize>>,
@@ -59,7 +61,7 @@ impl TileMapObserver {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Component)]
 pub struct SpawnedTileObject {
     pub tilemap: Entity,
     pub position: UVec2,

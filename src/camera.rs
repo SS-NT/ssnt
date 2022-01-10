@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 
+#[derive(Component)]
 pub struct MainCamera;
 
+#[derive(Component)]
 pub struct TopDownCamera {
     pub target: Entity,
     pub target_angle: f32,

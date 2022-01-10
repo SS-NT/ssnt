@@ -125,7 +125,7 @@ impl Object {
     }
 
     fn variable(&self, name: &str) -> Option<&Variable> {
-        self.variables.iter().filter(|v| v.name == name).next()
+        self.variables.iter().find(|v| v.name == name)
     }
 }
 

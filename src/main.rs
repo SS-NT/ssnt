@@ -1,3 +1,7 @@
+#![allow(
+    clippy::type_complexity,
+  )]
+
 mod byond;
 mod camera;
 mod items;
@@ -153,7 +157,7 @@ fn convert_tgm_map(
     tilemaps: Res<Assets<byond::tgm::TileMap>>,
     thread_pool: Res<AsyncComputeTaskPool>,
 ) {
-    if let Some(mut res) = map_resource {
+    if let Some(res) = map_resource {
         if let Some(map) = tilemaps.get(&res.handle) {
             let map_copy = byond::tgm::TileMap::clone(map);
             let task =

@@ -2,11 +2,13 @@ use std::hash::Hash;
 
 use crate::byond::tgm::*;
 use bevy::utils::HashMap;
-use nom::{branch::alt, bytes::complete::{escaped, tag}, character::complete::{multispace0, none_of, one_of}, combinator::{opt, recognize}, error::{ContextError, ParseError, VerboseError, context}, multi::{fold_many1, many0, many1, separated_list0, separated_list1}, number::complete::float, sequence::{delimited, pair, preceded, tuple}};
+use nom::{branch::alt, bytes::complete::{escaped, tag}, character::complete::{multispace0, none_of, one_of}, combinator::{opt, recognize}, error::{ContextError, ParseError, VerboseError, context}, multi::{fold_many1, many1, separated_list0, separated_list1}, number::complete::float, sequence::{delimited, pair, preceded, tuple}};
 
 type IResult<I, O, E = VerboseError<I>> = nom::IResult<I, O, E>;
 
-pub fn parse(input: &str) -> IResult<&str, (Vec<(&str, Tile)>, Vec<(UVec3, &str)>)> {
+type MapParseResult<'a> = IResult<&'a str, (Vec<(&'a str, Tile)>, Vec<(UVec3, &'a str)>)>;
+
+pub fn parse(input: &str) -> MapParseResult {
     pair(ws(tile_definitions), ws(chunk_definitions))(input)
 }
 

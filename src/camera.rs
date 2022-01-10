@@ -25,10 +25,10 @@ impl TopDownCamera {
 }
 
 pub fn top_down_camera_input_system(
-    mut camera_query: Query<(&mut TopDownCamera, &Transform)>,
+    mut camera_query: Query<&mut TopDownCamera>,
     keyboard_input: Res<Input<KeyCode>>,
 ) {
-    for (mut camera, transform) in camera_query.iter_mut() {
+    for mut camera in camera_query.iter_mut() {
         let mut rotation = None;
         if keyboard_input.just_pressed(KeyCode::Q) {
             rotation = Some(-1.0);
@@ -38,7 +38,7 @@ pub fn top_down_camera_input_system(
 
         if let Some(rotation) = rotation {
             let offset = std::f32::consts::FRAC_PI_2 * rotation;
-            camera.target_angle = camera.target_angle + offset;
+            camera.target_angle += offset;
         }
     }
 }

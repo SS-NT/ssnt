@@ -152,7 +152,7 @@ fn create_turf_definition(
     let turf_description = tile
         .components
         .iter()
-        .map(|o| {
+        .filter_map(|o| {
             let priority = if o.path.starts_with("/obj") { 1 } else { 0 };
             let mut name = match o.path.as_str() {
                 "/turf/closed/wall" => Some(("wall", "wall")),
@@ -182,12 +182,11 @@ fn create_turf_definition(
 
             Some((priority, name?))
         })
-        .flatten()
         .max_by_key(|x| x.0)?
         .1;
 
     let definition_id = *turf_definitions
-        .entry(&turf_description.0)
+        .entry(turf_description.0)
         .or_insert_with(|| {
             map.insert_turf_definition(TurfDefinition::new(turf_description.0, turf_description.1))
         });
@@ -203,7 +202,7 @@ fn create_furniture_definition(
     let furniture_definition = tile
         .components
         .iter()
-        .map(|o| {
+        .filter_map(|o| {
             if o.path.contains("door/airlock") {
                 if o.path.contains("maintenance") {
                     Some(("airlock maintenance", FurnitureKind::Door))
@@ -232,7 +231,6 @@ fn create_furniture_definition(
                 None
             }
         })
-        .flatten()
         .next()?;
 
     let definition_id = *furniture_definitions

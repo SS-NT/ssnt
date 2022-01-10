@@ -167,7 +167,7 @@ pub fn apply_chunk(
             .collect(),
         None => (0..data.tiles.len()).collect(),
     };
-    let mut spawned_chunk = spawned_chunk.unwrap_or_else(Default::default);
+    let mut spawned_chunk = spawned_chunk.unwrap_or_default();
 
     for &index in changed_indicies.iter() {
         let tile_data = data.tiles.get(index).unwrap();

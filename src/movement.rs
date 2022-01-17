@@ -3,14 +3,15 @@ use crate::{
     Player,
 };
 use bevy::{math::Vec3Swizzles, prelude::*};
+use bevy_rapier3d::{prelude::RigidBodyVelocityComponent, na::Vector3};
 
 pub fn movement_system(
     time: Res<Time>,
     keyboard_input: Res<Input<KeyCode>>,
-    mut query: Query<(&mut Player, &mut Transform)>,
+    mut query: Query<(&mut Player, &mut RigidBodyVelocityComponent)>,
     camera_query: Query<&TopDownCamera, With<MainCamera>>,
 ) {
-    for (mut player, mut transform) in query.iter_mut() {
+    for (mut player, mut velocity) in query.iter_mut() {
         let axis_x = movement_axis(&keyboard_input, KeyCode::W, KeyCode::S);
         let axis_z = movement_axis(&keyboard_input, KeyCode::D, KeyCode::A);
 
@@ -45,7 +46,7 @@ pub fn movement_system(
             velocity_with_friction
         };
 
-        transform.translation += Vec3::new(player.velocity.x, 0.0, player.velocity.y);
+        velocity.0.linvel = Vector3::new(player.velocity.x, 0.0, player.velocity.y);
     }
 }
 

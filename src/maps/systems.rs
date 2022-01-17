@@ -213,9 +213,10 @@ pub fn tilemap_spawn_adjacency_update_system(
                         tile_position,
                         &tilemap.data,
                     ) {
-                        let (mut transform, mut mesh) = turf_entities.get_mut(turf_entity).unwrap();
-                        transform.rotation = rotation;
-                        *mesh = mesh_handle;
+                        if let Ok((mut transform, mut mesh)) = turf_entities.get_mut(turf_entity) {
+                            transform.rotation = rotation;
+                            *mesh = mesh_handle;
+                        };
                     };
                 }
             }
@@ -240,7 +241,7 @@ pub fn tilemap_despawning_system(
             None => continue,
         };
 
-        despawn_chunk(&mut commands, spawned_chunk);
+        //despawn_chunk(&mut commands, spawned_chunk);
     }
 }
 

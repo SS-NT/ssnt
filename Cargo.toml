@@ -10,6 +10,7 @@ edition = "2021"
 bevy = { version = "0.6", features = ["dynamic", "bevy_gltf"] }
 bevy_fly_camera = "0.8.0"
 bevy_egui = "0.10"
+bevy_rapier3d = { version = "0.12.0", features = ["simd-stable"] }
 nom = "6.1.2"
 cfg-if = "1.0.0"
 anyhow = "1.0.40"

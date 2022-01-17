@@ -14,6 +14,10 @@ mod ui;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::prelude::*;
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
+use bevy_rapier3d::na::{Point3, Vector3};
+use bevy_rapier3d::physics::{ColliderBundle, RigidBodyPositionSync, RapierPhysicsPlugin, NoUserData};
+use bevy_rapier3d::prelude::{ColliderShape, RigidBodyForces, RigidBodyPositionComponent, RigidBodyMassPropsFlags, RigidBodyDamping};
+use bevy_rapier3d::{physics::RigidBodyBundle, prelude::{RigidBodyActivation, RigidBodyCcd}};
 use byond::tgm::TgmLoader;
 use camera::TopDownCamera;
 use futures_lite::future;
@@ -31,6 +35,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugin(FlyCameraPlugin)
+        .add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugin(camera::CameraPlugin)
         .add_plugin(maps::MapPlugin)
         .add_plugin(movement::MovementPlugin)
@@ -62,7 +67,7 @@ pub struct Player {
 
 impl Default for Player {
     fn default() -> Self {
-        Self { max_velocity: 3.0, acceleration: 1.0, friction: 0.5, velocity: Vec2::ZERO }
+        Self { max_velocity: 5.0, acceleration: 6.0, friction: 4.0, velocity: Vec2::ZERO }
     }
 }
 
@@ -75,6 +80,7 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    server: Res<AssetServer>,
 ) {
     commands.spawn_bundle(PbrBundle {
         mesh: meshes.add(Mesh::from(shape::Cube { size: 2.0 })),
@@ -89,13 +95,37 @@ fn setup(
         ..Default::default()
     });
 
+    let player_model = server.load("models/human.glb#Scene0");
+    let player_rigid_body = RigidBodyBundle {
+        activation: RigidBodyActivation::cannot_sleep().into(),
+        forces: RigidBodyForces {
+            gravity_scale: 0.0,
+            ..Default::default()
+        }.into(),
+        ccd: RigidBodyCcd { ccd_enabled: true, ..Default::default() }.into(),
+        mass_properties: RigidBodyMassPropsFlags::ROTATION_LOCKED.into(),
+        damping: RigidBodyDamping { linear_damping: 0.0, angular_damping: 0.0 }.into(),
+        ..Default::default()
+    };
+    let player_collider = ColliderBundle {
+        shape: ColliderShape::capsule(Point3::new(0.0, -1.0, 0.0), Point3::new(0.0, 1.0, 0.0), 0.2).into(),
+        ..Default::default()
+    };
     let player = commands
         .spawn()
         .insert(Transform::default())
         .insert(GlobalTransform::default())
         .insert(Player::default())
         .insert(TileMapObserver::new(20.0))
+        .insert_bundle(player_rigid_body)
+        .insert_bundle(player_collider)
+        .insert(RigidBodyPositionSync::default())
+        .with_children(|parent| {
+            parent.spawn_scene(player_model);
+        })
         .id();
+    
+    
     commands
         .spawn_bundle(PerspectiveCameraBundle {
             transform: Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
@@ -172,15 +202,15 @@ fn convert_tgm_map(
 fn create_tilemap_from_converted(
     mut commands: Commands,
     mut map_tasks: Query<(Entity, &mut Task<MapData>)>,
-    mut player: Query<&mut Transform, With<Player>>,
+    mut player: Query<&mut RigidBodyPositionComponent, With<Player>>,
 ) {
     for (entity, mut map_task) in map_tasks.iter_mut() {
         if let Some(map_data) = future::block_on(future::poll_once(&mut *map_task)) {
-            player.single_mut().translation = Vec3::new(
+            player.single_mut().0.position = Vector3::new(
                 map_data.spawn_position.x as f32,
                 0.0,
                 map_data.spawn_position.y as f32,
-            );
+            ).into();
             commands
                 .entity(entity)
                 .remove::<Task<MapData>>()

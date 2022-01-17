@@ -4,6 +4,7 @@ use super::{AdjacencyInformation, CHUNK_LENGTH, CHUNK_SIZE, DIRECTIONS, Furnitur
 use bevy::{math::{IVec2, Quat, UVec2, Vec3}, pbr::PbrBundle, prelude::{
         warn, BuildChildren, Commands, DespawnRecursiveExt, Entity, Handle, Mesh, Transform,
     }};
+use bevy_rapier3d::{physics::ColliderBundle, prelude::{ColliderShape, ColliderPosition}, na::{Isometry3}};
 
 const EMPTY_SPAWNED_TILE: Option<SpawnedTile> = None;
 
@@ -264,16 +265,31 @@ fn apply_turf(
         }
     };
 
+    let physics_position = Isometry3::translation(turf_transform.translation.x, turf_transform.translation.y, turf_transform.translation.z);
+    let collider_bundle = if turf_definition.category == "wall" {
+        Some(ColliderBundle {
+            shape: ColliderShape::cuboid(0.5, 0.5, 0.5).into(),
+            position: ColliderPosition(physics_position).into(),
+            ..Default::default()
+        })
+    } else {
+        None
+    };
+
     if let Some((current_data, entity)) = spawned_turf {
         if turf_data != current_data {
-            commands
-                .entity(*entity)
-                .insert_bundle(bundle);
+            let mut entity_commands = commands.entity(*entity);
+            entity_commands.insert_bundle(bundle);
+            if let Some(collider) = collider_bundle {
+                entity_commands.insert_bundle(collider);
+            }
         }
     } else {
-        let turf = commands
-            .spawn_bundle(bundle)
-            .id();
+        let mut entity_commands = commands.spawn_bundle(bundle);
+        if let Some(collider) = collider_bundle {
+            entity_commands.insert_bundle(collider);
+        }
+        let turf = entity_commands.id();
         commands.entity(tilemap_entity).push_children(&[turf]);
         *spawned_turf = Some((*turf_data, turf));
     }

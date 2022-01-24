@@ -3,15 +3,26 @@ use crate::{
     Player,
 };
 use bevy::{math::Vec3Swizzles, prelude::*};
-use bevy_rapier3d::{prelude::RigidBodyVelocityComponent, na::Vector3};
+use bevy_rapier3d::{
+    na::Vector3,
+    prelude::{
+        RigidBodyForcesComponent, RigidBodyMassPropsComponent,
+        RigidBodyPositionComponent, RigidBodyVelocityComponent,
+    },
+};
 
 pub fn movement_system(
     time: Res<Time>,
     keyboard_input: Res<Input<KeyCode>>,
-    mut query: Query<(&mut Player, &mut RigidBodyVelocityComponent)>,
+    mut query: Query<(
+        &mut Player,
+        &RigidBodyVelocityComponent,
+        &mut RigidBodyForcesComponent,
+        &RigidBodyMassPropsComponent,
+    )>,
     camera_query: Query<&TopDownCamera, With<MainCamera>>,
 ) {
-    for (mut player, mut velocity) in query.iter_mut() {
+    for (mut player, velocity, mut forces, mass_properties) in query.iter_mut() {
         let axis_x = movement_axis(&keyboard_input, KeyCode::W, KeyCode::S);
         let axis_z = movement_axis(&keyboard_input, KeyCode::D, KeyCode::A);
 
@@ -20,33 +31,63 @@ pub fn movement_system(
             Err(_) => return,
         };
 
-        // Calculate velocity to add
-        let additional_velocity =
-            Quat::from_euler(bevy::math::EulerRot::XYZ, 0.0, current_angle, 0.0)
-                .mul_vec3(Vec3::new(axis_x, 0.0, axis_z)).xz() * player.acceleration;
-        // Calculate friction from velocity
-        let friction = if player.velocity.length_squared() != 0.0 {
-            player.velocity.normalize() * player.friction * -1.0
-        } else {
-            Vec2::ZERO
-        };
+        // Figure out where we want to go by key input and camera angle
+        let target_direction = Quat::from_euler(bevy::math::EulerRot::XYZ, 0.0, current_angle, 0.0)
+            .mul_vec3(Vec3::new(axis_x, 0.0, axis_z))
+            .xz();
+        player.target_direction = target_direction;
 
-        // Add velocity
-        player.velocity += additional_velocity * time.delta_seconds();
+        // What is our ideal speed
+        let mut ideal_speed: Vec2 = target_direction * player.max_velocity;
 
-        // Clamp velocity
-        if player.velocity.length() > player.max_velocity {
-            player.velocity = player.velocity.normalize() * player.max_velocity;
+        // Prevent diagonal movement being twice as fast
+        if target_direction.length_squared() > f32::EPSILON {
+            ideal_speed /= target_direction.length();
         }
 
-        let velocity_with_friction = player.velocity + friction * time.delta_seconds();
-        player.velocity = if player.velocity.signum() != velocity_with_friction.signum() {
-            Vec2::ZERO
+        // Move target velocity towards ideal speed, by acceleration
+        let difference: Vec2 = ideal_speed - player.target_velocity;
+        let step: f32 = player.acceleration * time.delta_seconds();
+        let difference_magnitude = difference.length();
+        if difference_magnitude < step || difference_magnitude < f32::EPSILON {
+            player.target_velocity = ideal_speed;
         } else {
-            velocity_with_friction
-        };
+            player.target_velocity += difference / difference_magnitude * step;
+        }
 
-        velocity.0.linvel = Vector3::new(player.velocity.x, 0.0, player.velocity.y);
+        // Calculate needed force to reach target velocity in one frame
+        let mut one_tick = time.delta_seconds();
+        if one_tick < f32::EPSILON {
+            one_tick = 1.0;
+        }
+        let current_velocity = Vec2::from(velocity.0.linvel.xz());
+        let needed_acceleration: Vec2 = (player.target_velocity - current_velocity) / one_tick;
+        let max_acceleration = player.max_acceleration_force;
+        let allowed_acceleration = needed_acceleration.clamp_length_max(max_acceleration);
+        let force: Vec2 = allowed_acceleration * mass_properties.0.mass();
+
+        forces.0.force = Vector3::new(force.x, 0.0, force.y);
+    }
+}
+
+fn character_rotation_system(
+    time: Res<Time>,
+    mut query: Query<(&Player, &mut RigidBodyPositionComponent), With<Player>>,
+) {
+    for (player, mut transform) in query.iter_mut() {
+        let mut target_direction: Vec2 = player.target_direction;
+        if target_direction.length() < 0.01 {
+            continue;
+        }
+        target_direction = target_direction.normalize();
+
+        let current_rotation: Quat = transform.0.position.rotation.into();
+        let target_rotation = Quat::from_rotation_arc(
+            Vec3::Z,
+            Vec3::new(target_direction.x, 0.0, target_direction.y),
+        );
+        let final_rotation = current_rotation.lerp(target_rotation, time.delta_seconds() * 5.0);
+        transform.0.position.rotation = final_rotation.into();
     }
 }
 
@@ -66,5 +107,6 @@ pub struct MovementPlugin;
 impl Plugin for MovementPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(movement_system.label("movement"));
+        app.add_system_to_stage(CoreStage::PostUpdate, character_rotation_system);
     }
 }

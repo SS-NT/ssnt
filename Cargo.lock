@@ -3098,7 +3098,9 @@ dependencies = [
  "bevy_rapier3d",
  "cfg-if 1.0.0",
  "futures-lite",
+ "glam",
  "log",
+ "nalgebra",
  "nom 6.1.2",
 ]
 

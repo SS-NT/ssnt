@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
 use bevy_rapier3d::na::{Point3, Vector3};
 use bevy_rapier3d::physics::{ColliderBundle, RigidBodyPositionSync, RapierPhysicsPlugin, NoUserData};
-use bevy_rapier3d::prelude::{ColliderShape, RigidBodyForces, RigidBodyPositionComponent, RigidBodyMassPropsFlags, RigidBodyDamping};
+use bevy_rapier3d::prelude::{ColliderShape, RigidBodyForces, RigidBodyPositionComponent, RigidBodyMassPropsFlags, RigidBodyDamping, ColliderMassProps, MassProperties};
 use bevy_rapier3d::{physics::RigidBodyBundle, prelude::{RigidBodyActivation, RigidBodyCcd}};
 use byond::tgm::TgmLoader;
 use camera::TopDownCamera;
@@ -59,15 +59,22 @@ fn main() {
 
 #[derive(Component)]
 pub struct Player {
-    pub velocity: Vec2,
+    pub target_velocity: Vec2,
     pub acceleration: f32,
+    pub max_acceleration_force: f32,
     pub max_velocity: f32,
-    pub friction: f32,
+    pub target_direction: Vec2,
 }
 
 impl Default for Player {
     fn default() -> Self {
-        Self { max_velocity: 5.0, acceleration: 6.0, friction: 4.0, velocity: Vec2::ZERO }
+        Self {
+            max_velocity: 5.0,
+            acceleration: 20.0,
+            max_acceleration_force: 1000.0,
+            target_velocity: Vec2::ZERO,
+            target_direction: Vec2::ZERO
+        }
     }
 }
 
@@ -108,7 +115,8 @@ fn setup(
         ..Default::default()
     };
     let player_collider = ColliderBundle {
-        shape: ColliderShape::capsule(Point3::new(0.0, -1.0, 0.0), Point3::new(0.0, 1.0, 0.0), 0.2).into(),
+        shape: ColliderShape::capsule(Point3::new(0.0, 0.0, 0.0), Point3::new(0.0, 1.0, 0.0), 0.2).into(),
+        mass_properties: ColliderMassProps::Density(5.0).into(),
         ..Default::default()
     };
     let player = commands

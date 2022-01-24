@@ -241,7 +241,7 @@ pub fn tilemap_despawning_system(
             None => continue,
         };
 
-        //despawn_chunk(&mut commands, spawned_chunk);
+        despawn_chunk(&mut commands, spawned_chunk);
     }
 }
 

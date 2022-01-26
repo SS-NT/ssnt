@@ -2,11 +2,8 @@
     clippy::type_complexity,
   )]
 
-mod byond;
 mod camera;
 mod items;
-mod maps;
-mod utils;
 mod components;
 mod movement;
 mod ui;

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use bevy::prelude::*;
 use bevy_egui::*;
 
-use crate::maps::components::TileMap;
+use maps::components::TileMap;
 
 #[derive(Default)]
 struct MapLoaderState {

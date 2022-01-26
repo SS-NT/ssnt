@@ -1,0 +1,10 @@
+[package]
+name = "maps"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bevy = "0.6"
+bevy_rapier3d = "0.12.0"

@@ -1,0 +1,13 @@
+[package]
+name = "byond"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+maps = { path = "../maps" }
+utils = { path = "../utils" }
+bevy = "0.6"
+nom = "6.1.2"
+anyhow = "1.0.40"

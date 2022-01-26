@@ -1,4 +1,4 @@
-use crate::maps::TilemapMesh;
+use crate::TilemapMesh;
 
 use super::{AdjacencyInformation, CHUNK_LENGTH, CHUNK_SIZE, DIRECTIONS, FurnitureData, FurnitureDefinition, FurnitureKind, MapData, TileData, TurfData, TurfDefinition, components::{SpawnedTileObject, SpawnedTileObjectBundle}, tile_neighbours};
 use bevy::{math::{IVec2, Quat, UVec2, Vec3}, pbr::PbrBundle, prelude::{

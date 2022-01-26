@@ -1,6 +1,5 @@
 use bevy::asset::{AssetLoader, LoadContext, LoadedAsset};
-
-use crate::utils::text::truncate;
+use utils::text::truncate;
 
 use super::{parsing, TileMap};
 

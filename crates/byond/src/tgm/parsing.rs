@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use crate::byond::tgm::*;
+use crate::tgm::*;
 use bevy::utils::HashMap;
 use nom::{branch::alt, bytes::complete::{escaped, tag}, character::complete::{multispace0, none_of, one_of}, combinator::{opt, recognize}, error::{ContextError, ParseError, VerboseError, context}, multi::{fold_many1, many1, separated_list0, separated_list1}, number::complete::float, sequence::{delimited, pair, preceded, tuple}};
 

@@ -824,9 +824,9 @@ checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 
 [[package]]
 name = "bitvec"
-version = "0.19.5"
+version = "0.19.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8942c8d352ae1838c9dda0b0ca2ab657696ef2232a20147cf1b30ae1a9cb4321"
+checksum = "55f93d0ef3363c364d5976646a38f04cf67cfe1d4c8d160cdea02cab2c116b33"
 dependencies = [
  "funty",
  "radium",
@@ -845,6 +845,17 @@ name = "bumpalo"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c59e7af012c713f529e7a3ee57ce9b31ddd858d4b512923602f74608b009631"
+
+[[package]]
+name = "byond"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "maps",
+ "nom 6.1.2",
+ "utils",
+]
 
 [[package]]
 name = "bytemuck"
@@ -2065,6 +2076,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "maps"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_rapier3d",
+]
+
+[[package]]
 name = "matchers"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3091,17 +3110,17 @@ dependencies = [
 name = "ssnt"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bevy",
  "bevy_egui",
  "bevy_fly_camera",
  "bevy_rapier3d",
+ "byond",
  "cfg-if 1.0.0",
  "futures-lite",
  "glam",
  "log",
+ "maps",
  "nalgebra",
- "nom 6.1.2",
 ]
 
 [[package]]
@@ -3417,6 +3436,10 @@ name = "unicode-xid"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
+
+[[package]]
+name = "utils"
+version = "0.1.0"
 
 [[package]]
 name = "uuid"

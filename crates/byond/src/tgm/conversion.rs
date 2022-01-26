@@ -1,7 +1,7 @@
 use bevy::{math::UVec2, utils::HashMap};
 
 use super::{Tile, TileMap};
-use crate::maps::{
+use maps::{
     tile_neighbours, AdjacencyInformation, Direction, FurnitureData, FurnitureDefinition,
     FurnitureKind, MapData, TileData, TurfData, TurfDefinition, CHUNK_SIZE,
 };

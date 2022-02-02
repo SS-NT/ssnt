@@ -1,56 +1,103 @@
-#![allow(
-    clippy::type_complexity,
-  )]
+#![allow(clippy::type_complexity)]
 
 mod camera;
-mod items;
 mod components;
+mod items;
 mod movement;
+mod networking;
 mod ui;
 
-use bevy::tasks::{AsyncComputeTaskPool, Task};
+use std::net::{IpAddr, SocketAddr, SocketAddrV4};
+
+use bevy::asset::AssetPlugin;
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
+use bevy_networking_turbulence::NetworkResource;
 use bevy_rapier3d::na::{Point3, Vector3};
-use bevy_rapier3d::physics::{ColliderBundle, RigidBodyPositionSync, RapierPhysicsPlugin, NoUserData};
-use bevy_rapier3d::prelude::{ColliderShape, RigidBodyForces, RigidBodyPositionComponent, RigidBodyMassPropsFlags, RigidBodyDamping, ColliderMassProps, MassProperties};
-use bevy_rapier3d::{physics::RigidBodyBundle, prelude::{RigidBodyActivation, RigidBodyCcd}};
+use bevy_rapier3d::physics::{
+    ColliderBundle, NoUserData, RapierPhysicsPlugin, RigidBodyPositionSync,
+};
+use bevy_rapier3d::prelude::{
+    ColliderMassProps, ColliderShape, MassProperties, RigidBodyDamping, RigidBodyForces,
+    RigidBodyMassPropsFlags, RigidBodyPositionComponent,
+};
+use bevy_rapier3d::{
+    physics::RigidBodyBundle,
+    prelude::{RigidBodyActivation, RigidBodyCcd},
+};
 use byond::tgm::TgmLoader;
 use camera::TopDownCamera;
+use clap::{Parser, Subcommand};
+use components::{Disabled, EntityCommandsExt};
 use futures_lite::future;
 use items::{
     containers::{
-        cleanup_removed_items_system, Container, ContainerAccessor, ContainerQuery, ContainerWriter,
+        Container, ContainerAccessor, ContainerQuery, ContainerWriter,
     },
     Item,
 };
 use maps::components::{TileMap, TileMapObserver};
 use maps::MapData;
-use components::{Disabled, EntityCommandsExt};
+use networking::{NetworkRole, NetworkingPlugin, ClientEvent};
+
+#[derive(Parser)]
+struct Args {
+    #[clap(subcommand)]
+    command: ArgCommands,
+}
+
+#[derive(Subcommand)]
+enum ArgCommands {
+    /// host a server
+    Host {
+        /// port to listen on
+        #[clap(default_value_t = 33998u16)]
+        port: u16,
+    },
+    /// join a game
+    Join { address: SocketAddr },
+}
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins)
-        .add_plugin(FlyCameraPlugin)
-        .add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
-        .add_plugin(camera::CameraPlugin)
+    let args = Args::parse();
+    let role = match args.command {
+        ArgCommands::Host { .. } => NetworkRole::Server,
+        ArgCommands::Join { .. } => NetworkRole::Client,
+    };
+    let networking_plugin = NetworkingPlugin { role };
+
+    let mut app = App::new();
+    match role {
+        NetworkRole::Server => {
+            app.add_plugins(MinimalPlugins)
+                .add_plugin(AssetPlugin)
+                .add_system(convert_tgm_map)
+                .add_system(create_tilemap_from_converted)
+                .add_asset::<byond::tgm::TileMap>()
+                .add_asset_loader(TgmLoader)
+                .add_startup_system(load_map)
+                .add_startup_system(setup_server);
+        }
+        NetworkRole::Client => {
+            app.add_plugins(DefaultPlugins)
+                .add_plugin(FlyCameraPlugin)
+                .add_plugin(camera::CameraPlugin)
+                .add_plugin(ui::UiPlugin)
+                .insert_resource(ClearColor(Color::rgb(
+                    44.0 / 255.0,
+                    68.0 / 255.0,
+                    107.0 / 255.0,
+                )))
+                .add_system(switch_camera_system)
+                .add_startup_system(setup_client)
+                .add_plugin(movement::MovementPlugin);
+        }
+    };
+    app.add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugin(maps::MapPlugin)
-        .add_plugin(movement::MovementPlugin)
-        .add_plugin(ui::UiPlugin)
-        .insert_resource(ClearColor(Color::rgb(
-            44.0 / 255.0,
-            68.0 / 255.0,
-            107.0 / 255.0,
-        )))
-        .add_asset::<byond::tgm::TileMap>()
-        .add_asset_loader(TgmLoader)
-        .add_startup_system(setup.system())
-        .add_startup_system(load_map.system())
-        .add_startup_system(test_containers.system())
-        .add_system(cleanup_removed_items_system.system())
-        .add_system(switch_camera_system)
-        .add_system(convert_tgm_map)
-        .add_system(create_tilemap_from_converted)
+        .add_plugin(networking_plugin)
+        .insert_resource(args)
         .run();
 }
 
@@ -70,7 +117,7 @@ impl Default for Player {
             acceleration: 20.0,
             max_acceleration_force: 1000.0,
             target_velocity: Vec2::ZERO,
-            target_direction: Vec2::ZERO
+            target_direction: Vec2::ZERO,
         }
     }
 }
@@ -80,57 +127,31 @@ pub struct Map {
     pub spawned: bool,
 }
 
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    server: Res<AssetServer>,
-) {
-    commands.spawn_bundle(PbrBundle {
-        mesh: meshes.add(Mesh::from(shape::Cube { size: 2.0 })),
-        material: materials.add(Color::rgb(0.8, 0.7, 0.6).into()),
-        transform: Transform::from_xyz(0.0, 0.5, 0.0),
-        ..Default::default()
-    });
+fn setup_server(mut network: ResMut<NetworkResource>, args: Res<Args>) {
+    let port = match args.command {
+        ArgCommands::Host { port } => port,
+        _ => panic!("Missing commandline argument"),
+    };
+    network.listen(
+        SocketAddr::V4(SocketAddrV4::new("127.0.0.1".parse().unwrap(), port)),
+        None,
+        None,
+    );
+}
 
+fn setup_client(mut commands: Commands, server: Res<AssetServer>, args: Res<Args>, mut client_events: EventWriter<ClientEvent>) {
     // TODO: Replace with on-station lights
     commands.insert_resource(AmbientLight {
         brightness: 0.2,
         ..Default::default()
     });
 
+    let player = create_player(&mut commands);
     let player_model = server.load("models/human.glb#Scene0");
-    let player_rigid_body = RigidBodyBundle {
-        activation: RigidBodyActivation::cannot_sleep().into(),
-        forces: RigidBodyForces {
-            gravity_scale: 0.0,
-            ..Default::default()
-        }.into(),
-        ccd: RigidBodyCcd { ccd_enabled: true, ..Default::default() }.into(),
-        mass_properties: RigidBodyMassPropsFlags::ROTATION_LOCKED.into(),
-        damping: RigidBodyDamping { linear_damping: 0.0, angular_damping: 0.0 }.into(),
-        ..Default::default()
-    };
-    let player_collider = ColliderBundle {
-        shape: ColliderShape::capsule(Point3::new(0.0, 0.0, 0.0), Point3::new(0.0, 1.0, 0.0), 0.2).into(),
-        mass_properties: ColliderMassProps::Density(5.0).into(),
-        ..Default::default()
-    };
-    let player = commands
-        .spawn()
-        .insert(Transform::default())
-        .insert(GlobalTransform::default())
-        .insert(Player::default())
-        .insert(TileMapObserver::new(20.0))
-        .insert_bundle(player_rigid_body)
-        .insert_bundle(player_collider)
-        .insert(RigidBodyPositionSync::default())
-        .with_children(|parent| {
-            parent.spawn_scene(player_model);
-        })
-        .id();
-    
-    
+    commands.entity(player).with_children(|parent| {
+        parent.spawn_scene(player_model);
+    });
+
     commands
         .spawn_bundle(PerspectiveCameraBundle {
             transform: Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
@@ -139,6 +160,49 @@ fn setup(
         .insert(TopDownCamera::new(player))
         .insert(Disabled(FlyCamera::default()))
         .insert(camera::MainCamera);
+    
+    if let ArgCommands::Join { address } = args.command {
+        client_events.send(ClientEvent::Join(address));
+    }
+}
+
+fn create_player(commands: &mut Commands) -> Entity {
+    let player_rigid_body = RigidBodyBundle {
+        activation: RigidBodyActivation::cannot_sleep().into(),
+        forces: RigidBodyForces {
+            gravity_scale: 0.0,
+            ..Default::default()
+        }
+        .into(),
+        ccd: RigidBodyCcd {
+            ccd_enabled: true,
+            ..Default::default()
+        }
+        .into(),
+        mass_properties: RigidBodyMassPropsFlags::ROTATION_LOCKED.into(),
+        damping: RigidBodyDamping {
+            linear_damping: 0.0,
+            angular_damping: 0.0,
+        }
+        .into(),
+        ..Default::default()
+    };
+    let player_collider = ColliderBundle {
+        shape: ColliderShape::capsule(Point3::new(0.0, 0.0, 0.0), Point3::new(0.0, 1.0, 0.0), 0.2)
+            .into(),
+        mass_properties: ColliderMassProps::Density(5.0).into(),
+        ..Default::default()
+    };
+    commands
+        .spawn()
+        .insert(Transform::default())
+        .insert(GlobalTransform::default())
+        .insert(Player::default())
+        .insert(TileMapObserver::new(20.0))
+        .insert_bundle(player_rigid_body)
+        .insert_bundle(player_collider)
+        .insert(RigidBodyPositionSync::default())
+        .id()
 }
 
 fn switch_camera_system(
@@ -152,15 +216,17 @@ fn switch_camera_system(
     }
 
     for (entity, _) in fly_cams.iter() {
-        commands.entity(entity)
-                .disable_component::<FlyCamera>()
-                .enable_component::<TopDownCamera>();
+        commands
+            .entity(entity)
+            .disable_component::<FlyCamera>()
+            .enable_component::<TopDownCamera>();
     }
 
     for (entity, _) in top_down_cams.iter() {
-        commands.entity(entity)
-                .disable_component::<TopDownCamera>()
-                .enable_component::<FlyCamera>();
+        commands
+            .entity(entity)
+            .disable_component::<TopDownCamera>()
+            .enable_component::<FlyCamera>();
     }
 }
 
@@ -207,15 +273,18 @@ fn convert_tgm_map(
 fn create_tilemap_from_converted(
     mut commands: Commands,
     mut map_tasks: Query<(Entity, &mut Task<MapData>)>,
-    mut player: Query<&mut RigidBodyPositionComponent, With<Player>>,
+    mut players: Query<&mut RigidBodyPositionComponent, With<Player>>,
 ) {
     for (entity, mut map_task) in map_tasks.iter_mut() {
         if let Some(map_data) = future::block_on(future::poll_once(&mut *map_task)) {
-            player.single_mut().0.position = Vector3::new(
-                map_data.spawn_position.x as f32,
-                0.0,
-                map_data.spawn_position.y as f32,
-            ).into();
+            for mut player in players.iter_mut() {
+                player.0.position = Vector3::new(
+                    map_data.spawn_position.x as f32,
+                    0.0,
+                    map_data.spawn_position.y as f32,
+                ).into();
+            }
+            
             commands
                 .entity(entity)
                 .remove::<Task<MapData>>()

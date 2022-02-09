@@ -8,8 +8,11 @@ mod networking;
 mod ui;
 
 use std::net::{IpAddr, SocketAddr, SocketAddrV4};
+use std::time::Duration;
 
+use bevy::app::ScheduleRunnerSettings;
 use bevy::asset::AssetPlugin;
+use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
@@ -39,7 +42,7 @@ use items::{
 };
 use maps::components::{TileMap, TileMapObserver};
 use maps::MapData;
-use networking::{NetworkRole, NetworkingPlugin, ClientEvent};
+use networking::{NetworkRole, NetworkingPlugin, ClientEvent, NetworkObserver, ConnectionId};
 
 #[derive(Parser)]
 struct Args {
@@ -70,8 +73,11 @@ fn main() {
     let mut app = App::new();
     match role {
         NetworkRole::Server => {
-            app.add_plugins(MinimalPlugins)
+            app.insert_resource(ScheduleRunnerSettings {
+                run_mode: bevy::app::RunMode::Loop { wait: Some(Duration::from_millis(16)) }
+            }).add_plugins(MinimalPlugins)
                 .add_plugin(AssetPlugin)
+                .add_plugin(LogPlugin)
                 .add_system(convert_tgm_map)
                 .add_system(create_tilemap_from_converted)
                 .add_asset::<byond::tgm::TileMap>()
@@ -133,7 +139,7 @@ fn setup_server(mut network: ResMut<NetworkResource>, args: Res<Args>) {
         _ => panic!("Missing commandline argument"),
     };
     network.listen(
-        SocketAddr::V4(SocketAddrV4::new("127.0.0.1".parse().unwrap(), port)),
+        SocketAddr::V4(SocketAddrV4::new("0.0.0.0".parse().unwrap(), port)),
         None,
         None,
     );
@@ -198,11 +204,18 @@ fn create_player(commands: &mut Commands) -> Entity {
         .insert(Transform::default())
         .insert(GlobalTransform::default())
         .insert(Player::default())
-        .insert(TileMapObserver::new(20.0))
         .insert_bundle(player_rigid_body)
         .insert_bundle(player_collider)
         .insert(RigidBodyPositionSync::default())
         .id()
+}
+
+fn create_player_server(commands: &mut Commands, connection: ConnectionId) -> Entity {
+    let player = create_player(commands);
+    commands.entity(player)
+        .insert(NetworkObserver { range: 3, connection })
+        .insert(TileMapObserver::new(20.0));
+    player
 }
 
 fn switch_camera_system(

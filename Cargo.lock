@@ -3468,6 +3468,7 @@ dependencies = [
  "bevy_fly_camera",
  "bevy_networking_turbulence",
  "bevy_rapier3d",
+ "bincode",
  "byond",
  "cfg-if 1.0.0",
  "clap",

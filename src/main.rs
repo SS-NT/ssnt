@@ -4,7 +4,6 @@ mod camera;
 mod components;
 mod items;
 mod movement;
-mod networking;
 mod ui;
 
 use std::net::{IpAddr, SocketAddr, SocketAddrV4};

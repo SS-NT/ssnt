@@ -6,7 +6,7 @@ mod items;
 mod movement;
 mod ui;
 
-use std::net::{IpAddr, SocketAddr, SocketAddrV4};
+use std::net::{SocketAddr, SocketAddrV4};
 use std::time::Duration;
 
 use bevy::app::ScheduleRunnerSettings;
@@ -41,7 +41,8 @@ use items::{
 };
 use maps::components::{TileMap, TileMapObserver};
 use maps::MapData;
-use networking::{NetworkRole, NetworkingPlugin, ClientEvent, NetworkObserver, ConnectionId};
+use networking::visibility::NetworkObserver;
+use networking::{NetworkRole, NetworkingPlugin, ClientEvent, ConnectionId};
 
 #[derive(Parser)]
 struct Args {

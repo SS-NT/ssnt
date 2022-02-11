@@ -11,7 +11,7 @@ pub struct NetworkObserver {
 
 /// Stores which connections are observing something
 #[derive(Default)]
-struct NetworkVisibility {
+pub struct NetworkVisibility {
     observers: HashSet<ConnectionId>,
     new_observers: HashSet<ConnectionId>,
 }
@@ -26,12 +26,20 @@ impl NetworkVisibility {
     fn update(&mut self) {
         self.new_observers.clear();
     }
+
+    pub fn observers(&self) -> &HashSet<ConnectionId> {
+        &self.observers
+    }
+
+    pub fn new_observers(&self) -> &HashSet<ConnectionId> {
+        &self.new_observers
+    }
 }
 
 /// Stores a mapping between network identities and their observers
 #[derive(Default)]
-struct NetworkVisibilities {
-    visibility: HashMap<NetworkIdentity, NetworkVisibility>,
+pub(crate) struct NetworkVisibilities {
+    pub(crate) visibility: HashMap<NetworkIdentity, NetworkVisibility>,
 }
 
 // TODO: Replace with actual visibility system

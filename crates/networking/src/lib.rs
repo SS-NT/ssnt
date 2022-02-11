@@ -1,6 +1,7 @@
 pub mod messaging;
 pub mod identity;
 pub mod visibility;
+pub mod spawning;
 
 use std::{net::SocketAddr, fmt::Display};
 
@@ -18,6 +19,7 @@ use bevy_networking_turbulence::{
 use identity::IdentityPlugin;
 use messaging::{MessageSender, MessageReceivers, MessageEvent, MessagingPlugin, AppExt};
 use serde::{Deserialize, Serialize};
+use spawning::SpawningPlugin;
 use visibility::VisibilityPlugin;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -69,13 +71,6 @@ struct ClientHello {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct ServerInfo {}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct EntitySpawnData {
-    pub network_id: u32,
-    // TODO: Replace with asset path hash?
-    pub name: String,
-}
 
 fn handle_joining_server(
     mut events: EventReader<ClientEvent>,
@@ -165,11 +160,6 @@ fn server_handle_connect(
     }
 }
 
-// Temporary struct to label networked objects
-// This should be replaced with the scene identifier in a future bevy release
-#[derive(Component)]
-struct PrefabPath(String);
-
 pub struct NetworkingPlugin {
     pub role: NetworkRole,
 }
@@ -190,10 +180,11 @@ impl Plugin for NetworkingPlugin {
         app.add_plugin(sub_plugin)
             .insert_resource(NetworkManager { role: self.role })
             .add_plugin(MessagingPlugin)
+            .add_network_message::<ClientHello>()
+            .add_network_message::<ServerInfo>()
             .add_plugin(IdentityPlugin)
             .add_plugin(VisibilityPlugin)
-            .add_network_message::<ClientHello>()
-            .add_network_message::<ServerInfo>();
+            .add_plugin(SpawningPlugin);
 
         if self.role == NetworkRole::Client {
             app.add_state(ClientState::Initial)

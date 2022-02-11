@@ -1,10 +1,11 @@
 use bevy::{prelude::{Component, Entity, error, Plugin, App}, utils::HashMap, ecs::system::{Command, EntityCommands}};
+use serde::{Deserialize, Serialize};
 
 use crate::NetworkManager;
 
 
 /// A numeric id which matches on the server and clients
-#[derive(Component, Debug, Copy, Clone, Hash, PartialEq, Eq)]
+#[derive(Component, Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkIdentity(u32);
 
 /// A lookup to match network identities with ECS entity ids.

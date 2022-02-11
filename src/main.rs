@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use bevy::app::ScheduleRunnerSettings;
 use bevy::asset::AssetPlugin;
+use bevy::ecs::system::EntityCommands;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
@@ -41,8 +42,10 @@ use items::{
 };
 use maps::components::{TileMap, TileMapObserver};
 use maps::MapData;
+use networking::identity::{EntityCommandsExt as NetworkingEntityCommandsExt, NetworkIdentity};
+use networking::spawning::{NetworkedEntityEvent, PrefabPath};
 use networking::visibility::NetworkObserver;
-use networking::{NetworkRole, NetworkingPlugin, ClientEvent, ConnectionId};
+use networking::{NetworkRole, NetworkingPlugin, ClientEvent, ConnectionId, ServerEvent};
 
 #[derive(Parser)]
 struct Args {
@@ -83,7 +86,8 @@ fn main() {
                 .add_asset::<byond::tgm::TileMap>()
                 .add_asset_loader(TgmLoader)
                 .add_startup_system(load_map)
-                .add_startup_system(setup_server);
+                .add_startup_system(setup_server)
+                .add_system(spawn_player_joined);
         }
         NetworkRole::Client => {
             app.add_plugins(DefaultPlugins)
@@ -97,7 +101,8 @@ fn main() {
                 )))
                 .add_system(switch_camera_system)
                 .add_startup_system(setup_client)
-                .add_plugin(movement::MovementPlugin);
+                .add_plugin(movement::MovementPlugin)
+                .add_system_to_stage(CoreStage::PostUpdate, handle_player_spawn);
         }
     };
     app.add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
@@ -152,7 +157,7 @@ fn setup_client(mut commands: Commands, server: Res<AssetServer>, args: Res<Args
         ..Default::default()
     });
 
-    let player = create_player(&mut commands);
+    let player = create_player(&mut commands.spawn());
     let player_model = server.load("models/human.glb#Scene0");
     commands.entity(player).with_children(|parent| {
         parent.spawn_scene(player_model);
@@ -172,7 +177,7 @@ fn setup_client(mut commands: Commands, server: Res<AssetServer>, args: Res<Args
     }
 }
 
-fn create_player(commands: &mut Commands) -> Entity {
+fn create_player(commands: &mut EntityCommands) -> Entity {
     let player_rigid_body = RigidBodyBundle {
         activation: RigidBodyActivation::cannot_sleep().into(),
         forces: RigidBodyForces {
@@ -200,7 +205,6 @@ fn create_player(commands: &mut Commands) -> Entity {
         ..Default::default()
     };
     commands
-        .spawn()
         .insert(Transform::default())
         .insert(GlobalTransform::default())
         .insert(Player::default())
@@ -211,11 +215,34 @@ fn create_player(commands: &mut Commands) -> Entity {
 }
 
 fn create_player_server(commands: &mut Commands, connection: ConnectionId) -> Entity {
-    let player = create_player(commands);
+    let player = create_player(&mut commands.spawn());
     commands.entity(player)
         .insert(NetworkObserver { range: 3, connection })
-        .insert(TileMapObserver::new(20.0));
+        .insert(TileMapObserver::new(20.0))
+        .insert(PrefabPath("player".into()))
+        .networked();
     player
+}
+
+fn spawn_player_joined(mut server_events: EventReader<ServerEvent>, mut commands: Commands) {
+    for event in server_events.iter() {
+        if let ServerEvent::PlayerConnected(id) = event {
+            create_player_server(&mut commands, *id);
+            info!("Created a player object for new client");
+        }
+    }
+}
+
+fn handle_player_spawn(query: Query<(&NetworkIdentity, &PrefabPath)>, mut entity_events: EventReader<NetworkedEntityEvent>, mut commands: Commands) {
+    for event in entity_events.iter() {
+        if let NetworkedEntityEvent::Spawned(entity) = event {
+            let (identity, prefab) = query.get(*entity).unwrap();
+            if prefab.0 == "player" {
+                create_player(&mut commands.entity(*entity));
+                info!("Spawned player with network id: {:?}", identity);
+            }
+        }
+    }
 }
 
 fn switch_camera_system(

@@ -150,25 +150,21 @@ fn setup_server(mut network: ResMut<NetworkResource>, args: Res<Args>) {
     );
 }
 
-fn setup_client(mut commands: Commands, server: Res<AssetServer>, args: Res<Args>, mut client_events: EventWriter<ClientEvent>) {
+fn setup_client(mut commands: Commands, args: Res<Args>, mut client_events: EventWriter<ClientEvent>) {
     // TODO: Replace with on-station lights
     commands.insert_resource(AmbientLight {
         brightness: 0.2,
         ..Default::default()
     });
 
-    let player = create_player(&mut commands.spawn());
-    let player_model = server.load("models/human.glb#Scene0");
-    commands.entity(player).with_children(|parent| {
-        parent.spawn_scene(player_model);
-    });
+    let temporary_camera_target = commands.spawn().insert(GlobalTransform::default()).id();
 
     commands
         .spawn_bundle(PerspectiveCameraBundle {
             transform: Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
             ..Default::default()
         })
-        .insert(TopDownCamera::new(player))
+        .insert(TopDownCamera::new(temporary_camera_target))
         .insert(Disabled(FlyCamera::default()))
         .insert(camera::MainCamera);
     
@@ -233,12 +229,16 @@ fn spawn_player_joined(mut server_events: EventReader<ServerEvent>, mut commands
     }
 }
 
-fn handle_player_spawn(query: Query<(&NetworkIdentity, &PrefabPath)>, mut entity_events: EventReader<NetworkedEntityEvent>, mut commands: Commands) {
+fn handle_player_spawn(query: Query<(&NetworkIdentity, &PrefabPath)>, mut entity_events: EventReader<NetworkedEntityEvent>, mut commands: Commands, mut server: ResMut<AssetServer>) {
     for event in entity_events.iter() {
         if let NetworkedEntityEvent::Spawned(entity) = event {
             let (identity, prefab) = query.get(*entity).unwrap();
             if prefab.0 == "player" {
-                create_player(&mut commands.entity(*entity));
+                let player = create_player(&mut commands.entity(*entity));
+                let player_model = server.load("models/human.glb#Scene0");
+                commands.entity(player).with_children(|parent| {
+                    parent.spawn_scene(player_model);
+                });
                 info!("Spawned player with network id: {:?}", identity);
             }
         }

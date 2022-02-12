@@ -1,6 +1,6 @@
 use std::{any::TypeId, time::Duration};
 
-use bevy::{utils::{HashMap, HashSet}, prelude::{App, EventReader, EventWriter, warn, Res, ResMut, Plugin, ParallelSystemDescriptorCoercion, CoreStage}, ecs::system::SystemParam};
+use bevy::{utils::{HashMap, HashSet}, prelude::{App, EventReader, EventWriter, warn, Res, ResMut, Plugin, ParallelSystemDescriptorCoercion, CoreStage, SystemLabel}, ecs::system::SystemParam};
 use bevy_networking_turbulence::{MessageChannelSettings, MessageChannelMode, ReliableChannelSettings, NetworkResource, ConnectionChannelsBuilder};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
@@ -107,7 +107,7 @@ impl AppExt for App {
         };
 
         self.add_event::<MessageEvent<T>>()
-            .add_system(packet_reader)
+            .add_system(packet_reader.label(NetworkSystem::ReadNetworkMessages).after(MessagingSystem::ReadRaw))
     }
 }
 
@@ -220,6 +220,11 @@ fn send_outbound_messages_client(mut messages: EventReader<OutboundMessage>, mut
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
+enum MessagingSystem {
+    ReadRaw,
+}
+
 pub(crate) struct MessagingPlugin;
 
 impl Plugin for MessagingPlugin {
@@ -228,7 +233,7 @@ impl Plugin for MessagingPlugin {
             .add_event::<IncomingMessage>()
             .add_event::<OutboundMessage>()
             .add_startup_system(setup_channels)
-            .add_system(read_channel.label(NetworkSystem::ReadNetworkMessages))
+            .add_system(read_channel.label(MessagingSystem::ReadRaw))
             .add_system_to_stage(CoreStage::PostUpdate, flush_channels);
 
         if app.world.get_resource::<NetworkManager>().unwrap().is_client() {

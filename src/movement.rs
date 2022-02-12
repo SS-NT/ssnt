@@ -10,6 +10,7 @@ use bevy_rapier3d::{
         RigidBodyPositionComponent, RigidBodyVelocityComponent,
     },
 };
+use networking::{spawning::ClientControlled, NetworkManager};
 
 pub fn movement_system(
     time: Res<Time>,
@@ -19,7 +20,7 @@ pub fn movement_system(
         &RigidBodyVelocityComponent,
         &mut RigidBodyForcesComponent,
         &RigidBodyMassPropsComponent,
-    )>,
+    ), With<ClientControlled>>,
     camera_query: Query<&TopDownCamera, With<MainCamera>>,
 ) {
     for (mut player, velocity, mut forces, mass_properties) in query.iter_mut() {
@@ -106,7 +107,14 @@ pub struct MovementPlugin;
 
 impl Plugin for MovementPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system(movement_system.label("movement"));
-        app.add_system_to_stage(CoreStage::PostUpdate, character_rotation_system);
+        if app
+            .world
+            .get_resource::<NetworkManager>()
+            .unwrap()
+            .is_client()
+        {
+            app.add_system(movement_system.label("movement"));
+            app.add_system_to_stage(CoreStage::PostUpdate, character_rotation_system);
+        }
     }
 }

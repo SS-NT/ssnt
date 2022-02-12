@@ -15,12 +15,22 @@ pub struct NetworkIdentity(u32);
 #[derive(Default)]
 pub struct NetworkIdentities {
     last_id: u32,
-    pub identities: HashMap<NetworkIdentity, Entity>,
+    identities: HashMap<NetworkIdentity, Entity>,
+    entities: HashMap<Entity, NetworkIdentity>,
 }
 
 impl NetworkIdentities {
+    pub(crate) fn set_identity(&mut self, entity: Entity, identity: NetworkIdentity) {
+        self.identities.insert(identity, entity);
+        self.entities.insert(entity, identity);
+    }
+
     pub fn get_entity(&self, identity: NetworkIdentity) -> Option<Entity> {
         self.identities.get(&identity).copied()
+    }
+
+    pub fn get_identity(&self, entity: Entity) -> Option<NetworkIdentity> {
+        self.entities.get(&entity).copied()
     }
 }
 
@@ -38,7 +48,7 @@ impl Command for NetworkCommand {
         let id = identities.last_id + 1;
 
         identities.last_id = id;
-        identities.identities.insert(NetworkIdentity(id), self.entity);
+        identities.set_identity(self.entity, NetworkIdentity(id));
 
         world.entity_mut(self.entity).insert(NetworkIdentity(id));
     }

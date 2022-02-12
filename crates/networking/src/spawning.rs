@@ -4,7 +4,7 @@ use bevy::prelude::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    identity::NetworkIdentity,
+    identity::{NetworkIdentities, NetworkIdentity},
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     visibility::NetworkVisibilities,
     NetworkManager,
@@ -52,6 +52,7 @@ fn send_spawn(
 fn receive_spawn(
     mut spawn_events: EventReader<MessageEvent<SpawnEntity>>,
     mut entity_events: EventWriter<NetworkedEntityEvent>,
+    mut ids: ResMut<NetworkIdentities>,
     mut commands: Commands,
 ) {
     for event in spawn_events.iter() {
@@ -64,6 +65,7 @@ fn receive_spawn(
             .insert(PrefabPath(spawn.name))
             .id();
 
+        ids.set_identity(entity, spawn.network_id);
         entity_events.send(NetworkedEntityEvent::Spawned(entity));
     }
 }

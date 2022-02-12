@@ -43,7 +43,7 @@ use items::{
 use maps::components::{TileMap, TileMapObserver};
 use maps::MapData;
 use networking::identity::{EntityCommandsExt as NetworkingEntityCommandsExt, NetworkIdentity};
-use networking::spawning::{NetworkedEntityEvent, PrefabPath};
+use networking::spawning::{NetworkedEntityEvent, PrefabPath, ClientControls};
 use networking::visibility::NetworkObserver;
 use networking::{NetworkRole, NetworkingPlugin, ClientEvent, ConnectionId, ServerEvent};
 
@@ -221,10 +221,11 @@ fn create_player_server(commands: &mut Commands, connection: ConnectionId) -> En
     player
 }
 
-fn spawn_player_joined(mut server_events: EventReader<ServerEvent>, mut commands: Commands) {
+fn spawn_player_joined(mut server_events: EventReader<ServerEvent>, mut controls: ResMut<ClientControls>, mut commands: Commands) {
     for event in server_events.iter() {
         if let ServerEvent::PlayerConnected(id) = event {
-            create_player_server(&mut commands, *id);
+            let player = create_player_server(&mut commands, *id);
+            controls.give_control(*id, player);
             info!("Created a player object for new client");
         }
     }

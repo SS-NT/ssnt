@@ -81,6 +81,7 @@ fn main() {
             }).add_plugins(MinimalPlugins)
                 .add_plugin(AssetPlugin)
                 .add_plugin(LogPlugin)
+                .add_plugin(networking_plugin)
                 .add_system(convert_tgm_map)
                 .add_system(create_tilemap_from_converted)
                 .add_asset::<byond::tgm::TileMap>()
@@ -91,6 +92,7 @@ fn main() {
         }
         NetworkRole::Client => {
             app.add_plugins(DefaultPlugins)
+                .add_plugin(networking_plugin)
                 .add_plugin(FlyCameraPlugin)
                 .add_plugin(camera::CameraPlugin)
                 .add_plugin(ui::UiPlugin)
@@ -107,7 +109,6 @@ fn main() {
     };
     app.add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugin(maps::MapPlugin)
-        .add_plugin(networking_plugin)
         .insert_resource(args)
         .run();
 }

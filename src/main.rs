@@ -22,8 +22,8 @@ use bevy_rapier3d::physics::{
     ColliderBundle, NoUserData, RapierPhysicsPlugin, RigidBodyPositionSync,
 };
 use bevy_rapier3d::prelude::{
-    ColliderMassProps, ColliderShape, MassProperties, RigidBodyDamping, RigidBodyForces,
-    RigidBodyMassPropsFlags, RigidBodyPositionComponent,
+    ColliderMassProps, ColliderShape, RigidBodyDamping,
+    RigidBodyMassPropsFlags, RigidBodyPositionComponent, ColliderPosition, Isometry,
 };
 use bevy_rapier3d::{
     physics::RigidBodyBundle,
@@ -110,6 +110,7 @@ fn main() {
     app.add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugin(maps::MapPlugin)
         .insert_resource(args)
+        .add_startup_system(setup_shared)
         .run();
 }
 
@@ -137,6 +138,18 @@ impl Default for Player {
 pub struct Map {
     pub handle: Handle<byond::tgm::TileMap>,
     pub spawned: bool,
+}
+
+fn setup_shared(mut commands: Commands) {
+    let ground_collider = ColliderBundle {
+        shape: ColliderShape::cuboid(100.0, 0.5, 100.0)
+            .into(),
+        position: ColliderPosition(Isometry::new(Vector3::new(0.0, -1.0, 0.0), Vector3::y())).into(),
+        ..Default::default()
+    };
+
+    commands.spawn()
+        .insert_bundle(ground_collider);
 }
 
 fn setup_server(mut network: ResMut<NetworkResource>, args: Res<Args>) {
@@ -177,11 +190,6 @@ fn setup_client(mut commands: Commands, args: Res<Args>, mut client_events: Even
 fn create_player(commands: &mut EntityCommands) -> Entity {
     let player_rigid_body = RigidBodyBundle {
         activation: RigidBodyActivation::cannot_sleep().into(),
-        forces: RigidBodyForces {
-            gravity_scale: 0.0,
-            ..Default::default()
-        }
-        .into(),
         ccd: RigidBodyCcd {
             ccd_enabled: true,
             ..Default::default()

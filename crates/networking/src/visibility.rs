@@ -34,6 +34,10 @@ impl NetworkVisibility {
     pub fn new_observers(&self) -> &HashSet<ConnectionId> {
         &self.new_observers
     }
+
+    pub fn has_observer(&self, connection: &ConnectionId) -> bool {
+        self.observers.get(connection).is_some()
+    }
 }
 
 /// Stores a mapping between network identities and their observers

@@ -43,7 +43,8 @@ use items::{
 use maps::components::{TileMap, TileMapObserver};
 use maps::MapData;
 use networking::identity::{EntityCommandsExt as NetworkingEntityCommandsExt, NetworkIdentity};
-use networking::spawning::{NetworkedEntityEvent, PrefabPath, ClientControls};
+use networking::spawning::{NetworkedEntityEvent, PrefabPath, ClientControls, ClientControlled};
+use networking::transform::{NetworkedTransform, NetworkTransform};
 use networking::visibility::NetworkObserver;
 use networking::{NetworkRole, NetworkingPlugin, ClientEvent, ConnectionId, ServerEvent};
 
@@ -103,11 +104,12 @@ fn main() {
                 )))
                 .add_system(switch_camera_system)
                 .add_startup_system(setup_client)
-                .add_plugin(movement::MovementPlugin)
-                .add_system_to_stage(CoreStage::PostUpdate, handle_player_spawn);
+                .add_system_to_stage(CoreStage::PostUpdate, handle_player_spawn)
+                .add_system(set_camera_target);
         }
     };
     app.add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
+        .add_plugin(movement::MovementPlugin)
         .add_plugin(maps::MapPlugin)
         .insert_resource(args)
         .add_startup_system(setup_shared)
@@ -225,6 +227,7 @@ fn create_player_server(commands: &mut Commands, connection: ConnectionId) -> En
         .insert(NetworkObserver { range: 3, connection })
         .insert(TileMapObserver::new(20.0))
         .insert(PrefabPath("player".into()))
+        .insert(NetworkTransform::default())
         .networked();
     player
 }
@@ -246,11 +249,21 @@ fn handle_player_spawn(query: Query<(&NetworkIdentity, &PrefabPath)>, mut entity
             if prefab.0 == "player" {
                 let player = create_player(&mut commands.entity(*entity));
                 let player_model = server.load("models/human.glb#Scene0");
-                commands.entity(player).with_children(|parent| {
+                commands.entity(player)
+                    .insert(NetworkedTransform::default())
+                    .with_children(|parent| {
                     parent.spawn_scene(player_model);
                 });
                 info!("Spawned player with network id: {:?}", identity);
             }
+        }
+    }
+}
+
+fn set_camera_target(query: Query<Entity, Added<ClientControlled>>, mut camera: Query<&mut TopDownCamera, Without<ClientControlled>>) {
+    for entity in query.iter() {
+        if let Ok(mut camera) = camera.get_single_mut() {
+            camera.target = entity;
         }
     }
 }

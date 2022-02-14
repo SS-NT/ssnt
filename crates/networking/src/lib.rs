@@ -2,6 +2,7 @@ pub mod messaging;
 pub mod identity;
 pub mod visibility;
 pub mod spawning;
+pub mod transform;
 
 use std::{net::SocketAddr, fmt::Display};
 
@@ -20,6 +21,7 @@ use identity::IdentityPlugin;
 use messaging::{MessageSender, MessageReceivers, MessageEvent, MessagingPlugin, AppExt};
 use serde::{Deserialize, Serialize};
 use spawning::SpawningPlugin;
+use transform::TransformPlugin;
 use visibility::VisibilityPlugin;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -184,7 +186,8 @@ impl Plugin for NetworkingPlugin {
             .add_network_message::<ServerInfo>()
             .add_plugin(IdentityPlugin)
             .add_plugin(VisibilityPlugin)
-            .add_plugin(SpawningPlugin);
+            .add_plugin(SpawningPlugin)
+            .add_plugin(TransformPlugin);
 
         if self.role == NetworkRole::Client {
             app.add_state(ClientState::Initial)

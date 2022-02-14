@@ -4,7 +4,7 @@ use bevy::{utils::{HashMap, HashSet}, prelude::{App, EventReader, EventWriter, w
 use bevy_networking_turbulence::{MessageChannelSettings, MessageChannelMode, ReliableChannelSettings, NetworkResource, ConnectionChannelsBuilder};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
-use crate::{ConnectionId, Players, NetworkSystem, NetworkManager};
+use crate::{ConnectionId, Players, NetworkSystem, NetworkManager, transform::TransformMessage};
 
 
 /// Assigns packet numbers to types uniquely and allows to lookup the id for a specific type.
@@ -130,8 +130,8 @@ const NETWORK_MESSAGE_SETTINGS: MessageChannelSettings = MessageChannelSettings 
     channel_mode: MessageChannelMode::Reliable {
         reliability_settings: ReliableChannelSettings {
             bandwidth: 4096,
-            recv_window_size: 1024,
-            send_window_size: 1024,
+            recv_window_size: 2048,
+            send_window_size: 2048,
             burst_bandwidth: 1024,
             init_send: 512,
             wakeup_time: Duration::from_millis(100),
@@ -146,10 +146,20 @@ const NETWORK_MESSAGE_SETTINGS: MessageChannelSettings = MessageChannelSettings 
     packet_buffer_size: 10,
 };
 
+const TRANSFORM_MESSAGE_SETTINGS: MessageChannelSettings = MessageChannelSettings {
+    channel: 1,
+    channel_mode: MessageChannelMode::Unreliable,
+    message_buffer_size: 100,
+    packet_buffer_size: 100,
+};
+
 fn setup_channels(mut net: ResMut<NetworkResource>) {
     net.set_channels_builder(|builder: &mut ConnectionChannelsBuilder| {
         builder
             .register::<NetworkMessage>(NETWORK_MESSAGE_SETTINGS)
+            .unwrap();
+        builder
+            .register::<TransformMessage>(TRANSFORM_MESSAGE_SETTINGS)
             .unwrap();
     });
 }
@@ -176,6 +186,7 @@ fn flush_channels(mut net: ResMut<NetworkResource>) {
     for (_handle, connection) in net.connections.iter_mut() {
         if let Some(channels) = connection.channels() {
             channels.flush::<NetworkMessage>();
+            channels.flush::<TransformMessage>();
         }
     }
 }

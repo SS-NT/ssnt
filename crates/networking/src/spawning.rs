@@ -88,11 +88,11 @@ impl ClientControls {
         self.changed.insert(connection);
     }
 
-    fn does_control(&self, connection: ConnectionId, entity: Entity) -> bool {
+    pub fn does_control(&self, connection: ConnectionId, entity: Entity) -> bool {
         self.entities.get(&connection) == Some(&entity)
     }
 
-    fn controlled_entity(&self, connection: ConnectionId) -> Option<Entity> {
+    pub fn controlled_entity(&self, connection: ConnectionId) -> Option<Entity> {
         self.entities.get(&connection).copied()
     }
 }
@@ -168,7 +168,7 @@ fn receive_control_updates(
 pub struct ClientControlled;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
-enum SpawningSystems {
+pub(crate) enum SpawningSystems {
     Spawn,
     ClientControl,
 }

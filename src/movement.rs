@@ -2,25 +2,33 @@ use crate::{
     camera::{MainCamera, TopDownCamera},
     Player,
 };
-use bevy::{math::Vec3Swizzles, prelude::*};
+use bevy::{core::FixedTimestep, math::Vec3Swizzles, prelude::*};
 use bevy_rapier3d::{
     na::Vector3,
     prelude::{
-        RigidBodyForcesComponent, RigidBodyMassPropsComponent,
-        RigidBodyPositionComponent, RigidBodyVelocityComponent,
+        RigidBodyForcesComponent, RigidBodyMassPropsComponent, RigidBodyPositionComponent,
+        RigidBodyVelocityComponent,
     },
 };
-use networking::{spawning::ClientControlled, NetworkManager};
+use networking::{
+    messaging::{AppExt, MessageReceivers, MessageSender, MessageEvent},
+    spawning::{ClientControlled, ClientControls},
+    NetworkManager,
+};
+use serde::{Deserialize, Serialize};
 
 pub fn movement_system(
     time: Res<Time>,
     keyboard_input: Res<Input<KeyCode>>,
-    mut query: Query<(
-        &mut Player,
-        &RigidBodyVelocityComponent,
-        &mut RigidBodyForcesComponent,
-        &RigidBodyMassPropsComponent,
-    ), With<ClientControlled>>,
+    mut query: Query<
+        (
+            &mut Player,
+            &RigidBodyVelocityComponent,
+            &mut RigidBodyForcesComponent,
+            &RigidBodyMassPropsComponent,
+        ),
+        With<ClientControlled>,
+    >,
     camera_query: Query<&TopDownCamera, With<MainCamera>>,
 ) {
     for (mut player, velocity, mut forces, mass_properties) in query.iter_mut() {
@@ -103,18 +111,63 @@ fn movement_axis(input: &Res<Input<KeyCode>>, plus: KeyCode, minus: KeyCode) -> 
     axis
 }
 
+fn send_movement_update(
+    query: Query<&Transform, With<ClientControlled>>,
+    mut sender: MessageSender,
+) {
+    for transform in query.iter() {
+        sender.send(
+            &MovementMessage {
+                position: transform.translation,
+                rotation: transform.rotation,
+            },
+            MessageReceivers::Server,
+        );
+    }
+}
+
+fn handle_movement_message(
+    mut query: Query<&mut RigidBodyPositionComponent>,
+    controls: Res<ClientControls>,
+    mut messages: EventReader<MessageEvent<MovementMessage>>,
+) {
+    for event in messages.iter() {
+        if let Some(controlled) = controls.controlled_entity(event.connection) {
+            if let Ok(mut rigidbody) = query.get_mut(controlled) {
+                rigidbody.position.translation = event.message.position.into();
+                rigidbody.position.rotation = event.message.rotation.into();
+            }
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct MovementMessage {
+    position: Vec3,
+    rotation: Quat,
+}
+
 pub struct MovementPlugin;
 
 impl Plugin for MovementPlugin {
     fn build(&self, app: &mut App) {
+        app.add_network_message::<MovementMessage>();
+
         if app
             .world
             .get_resource::<NetworkManager>()
             .unwrap()
             .is_client()
         {
-            app.add_system(movement_system.label("movement"));
-            app.add_system_to_stage(CoreStage::PostUpdate, character_rotation_system);
+            app.add_system(movement_system.label("movement"))
+                .add_system(
+                    send_movement_update
+                        .after("movement")
+                        .with_run_criteria(FixedTimestep::step(0.1)),
+                )
+                .add_system_to_stage(CoreStage::PostUpdate, character_rotation_system);
+        } else {
+            app.add_system(handle_movement_message);
         }
     }
 }

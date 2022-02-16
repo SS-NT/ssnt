@@ -5,10 +5,12 @@ mod components;
 mod items;
 mod movement;
 mod ui;
+mod admin;
 
 use std::net::{SocketAddr, SocketAddrV4};
 use std::time::Duration;
 
+use admin::AdminPlugin;
 use bevy::app::ScheduleRunnerSettings;
 use bevy::asset::AssetPlugin;
 use bevy::ecs::system::EntityCommands;
@@ -110,6 +112,7 @@ fn main() {
     app.add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugin(movement::MovementPlugin)
         .add_plugin(maps::MapPlugin)
+        .add_plugin(AdminPlugin)
         .insert_resource(args)
         .add_startup_system(setup_shared)
         .run();
@@ -253,7 +256,6 @@ fn handle_player_spawn(query: Query<(&NetworkIdentity, &PrefabPath)>, mut entity
                     .with_children(|parent| {
                     parent.spawn_scene(player_model);
                 });
-                info!("Spawned player with network id: {:?}", identity);
             }
         }
     }

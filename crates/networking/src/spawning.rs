@@ -2,7 +2,7 @@ use bevy::{
     ecs::system::QuerySingleError,
     prelude::{
         info, warn, App, Commands, Component, Entity, EventReader, EventWriter,
-        ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SystemLabel, With, SystemSet,
+        ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SystemLabel, SystemSet, With,
     },
     utils::{HashMap, HashSet},
 };
@@ -27,18 +27,25 @@ struct SpawnEntity {
 #[derive(Component)]
 pub struct PrefabPath(pub String);
 
-/// Events related to networked entities
+/// Events related to networked entities on the server
+pub enum ServerEntityEvent {
+    /// A spawn message has been sent to a connection
+    Spawned((Entity, ConnectionId)),
+}
+
+/// Events related to networked entities on the client
 pub enum NetworkedEntityEvent {
     /// A networked entity has been spawned
     Spawned(Entity),
 }
 
 fn send_spawn(
-    query: Query<(&NetworkIdentity, &PrefabPath)>,
+    query: Query<(Entity, &NetworkIdentity, &PrefabPath)>,
     visibilities: Res<NetworkVisibilities>,
     mut sender: MessageSender,
+    mut entity_events: EventWriter<ServerEntityEvent>,
 ) {
-    for (identity, prefab) in query.iter() {
+    for (entity, identity, prefab) in query.iter() {
         if let Some(visibility) = visibilities.visibility.get(identity) {
             let new_observers = visibility.new_observers();
             if new_observers.is_empty() {
@@ -50,6 +57,11 @@ fn send_spawn(
                 network_id: *identity,
             };
             sender.send(&message, MessageReceivers::Set(new_observers.clone()));
+            entity_events.send_batch(
+                new_observers
+                    .iter()
+                    .map(|c| ServerEntityEvent::Spawned((entity, *c))),
+            );
         }
     }
 }
@@ -72,6 +84,8 @@ fn receive_spawn(
 
         ids.set_identity(entity, spawn.network_id);
         entity_events.send(NetworkedEntityEvent::Spawned(entity));
+
+        info!("Received spawn message for {:?}", spawn.network_id);
     }
 }
 
@@ -133,7 +147,10 @@ fn receive_control_updates(
     mut commands: Commands,
 ) {
     for event in events.iter() {
-        info!("Client control updating to {:?}", event.message.controlled_entity);
+        info!(
+            "Client control updating to {:?}",
+            event.message.controlled_entity
+        );
 
         let existing_entity = query.get_single().map_or_else(
             |e| match e {
@@ -168,7 +185,7 @@ fn receive_control_updates(
 pub struct ClientControlled;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
-pub(crate) enum SpawningSystems {
+pub enum SpawningSystems {
     Spawn,
     ClientControl,
 }
@@ -186,7 +203,8 @@ impl Plugin for SpawningPlugin {
             .unwrap()
             .is_server()
         {
-            app.init_resource::<ClientControls>().add_system_set(
+            app.add_event::<ServerEntityEvent>()
+                .init_resource::<ClientControls>().add_system_set(
                 SystemSet::new()
                     .after(NetworkSystem::ReadNetworkMessages)
                     .with_system(send_spawn.label(SpawningSystems::Spawn))

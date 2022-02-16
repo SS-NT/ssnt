@@ -123,6 +123,10 @@ impl<'w, 's> MessageSender<'w, 's> {
         let event = OutboundMessage { type_id: *type_id, content: bincode::serialize(message).expect("Unable to serialize message"), receivers };
         self.outbound_messages.send(event);
     }
+
+    pub fn send_to_server<T>(&mut self, message: &T) where T: 'static + Serialize + Send + Sync {
+        self.send(message, MessageReceivers::Server);
+    }
 }
 
 const NETWORK_MESSAGE_SETTINGS: MessageChannelSettings = MessageChannelSettings {

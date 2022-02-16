@@ -16,7 +16,6 @@ use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
-use bevy_networking_turbulence::NetworkResource;
 use bevy_rapier3d::na::{Point3, Vector3};
 use bevy_rapier3d::physics::{
     ColliderBundle, NoUserData, RapierPhysicsPlugin, RigidBodyPositionSync,
@@ -46,7 +45,7 @@ use networking::identity::{EntityCommandsExt as NetworkingEntityCommandsExt, Net
 use networking::spawning::{NetworkedEntityEvent, PrefabPath, ClientControls, ClientControlled};
 use networking::transform::{NetworkedTransform, NetworkTransform};
 use networking::visibility::NetworkObserver;
-use networking::{NetworkRole, NetworkingPlugin, ClientEvent, ConnectionId, ServerEvent};
+use networking::{NetworkRole, NetworkingPlugin, ClientEvent, ConnectionId, ServerEvent, NetworkResource};
 
 #[derive(Parser)]
 struct Args {

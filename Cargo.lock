@@ -557,8 +557,6 @@ dependencies = [
 [[package]]
 name = "bevy_networking_turbulence"
 version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d841756229b2a5e75191c7c0bd5d52abe4025e847b1f10663ee81158a371243"
 dependencies = [
  "bevy",
  "bytes",
@@ -3477,7 +3475,6 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "bevy_fly_camera",
- "bevy_networking_turbulence",
  "bevy_rapier3d",
  "byond",
  "cfg-if 1.0.0",

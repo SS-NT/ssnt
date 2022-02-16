@@ -4,6 +4,8 @@ pub mod visibility;
 pub mod spawning;
 pub mod transform;
 
+pub use bevy_networking_turbulence::NetworkResource;
+
 use std::{net::SocketAddr, fmt::Display};
 
 use bevy::{
@@ -15,7 +17,7 @@ use bevy::{
 };
 use bevy_networking_turbulence::{
     MessageFlushingStrategy,
-    NetworkEvent, NetworkResource,
+    NetworkEvent,
 };
 use identity::IdentityPlugin;
 use messaging::{MessageSender, MessageReceivers, MessageEvent, MessagingPlugin, AppExt};

@@ -12,7 +12,7 @@ members = ["crates/*"]
 byond = { path = "crates/byond" }
 maps = { path = "crates/maps" }
 networking = { path = "crates/networking" }
-bevy = { version = "0.6", features = ["dynamic", "bevy_gltf"] }
+bevy = { version = "0.6", features = ["bevy_gltf"] }
 bevy_fly_camera = "0.8.0"
 bevy_egui = "0.10"
 bevy_rapier3d = { version = "0.12.0", features = ["simd-stable"] }

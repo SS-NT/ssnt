@@ -10,7 +10,7 @@ use bevy::{
     utils::HashMap,
 };
 use bevy_networking_turbulence::NetworkResource;
-use bevy_rapier3d::{physics::PhysicsSystems, prelude::RigidBodyPositionComponent};
+use bevy_rapier3d::{physics::PhysicsSystems, prelude::{RigidBodyPositionComponent, RigidBodyVelocityComponent}};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -33,6 +33,8 @@ pub(crate) struct TransformUpdate {
     // TODO: Add delta compression
     position: Option<Vec3>,
     rotation: Option<Quat>,
+    linear_velocity: Option<Vec3>,
+    angular_velocity: Option<Vec3>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -113,13 +115,13 @@ impl NetworkTransform {
 }
 
 fn update_transform(
-    mut query: Query<(&mut NetworkTransform, &Transform, &NetworkIdentity)>,
+    mut query: Query<(&mut NetworkTransform, &Transform, &NetworkIdentity, Option<&RigidBodyVelocityComponent>)>,
     time: Res<Time>,
     visibilities: Res<NetworkVisibilities>,
     mut network: ResMut<NetworkResource>,
 ) {
     let seconds = time.time_since_startup().as_secs_f32();
-    for (mut networked, transform, identity) in query.iter_mut() {
+    for (mut networked, transform, identity, velocity) in query.iter_mut() {
         let networked: &mut NetworkTransform = &mut networked;
         // Respect update rate
         if networked.last_update + 1.0 / networked.update_rate > seconds {
@@ -162,6 +164,8 @@ fn update_transform(
             } else {
                 None
             },
+            linear_velocity: velocity.map(|v| v.linvel.into()),
+            angular_velocity: velocity.map(|v| v.angvel.into()),
         };
         networked.add_update(update.clone());
 
@@ -471,9 +475,9 @@ fn sync_networked_transform(
 
 /// Applies transform updates to entities with physics
 fn sync_networked_transform_physics(
-    mut query: Query<(&mut NetworkedTransform, &mut RigidBodyPositionComponent)>,
+    mut query: Query<(&mut NetworkedTransform, &mut RigidBodyPositionComponent, &mut RigidBodyVelocityComponent)>,
 ) {
-    for (mut transform, mut rigidbody) in query.iter_mut() {
+    for (mut transform, mut rigidbody, mut velocity) in query.iter_mut() {
         if let Some(update) = &transform.last_update {
             if let Some(position) = update.position {
                 rigidbody.position.translation = position.into();
@@ -481,6 +485,14 @@ fn sync_networked_transform_physics(
 
             if let Some(rotation) = update.rotation {
                 rigidbody.position.rotation = rotation.into();
+            }
+
+            if let Some(linear_velocity) = update.linear_velocity {
+                velocity.linvel = linear_velocity.into();
+            }
+
+            if let Some(angular_velocity) = update.angular_velocity {
+                velocity.angvel = angular_velocity.into();
             }
         }
 

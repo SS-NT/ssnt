@@ -4,7 +4,7 @@ use bevy::{utils::{HashMap, HashSet}, prelude::{App, EventReader, EventWriter, w
 use bevy_networking_turbulence::{MessageChannelSettings, MessageChannelMode, ReliableChannelSettings, NetworkResource, ConnectionChannelsBuilder};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
-use crate::{ConnectionId, Players, NetworkSystem, NetworkManager, transform::TransformMessage};
+use crate::{ConnectionId, Players, NetworkSystem, NetworkManager, transform::TransformMessage, time::TimeMessage};
 
 
 /// Assigns packet numbers to types uniquely and allows to lookup the id for a specific type.
@@ -157,6 +157,13 @@ const TRANSFORM_MESSAGE_SETTINGS: MessageChannelSettings = MessageChannelSetting
     packet_buffer_size: 100,
 };
 
+const TIME_MESSAGE_SETTINGS: MessageChannelSettings = MessageChannelSettings {
+    channel: 2,
+    channel_mode: MessageChannelMode::Unreliable,
+    message_buffer_size: 10,
+    packet_buffer_size: 10,
+};
+
 fn setup_channels(mut net: ResMut<NetworkResource>) {
     net.set_channels_builder(|builder: &mut ConnectionChannelsBuilder| {
         builder
@@ -164,6 +171,9 @@ fn setup_channels(mut net: ResMut<NetworkResource>) {
             .unwrap();
         builder
             .register::<TransformMessage>(TRANSFORM_MESSAGE_SETTINGS)
+            .unwrap();
+        builder
+            .register::<TimeMessage>(TIME_MESSAGE_SETTINGS)
             .unwrap();
     });
 }

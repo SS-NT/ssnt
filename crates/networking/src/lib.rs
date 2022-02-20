@@ -3,15 +3,17 @@ pub mod identity;
 pub mod visibility;
 pub mod spawning;
 pub mod transform;
+pub mod time;
 
 pub use bevy_networking_turbulence::NetworkResource;
+use time::{TimePlugin, ServerNetworkTime, ClientNetworkTime};
 
 use std::{net::SocketAddr, fmt::Display};
 
 use bevy::{
     prelude::{
         info, warn, App, Component, EventReader, EventWriter,
-        ParallelSystemDescriptorCoercion, Plugin, ResMut, State, SystemLabel,
+        ParallelSystemDescriptorCoercion, Plugin, ResMut, State, SystemLabel, Res,
     },
     utils::HashMap,
 };
@@ -74,7 +76,10 @@ struct ClientHello {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct ServerInfo {}
+struct ServerInfo {
+    /// How many seconds a server tick takes
+    tick_duration_seconds: f32,
+}
 
 fn handle_joining_server(
     mut events: EventReader<ClientEvent>,
@@ -119,11 +124,14 @@ fn client_joined_server(
     mut server_infos: EventReader<MessageEvent<ServerInfo>>,
     mut client_events: EventWriter<ClientEvent>,
     mut state: ResMut<State<ClientState>>,
+    mut network_time: ResMut<ClientNetworkTime>,
 ) {
-    for _ in server_infos.iter() {
+    for event in server_infos.iter() {
         state.set(ClientState::Connected).unwrap();
         client_events.send(ClientEvent::Joined);
-        info!("Joined server");
+        let tick_duration = event.message.tick_duration_seconds;
+        network_time.server_tick_seconds = Some(tick_duration);
+        info!("Joined server tick={}", tick_duration);
     }
 }
 
@@ -154,11 +162,15 @@ fn server_handle_connect(
     mut players: ResMut<Players>,
     mut server_events: EventWriter<ServerEvent>,
     mut sender: MessageSender,
+    network_time: Res<ServerNetworkTime>,
 ) {
     for event in hello_messages.iter() {
         // TODO: Auth
         info!("New client connected!");
-        sender.send(&ServerInfo {}, MessageReceivers::Single(event.connection));
+        let server_info = ServerInfo {
+            tick_duration_seconds: network_time.tick_in_seconds() as f32,
+        };
+        sender.send(&server_info, MessageReceivers::Single(event.connection));
         players.add(event.connection);
         server_events.send(ServerEvent::PlayerConnected(event.connection));
     }
@@ -186,6 +198,7 @@ impl Plugin for NetworkingPlugin {
             .add_plugin(MessagingPlugin)
             .add_network_message::<ClientHello>()
             .add_network_message::<ServerInfo>()
+            .add_plugin(TimePlugin)
             .add_plugin(IdentityPlugin)
             .add_plugin(VisibilityPlugin)
             .add_plugin(SpawningPlugin)

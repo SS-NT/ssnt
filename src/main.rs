@@ -49,6 +49,9 @@ use networking::transform::{NetworkedTransform, NetworkTransform};
 use networking::visibility::NetworkObserver;
 use networking::{NetworkRole, NetworkingPlugin, ClientEvent, ConnectionId, ServerEvent, NetworkResource};
 
+/// How many ticks the server runs per second
+const SERVER_TPS: u32 = 60; 
+
 #[derive(Parser)]
 struct Args {
     #[clap(subcommand)]
@@ -79,7 +82,7 @@ fn main() {
     match role {
         NetworkRole::Server => {
             app.insert_resource(ScheduleRunnerSettings {
-                run_mode: bevy::app::RunMode::Loop { wait: Some(Duration::from_millis(16)) }
+                run_mode: bevy::app::RunMode::Loop { wait: Some(Duration::from_secs_f64(1f64 / SERVER_TPS as f64)) }
             }).add_plugins(MinimalPlugins)
                 .add_plugin(AssetPlugin)
                 .add_plugin(LogPlugin)

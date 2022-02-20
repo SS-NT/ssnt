@@ -10,12 +10,16 @@ use bevy::{
     utils::HashMap,
 };
 use bevy_networking_turbulence::NetworkResource;
-use bevy_rapier3d::{physics::PhysicsSystems, prelude::{RigidBodyPositionComponent, RigidBodyVelocityComponent}};
+use bevy_rapier3d::{
+    physics::PhysicsSystems,
+    prelude::{RigidBodyPositionComponent, RigidBodyVelocityComponent},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
     spawning::{ClientControlled, SpawningSystems},
+    time::{ClientNetworkTime, ServerNetworkTime, TimeSystem},
     visibility::NetworkVisibilities,
     ConnectionId, NetworkManager,
 };
@@ -23,18 +27,60 @@ use crate::{
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct Acknowledgment {
     identity: NetworkIdentity,
-    sequence_number: u16,
+    sequence_number: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct TransformUpdate {
     identity: NetworkIdentity,
-    sequence_number: u16,
+    /// The server tick this update was created
+    sequence_number: u32,
     // TODO: Add delta compression
     position: Option<Vec3>,
     rotation: Option<Quat>,
     linear_velocity: Option<Vec3>,
     angular_velocity: Option<Vec3>,
+}
+
+impl TransformUpdate {
+    /// Interpolates between two snapshots at the given tick
+    fn interpolate(&self, other: &TransformUpdate, tick: f32) -> Self {
+        assert_eq!(self.identity, other.identity);
+
+        // Swap direction if necessary
+        let mut from = self;
+        let mut  to = other;
+        if from.sequence_number > to.sequence_number {
+            std::mem::swap(&mut from, &mut to);
+        }
+
+        // Calculate at which time point we are between the updates
+        let distance = to.sequence_number - from.sequence_number;
+        let t = (tick - from.sequence_number as f32) / distance as f32;
+        debug_assert!((0.0..=1.0).contains(&t));
+
+        let position = Self::interpolate_component(from.position, to.position, t, Vec3::lerp);
+        let rotation = Self::interpolate_component(from.rotation, to.rotation, t, Quat::lerp);
+        let linear_velocity = Self::interpolate_component(from.linear_velocity, to.linear_velocity, t, Vec3::lerp);
+        let angular_velocity = Self::interpolate_component(from.angular_velocity, to.angular_velocity, t, Vec3::lerp);
+
+        TransformUpdate {
+            identity: from.identity,
+            sequence_number: tick as u32,
+            position,
+            rotation,
+            linear_velocity,
+            angular_velocity,
+        }
+    }
+
+    /// Interpolates two values
+    fn interpolate_component<T>(from: Option<T>, to: Option<T>, t: f32, lerp: impl Fn(T, T, f32) -> T) -> Option<T> {
+        match from {
+            Some(from) => if let Some(to) = to { Some(lerp(from, to, t)) } else { Some(from) },
+            None => to,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -51,7 +97,7 @@ struct ClientData {
     /// The last time an ack was received
     last_ack: f32,
     /// The sequence number of the last ack
-    last_sequence: u16,
+    last_sequence: u32,
 }
 
 /// Sends transform changes to clients
@@ -70,7 +116,8 @@ pub struct NetworkTransform {
     sent_updates: VecDeque<TransformUpdate>,
     sent_queue_length: usize,
     client_data: HashMap<ConnectionId, ClientData>,
-    last_sequence: u16,
+    /// The sequence number that was last created
+    last_sequence: u32,
     last_update: f32,
     last_change: f32,
 }
@@ -98,13 +145,8 @@ impl NetworkTransform {
             self.sent_updates.pop_front();
         }
 
+        self.last_sequence = update.sequence_number;
         self.sent_updates.push_back(update);
-    }
-
-    fn get_sequence_number(&mut self) -> u16 {
-        let seq = self.last_sequence + 1;
-        self.last_sequence = seq;
-        seq
     }
 
     // How many updates have been skipped due to the transform not changing
@@ -115,10 +157,16 @@ impl NetworkTransform {
 }
 
 fn update_transform(
-    mut query: Query<(&mut NetworkTransform, &Transform, &NetworkIdentity, Option<&RigidBodyVelocityComponent>)>,
+    mut query: Query<(
+        &mut NetworkTransform,
+        &Transform,
+        &NetworkIdentity,
+        Option<&RigidBodyVelocityComponent>,
+    )>,
     time: Res<Time>,
     visibilities: Res<NetworkVisibilities>,
     mut network: ResMut<NetworkResource>,
+    network_time: Res<ServerNetworkTime>,
 ) {
     let seconds = time.time_since_startup().as_secs_f32();
     for (mut networked, transform, identity, velocity) in query.iter_mut() {
@@ -153,7 +201,8 @@ fn update_transform(
         // Construct the update message
         let update = TransformUpdate {
             identity: *identity,
-            sequence_number: networked.get_sequence_number(),
+            // TODO: Move this into a message at the start of a packet
+            sequence_number: network_time.current_tick(),
             position: if update_position {
                 Some(new_position)
             } else {
@@ -340,7 +389,44 @@ fn handle_acks(
 /// Receives transform updates from the network
 #[derive(Component, Default)]
 pub struct NetworkedTransform {
-    last_update: Option<TransformUpdate>,
+    /// A series of transform updates
+    buffered_updates: VecDeque<TransformUpdate>,
+    /// How much to offset this transform from the accurate physics simulation.
+    /// We reduce this value over time to smooth physics corrections.
+    // TODO: Actually use this
+    visual_position_error: Option<Vec3>,
+    had_next: bool,
+}
+
+impl NetworkedTransform {
+    /// Gets the relevant transform updates for the given tick
+    fn relevant_updates(&mut self, tick: f32) -> Option<(&TransformUpdate, Option<&TransformUpdate>)> {
+        // Find the next update to be interpolated to
+        let next = self
+            .buffered_updates
+            .iter()
+            .enumerate()
+            .find(|(_, u)| u.sequence_number as f32 >= tick)
+            .map(|(i, _)| i);
+        let next = match next {
+            Some(n) => n,
+            None => {
+                // Nothing to interpolate to
+                return None;
+            },
+        };
+
+        let previous = if next > 0 { Some(next - 1) } else { None };
+        // Remove updates before previous, we will never need them again
+        if let Some(p) = previous {
+            self.buffered_updates.drain(..p);
+        }
+
+        Some(match previous {
+            Some(_) => (self.buffered_updates.get(1).unwrap(), self.buffered_updates.get(0)),
+            None => (self.buffered_updates.get(0).unwrap(), None),
+        })
+    }
 }
 
 const UPDATE_BUFFER_SIZE: usize = 150;
@@ -427,7 +513,7 @@ fn apply_buffered_updates(
 
         // TODO: Remove `if` once movement is server authoritative
         if client_controlled.is_none() {
-            networked.last_update = Some(update.clone());
+            networked.buffered_updates.push_back(update.clone());
         }
 
         false
@@ -442,13 +528,15 @@ fn apply_buffered_updates(
                 if existing.sequence_number < update.sequence_number {
                     o.insert(update);
                 }
-            },
+            }
             Entry::Vacant(v) => {
                 v.insert(update);
-            },
+            }
         }
     }
-    buffer.updates.extend(unique_updates.drain().map(|(_, u)| u));
+    buffer
+        .updates
+        .extend(unique_updates.drain().map(|(_, u)| u));
 }
 
 /// Applies transform updates to entities without physics simulation
@@ -457,46 +545,73 @@ fn sync_networked_transform(
         (&mut NetworkedTransform, &mut Transform),
         Without<RigidBodyPositionComponent>,
     >,
+    network_time: Res<ClientNetworkTime>,
 ) {
+    let current_tick = network_time.interpolated_tick();
     for (mut networked, mut transform) in query.iter_mut() {
-        if let Some(update) = &networked.last_update {
-            if let Some(position) = update.position {
-                transform.translation = position;
-            }
+        let (next_update, previous_update) = match networked.relevant_updates(current_tick) {
+            Some(u) => u,
+            None => continue,
+        };
 
-            if let Some(rotation) = update.rotation {
-                transform.rotation = rotation;
-            }
+        // Interpolate between updates if present
+        let update = match previous_update {
+            Some(previous) => next_update.interpolate(previous, current_tick),
+            None => next_update.clone(),
+        };
+
+        if let Some(position) = update.position {
+            transform.translation = position;
         }
 
-        networked.last_update = None;
+        if let Some(rotation) = update.rotation {
+            transform.rotation = rotation;
+        }
     }
 }
 
 /// Applies transform updates to entities with physics
 fn sync_networked_transform_physics(
-    mut query: Query<(&mut NetworkedTransform, &mut RigidBodyPositionComponent, &mut RigidBodyVelocityComponent)>,
+    mut query: Query<(
+        &mut NetworkedTransform,
+        &mut RigidBodyPositionComponent,
+        &mut RigidBodyVelocityComponent,
+    )>,
+    network_time: Res<ClientNetworkTime>,
 ) {
+    let current_tick = network_time.interpolated_tick();
     for (mut transform, mut rigidbody, mut velocity) in query.iter_mut() {
-        if let Some(update) = &transform.last_update {
-            if let Some(position) = update.position {
-                rigidbody.position.translation = position.into();
-            }
+        let (next_update, previous_update) = match transform.relevant_updates(current_tick) {
+            Some(u) => u,
+            None => {
+                transform.had_next = false;
+                continue;
+            },
+        };
 
-            if let Some(rotation) = update.rotation {
-                rigidbody.position.rotation = rotation.into();
-            }
+        // Interpolate between updates if present
+        let update = match previous_update {
+            Some(previous) => previous.interpolate(next_update, current_tick),
+            None => next_update.clone(),
+        };
 
-            if let Some(linear_velocity) = update.linear_velocity {
-                velocity.linvel = linear_velocity.into();
-            }
-
-            if let Some(angular_velocity) = update.angular_velocity {
-                velocity.angvel = angular_velocity.into();
-            }
+        if let Some(position) = update.position {
+            rigidbody.position.translation = position.into();
         }
 
-        transform.last_update = None;
+        if let Some(rotation) = update.rotation {
+            rigidbody.position.rotation = rotation.into();
+        }
+
+        if let Some(linear_velocity) = update.linear_velocity {
+            velocity.linvel = linear_velocity.into();
+        }
+
+        if let Some(angular_velocity) = update.angular_velocity {
+            velocity.angvel = angular_velocity.into();
+        }
+
+        transform.had_next = true;
     }
 }
 
@@ -523,7 +638,7 @@ impl Plugin for TransformPlugin {
             app.add_system_set(
                 SystemSet::new()
                     .after(SpawningSystems::Spawn)
-                    .with_system(update_transform)
+                    .with_system(update_transform.after(TimeSystem::Tick))
                     .with_system(handle_retransmission)
                     .with_system(handle_acks)
                     .with_system(handle_occasional_sync),
@@ -540,13 +655,16 @@ impl Plugin for TransformPlugin {
                 .add_system(
                     sync_networked_transform
                         .label(ClientTransformSystem::Sync)
-                        .after(ClientTransformSystem::ApplyBuffer),
+                        .after(ClientTransformSystem::ApplyBuffer)
+                        .after(TimeSystem::Interpolate),
                 )
                 .add_system(
                     sync_networked_transform_physics
                         .label(ClientTransformSystem::Sync)
                         .after(ClientTransformSystem::ApplyBuffer)
-                        .before(PhysicsSystems::StepWorld),
+                        .after(TimeSystem::Interpolate)
+                        .after(PhysicsSystems::StepWorld)
+                        .before(PhysicsSystems::SyncTransforms),
                 );
         }
     }

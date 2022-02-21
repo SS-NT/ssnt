@@ -1,7 +1,7 @@
 use bevy::{prelude::{Component, Entity, error, Plugin, App}, utils::HashMap, ecs::system::{Command, EntityCommands}};
 use serde::{Deserialize, Serialize};
 
-use crate::NetworkManager;
+use crate::{NetworkManager, visibility::GridPosition};
 
 
 /// A numeric id which matches on the server and clients
@@ -23,6 +23,12 @@ impl NetworkIdentities {
     pub(crate) fn set_identity(&mut self, entity: Entity, identity: NetworkIdentity) {
         self.identities.insert(identity, entity);
         self.entities.insert(entity, identity);
+    }
+
+    pub(crate) fn remove_entity(&mut self, entity: Entity) {
+        if let Some(identity) = self.entities.remove(&entity) {
+            self.identities.remove(&identity);
+        }
     }
 
     pub fn get_entity(&self, identity: NetworkIdentity) -> Option<Entity> {
@@ -50,7 +56,12 @@ impl Command for NetworkCommand {
         identities.last_id = id;
         identities.set_identity(self.entity, NetworkIdentity(id));
 
-        world.entity_mut(self.entity).insert(NetworkIdentity(id));
+        let mut entity = world.entity_mut(self.entity);
+        entity.insert(NetworkIdentity(id));
+        
+        if !entity.contains::<GridPosition>() {
+            entity.insert(GridPosition::default());
+        }
     }
 }
 

@@ -2,7 +2,7 @@ use bevy::{
     ecs::system::QuerySingleError,
     prelude::{
         info, warn, App, Commands, Component, Entity, EventReader, EventWriter,
-        ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SystemLabel, SystemSet, With,
+        ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SystemLabel, SystemSet, With, error,
     },
     utils::{HashMap, HashSet},
 };
@@ -22,6 +22,12 @@ struct SpawnEntity {
     pub name: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+enum SpawnMessage {
+    Spawn(SpawnEntity),
+    Despawn(NetworkIdentity),
+}
+
 // Temporary struct to label networked objects
 // This should be replaced with the scene identifier in a future bevy release
 #[derive(Component)]
@@ -31,15 +37,19 @@ pub struct PrefabPath(pub String);
 pub enum ServerEntityEvent {
     /// A spawn message has been sent to a connection
     Spawned((Entity, ConnectionId)),
+    /// A despawn message has been sent to a connection
+    Despawned((Entity, ConnectionId)),
 }
 
 /// Events related to networked entities on the client
 pub enum NetworkedEntityEvent {
     /// A networked entity has been spawned
     Spawned(Entity),
+    /// A networked entity has been despawned
+    Despawned(Entity),
 }
 
-fn send_spawn(
+fn send_spawn_messages(
     query: Query<(Entity, &NetworkIdentity, &PrefabPath)>,
     visibilities: Res<NetworkVisibilities>,
     mut sender: MessageSender,
@@ -48,44 +58,72 @@ fn send_spawn(
     for (entity, identity, prefab) in query.iter() {
         if let Some(visibility) = visibilities.visibility.get(identity) {
             let new_observers = visibility.new_observers();
-            if new_observers.is_empty() {
-                continue;
+            if !new_observers.is_empty() {
+                let message = SpawnEntity {
+                    name: prefab.0.clone(),
+                    network_id: *identity,
+                };
+                sender.send(&SpawnMessage::Spawn(message), MessageReceivers::Set(new_observers.clone()));
+                entity_events.send_batch(
+                    new_observers
+                        .iter()
+                        .map(|c| ServerEntityEvent::Spawned((entity, *c))),
+                );
             }
 
-            let message = SpawnEntity {
-                name: prefab.0.clone(),
-                network_id: *identity,
-            };
-            sender.send(&message, MessageReceivers::Set(new_observers.clone()));
-            entity_events.send_batch(
-                new_observers
-                    .iter()
-                    .map(|c| ServerEntityEvent::Spawned((entity, *c))),
-            );
+            let removed_observers = visibility.removed_observers();
+            if !removed_observers.is_empty() {
+                sender.send(&SpawnMessage::Despawn(*identity), MessageReceivers::Set(removed_observers.clone()));
+                entity_events.send_batch(
+                    removed_observers
+                        .iter()
+                        .map(|c| ServerEntityEvent::Despawned((entity, *c))),
+                );
+            }
         }
     }
 }
 
 fn receive_spawn(
-    mut spawn_events: EventReader<MessageEvent<SpawnEntity>>,
+    mut spawn_events: EventReader<MessageEvent<SpawnMessage>>,
     mut entity_events: EventWriter<NetworkedEntityEvent>,
     mut ids: ResMut<NetworkIdentities>,
     mut commands: Commands,
 ) {
     for event in spawn_events.iter() {
-        let spawn = event.message.clone();
+        match &event.message {
+            SpawnMessage::Spawn(s) => {
+                let spawn = s.clone();
 
-        // TODO: Actually spawn entity from asset path
-        let entity = commands
-            .spawn()
-            .insert(spawn.network_id)
-            .insert(PrefabPath(spawn.name))
-            .id();
+                if ids.get_entity(spawn.network_id).is_some() {
+                    warn!("Received spawn message for already existing {:?}", spawn.network_id);
+                    continue;
+                }
 
-        ids.set_identity(entity, spawn.network_id);
-        entity_events.send(NetworkedEntityEvent::Spawned(entity));
+                // TODO: Actually spawn entity from asset path
+                let entity = commands
+                    .spawn()
+                    .insert(spawn.network_id)
+                    .insert(PrefabPath(spawn.name))
+                    .id();
 
-        info!("Received spawn message for {:?}", spawn.network_id);
+                ids.set_identity(entity, spawn.network_id);
+                entity_events.send(NetworkedEntityEvent::Spawned(entity));
+
+                info!("Received spawn message for {:?}", spawn.network_id);
+            },
+            SpawnMessage::Despawn(id) => {
+                if let Some(entity) = ids.get_entity(*id) {
+                    // TODO: Uncomment once rapier doesn't f***ing panic
+                    // commands.entity(entity).despawn();
+                    ids.remove_entity(entity);
+                    info!("Received despawn message for {:?}", id);
+                } else {
+                    warn!("Received despawn message for non-existent {:?}", id);
+                }
+            },
+        }
+        
     }
 }
 
@@ -171,7 +209,7 @@ fn receive_control_updates(
             if let Some(new_entity) = ids.get_entity(id) {
                 commands.entity(new_entity).insert(ClientControlled);
             } else {
-                warn!(
+                error!(
                     "Received client control update for non-existing identity {:?}",
                     id
                 );
@@ -194,7 +232,7 @@ pub(crate) struct SpawningPlugin;
 
 impl Plugin for SpawningPlugin {
     fn build(&self, app: &mut App) {
-        app.add_network_message::<SpawnEntity>()
+        app.add_network_message::<SpawnMessage>()
             .add_network_message::<ControlUpdate>();
 
         if app
@@ -207,7 +245,7 @@ impl Plugin for SpawningPlugin {
                 .init_resource::<ClientControls>().add_system_set(
                 SystemSet::new()
                     .after(NetworkSystem::ReadNetworkMessages)
-                    .with_system(send_spawn.label(SpawningSystems::Spawn))
+                    .with_system(send_spawn_messages.label(SpawningSystems::Spawn).after(NetworkSystem::Visibility))
                     .with_system(
                         send_control_updates
                             .label(SpawningSystems::ClientControl)

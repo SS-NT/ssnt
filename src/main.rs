@@ -84,6 +84,7 @@ fn main() {
             app.insert_resource(ScheduleRunnerSettings {
                 run_mode: bevy::app::RunMode::Loop { wait: Some(Duration::from_secs_f64(1f64 / SERVER_TPS as f64)) }
             }).add_plugins(MinimalPlugins)
+                .add_plugin(TransformPlugin)
                 .add_plugin(AssetPlugin)
                 .add_plugin(LogPlugin)
                 .add_plugin(networking_plugin)

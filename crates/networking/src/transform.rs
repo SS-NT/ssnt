@@ -281,7 +281,7 @@ fn handle_retransmission(
         }
 
         // Transmit for new observers
-        for connection in visibility.observers().iter() {
+        for connection in visibility.observers() {
             let entry = networked.client_data.entry(*connection);
             if let Entry::Vacant(entry) = entry {
                 entry.insert(ClientData {

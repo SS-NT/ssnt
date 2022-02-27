@@ -57,7 +57,7 @@ fn send_spawn_messages(
 ) {
     for (entity, identity, prefab) in query.iter() {
         if let Some(visibility) = visibilities.visibility.get(identity) {
-            let new_observers = visibility.new_observers();
+            let new_observers: HashSet<ConnectionId> = visibility.new_observers().copied().collect();
             if !new_observers.is_empty() {
                 let message = SpawnEntity {
                     name: prefab.0.clone(),
@@ -71,7 +71,7 @@ fn send_spawn_messages(
                 );
             }
 
-            let removed_observers = visibility.removed_observers();
+            let removed_observers: HashSet<ConnectionId> = visibility.removed_observers().copied().collect();
             if !removed_observers.is_empty() {
                 sender.send(&SpawnMessage::Despawn(*identity), MessageReceivers::Set(removed_observers.clone()));
                 entity_events.send_batch(

@@ -1,4 +1,6 @@
 
+use std::collections::hash_map::Entry;
+
 use bevy::{
     math::{IVec2, Vec2, Vec3Swizzles},
     prelude::{
@@ -17,47 +19,75 @@ pub struct NetworkObserver {
     pub connection: ConnectionId,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ObserverState {
+    /// Observation started this frame
+    Added,
+    /// Has observed for at least one frame
+    Observing,
+    /// Observation stopped this frame
+    Removed,
+}
+
 /// Stores which connections are observing something
 #[derive(Default)]
 pub struct NetworkVisibility {
-    observers: HashSet<ConnectionId>,
-    new_observers: HashSet<ConnectionId>,
-    removed_observers: HashSet<ConnectionId>,
+    observers: HashMap<ConnectionId, ObserverState>,
 }
 
 impl NetworkVisibility {
     fn add_observer(&mut self, connection: ConnectionId) {
-        if self.observers.insert(connection) && !self.removed_observers.remove(&connection) {
-            self.new_observers.insert(connection);
-        }
+        self.observers.entry(connection).and_modify(|s| {
+            if let ObserverState::Removed = s {
+                *s = ObserverState::Observing;
+            }
+        }).or_insert(ObserverState::Added);
     }
 
     fn remove_observer(&mut self, connection: ConnectionId) {
-        if self.observers.remove(&connection) {
-            self.new_observers.remove(&connection);
-            self.removed_observers.insert(connection);
-        }
+        if let Entry::Occupied(mut o) = self.observers.entry(connection) { match o.get() {
+            ObserverState::Added => { o.remove_entry(); },
+            ObserverState::Observing => { *o.get_mut() = ObserverState::Removed; },
+            ObserverState::Removed => {},
+        } };
     }
 
     fn update(&mut self) {
-        self.new_observers.clear();
-        self.removed_observers.clear();
+        self.observers.retain(|_, state| {
+            match state {
+                ObserverState::Added => {
+                    *state = ObserverState::Observing;
+                    true
+                },
+                ObserverState::Observing => true,
+                ObserverState::Removed => false,
+            }
+        });
     }
 
-    pub fn observers(&self) -> &HashSet<ConnectionId> {
-        &self.observers
+    pub fn observers(&self) -> impl Iterator<Item = &ConnectionId> {
+        self.observers.iter().filter_map(|(id, s)| match s {
+            ObserverState::Added | ObserverState::Observing => Some(id),
+            ObserverState::Removed => None,
+        })
     }
 
-    pub fn new_observers(&self) -> &HashSet<ConnectionId> {
-        &self.new_observers
+    pub fn new_observers(&self) -> impl Iterator<Item = &ConnectionId> {
+        self.observers.iter().filter_map(|(id, s)| match s {
+            ObserverState::Added => Some(id),
+            _ => None,
+        })
     }
 
-    pub fn removed_observers(&self) -> &HashSet<ConnectionId> {
-        &self.removed_observers
+    pub fn removed_observers(&self) -> impl Iterator<Item = &ConnectionId> {
+        self.observers.iter().filter_map(|(id, s)| match s {
+            ObserverState::Removed => Some(id),
+            _ => None,
+        })
     }
 
     pub fn has_observer(&self, connection: &ConnectionId) -> bool {
-        self.observers.get(connection).is_some()
+        self.observers.get(connection).map(|s| *s != ObserverState::Removed) == Some(true)
     }
 }
 

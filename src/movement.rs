@@ -147,6 +147,11 @@ struct MovementMessage {
     rotation: Quat,
 }
 
+#[derive(SystemLabel)]
+pub enum MovementSystem {
+    Update,
+}
+
 pub struct MovementPlugin;
 
 impl Plugin for MovementPlugin {
@@ -159,10 +164,10 @@ impl Plugin for MovementPlugin {
             .unwrap()
             .is_client()
         {
-            app.add_system(movement_system.label("movement"))
+            app.add_system(movement_system.label(MovementSystem::Update))
                 .add_system(
                     send_movement_update
-                        .after("movement")
+                        .after(MovementSystem::Update)
                         .with_run_criteria(FixedTimestep::step(0.1)),
                 )
                 .add_system_to_stage(CoreStage::PostUpdate, character_rotation_system);

@@ -26,6 +26,11 @@ impl MessageTypes {
     }
 }
 
+enum MessageKind {
+    Reliable,
+    Unreliable,
+}
+
 /// A message received from a peer
 struct IncomingMessage {
     connection: ConnectionId,
@@ -50,6 +55,7 @@ pub struct OutboundMessage {
     type_id: u16,
     content: Vec<u8>,
     receivers: MessageReceivers,
+    kind: MessageKind,
 }
 
 /// The actual data being serialized over the network
@@ -69,6 +75,10 @@ impl From<&OutboundMessage> for NetworkMessage {
         }
     }
 }
+
+/// A new-type struct to mark this network message to be sent over an unreliable channel
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct UnreliableNetworkMessage(pub NetworkMessage);
 
 // A typed event sent for every received message
 pub struct MessageEvent<T> {
@@ -119,13 +129,21 @@ pub struct MessageSender<'w, 's> {
 
 impl<'w, 's> MessageSender<'w, 's> {
     pub fn send<T>(&mut self, message: &T, receivers: MessageReceivers) where T: 'static + Serialize + Send + Sync {
-        let type_id = self.types.types.get(&TypeId::of::<T>()).expect("Tried to send unregistered message type");
-        let event = OutboundMessage { type_id: *type_id, content: bincode::serialize(message).expect("Unable to serialize message"), receivers };
-        self.outbound_messages.send(event);
+        self.send_internal(message, receivers, MessageKind::Reliable);
     }
 
     pub fn send_to_server<T>(&mut self, message: &T) where T: 'static + Serialize + Send + Sync {
         self.send(message, MessageReceivers::Server);
+    }
+
+    pub fn send_unreliable<T>(&mut self, message: &T, receivers: MessageReceivers) where T: 'static + Serialize + Send + Sync {
+        self.send_internal(message, receivers, MessageKind::Unreliable);
+    }
+
+    fn send_internal<T>(&mut self, message: &T, receivers: MessageReceivers, kind: MessageKind) where T: 'static + Serialize + Send + Sync {
+        let type_id = self.types.types.get(&TypeId::of::<T>()).expect("Tried to send unregistered message type");
+        let event = OutboundMessage { type_id: *type_id, content: bincode::serialize(message).expect("Unable to serialize message"), receivers, kind };
+        self.outbound_messages.send(event);
     }
 }
 
@@ -164,6 +182,13 @@ const TIME_MESSAGE_SETTINGS: MessageChannelSettings = MessageChannelSettings {
     packet_buffer_size: 10,
 };
 
+const UNRELIABLE_MESSAGE_SETTINGS: MessageChannelSettings = MessageChannelSettings {
+    channel: 3,
+    channel_mode: MessageChannelMode::Unreliable,
+    message_buffer_size: 200,
+    packet_buffer_size: 10,
+};
+
 fn setup_channels(mut net: ResMut<NetworkResource>) {
     net.set_channels_builder(|builder: &mut ConnectionChannelsBuilder| {
         builder
@@ -174,6 +199,9 @@ fn setup_channels(mut net: ResMut<NetworkResource>) {
             .unwrap();
         builder
             .register::<TimeMessage>(TIME_MESSAGE_SETTINGS)
+            .unwrap();
+        builder
+            .register::<UnreliableNetworkMessage>(UNRELIABLE_MESSAGE_SETTINGS)
             .unwrap();
     });
 }
@@ -193,6 +221,14 @@ fn read_channel(
                 connection: ConnectionId(*handle),
             });
         }
+
+        while let Some(message) = channels.recv::<UnreliableNetworkMessage>() {
+            events.send(IncomingMessage {
+                type_id: message.0.type_id,
+                content: message.0.content,
+                connection: ConnectionId(*handle),
+            });
+        }
     }
 }
 
@@ -201,6 +237,7 @@ fn flush_channels(mut net: ResMut<NetworkResource>) {
         if let Some(channels) = connection.channels() {
             channels.flush::<NetworkMessage>();
             channels.flush::<TransformMessage>();
+            channels.flush::<UnreliableNetworkMessage>();
         }
     }
 }
@@ -213,22 +250,31 @@ fn send_outbound_messages_server(mut messages: EventReader<OutboundMessage>, mut
         match &outbound.receivers {
             MessageReceivers::AllPlayers => {
                 for (&id, _) in players.players.iter() {
-                    network.send_message(id.0, message.clone()).unwrap();
+                    if let MessageKind::Reliable = outbound.kind {
+                        network.send_message(id.0, message.clone()).unwrap();
+                    } else {
+                        network.send_message(id.0, UnreliableNetworkMessage(message.clone())).unwrap();
+                    };
                 }
             },
             MessageReceivers::Set(connections) => {
                 for &id in connections.iter() {
-                    network.send_message(id.0, message.clone()).unwrap();
+                    if let MessageKind::Reliable = outbound.kind {
+                        network.send_message(id.0, message.clone()).unwrap();
+                    } else {
+                        network.send_message(id.0, UnreliableNetworkMessage(message.clone())).unwrap();
+                    };
                 }
             },
             MessageReceivers::Server => {
-                if network.connections.len() != 1 {
-                    panic!("Trying to send message to server while having multiple connections");
-                }
-                network.broadcast_message(message);
+                panic!("Trying to send to server from server");
             },
             MessageReceivers::Single(id) => {
-                network.send_message(id.0, message).unwrap();
+                if let MessageKind::Reliable = outbound.kind {
+                    network.send_message(id.0, message).unwrap();
+                } else {
+                    network.send_message(id.0, UnreliableNetworkMessage(message)).unwrap();
+                };
             },
         }
     }
@@ -241,7 +287,11 @@ fn send_outbound_messages_client(mut messages: EventReader<OutboundMessage>, mut
         if network.connections.len() != 1 {
             panic!("Trying to send message to server while having multiple connections");
         }
-        network.broadcast_message(message);
+
+        match outbound.kind {
+            MessageKind::Reliable => network.broadcast_message(message),
+            MessageKind::Unreliable => network.broadcast_message(UnreliableNetworkMessage(message)),
+        };
     }
 }
 

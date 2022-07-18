@@ -36,7 +36,7 @@ pub type ContainerQuery<'world, 'state> = Query<'world, 'state, (&'static Item,)
 
 pub struct ContainerItemIterator<'a, 'world: 'a, 'state: 'a> {
     query: &'a ContainerQuery<'world, 'state>,
-    inner_iter: std::collections::hash_map::Iter<'a, UVec2, Entity>,
+    inner_iter: bevy::utils::hashbrown::hash_map::Iter<'a, UVec2, Entity>,
 }
 
 impl<'a, 'world, 'state> Iterator for ContainerItemIterator<'a, 'world, 'state> {

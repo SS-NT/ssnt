@@ -71,7 +71,7 @@ pub fn top_down_camera_update_system(
     }
 }
 
-#[derive(SystemLabel)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
 enum CameraSystem {
     Input,
 }

@@ -1,19 +1,16 @@
-use std::collections::{hash_map::Entry, VecDeque};
+use std::collections::VecDeque;
 
 use bevy::{
     core::Time,
     math::{Quat, Vec3},
     prelude::{
         warn, App, Component, Local, ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut,
-        SystemLabel, SystemSet, Transform, Without,
+        SystemLabel, SystemSet, Transform, Without, With,
     },
-    utils::HashMap,
+    utils::{HashMap, hashbrown::hash_map::Entry},
 };
-use bevy_networking_turbulence::NetworkResource;
-use bevy_rapier3d::{
-    physics::PhysicsSystems,
-    prelude::{RigidBodyPositionComponent, RigidBodyVelocityComponent},
-};
+use bevy_rapier3d::prelude::{Velocity, RigidBody};
+use bevy_renet::{renet::{RenetServer, RenetClient}, run_if_client_conected};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -21,7 +18,7 @@ use crate::{
     spawning::{ClientControlled, SpawningSystems},
     time::{ClientNetworkTime, ServerNetworkTime, TimeSystem},
     visibility::NetworkVisibilities,
-    ConnectionId, NetworkManager,
+    ConnectionId, NetworkManager, messaging::Channel,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -161,11 +158,11 @@ fn update_transform(
         &mut NetworkTransform,
         &Transform,
         &NetworkIdentity,
-        Option<&RigidBodyVelocityComponent>,
+        Option<&Velocity>,
     )>,
     time: Res<Time>,
     visibilities: Res<NetworkVisibilities>,
-    mut network: ResMut<NetworkResource>,
+    mut server: ResMut<RenetServer>,
     network_time: Res<ServerNetworkTime>,
 ) {
     let seconds = time.time_since_startup().as_secs_f32();
@@ -220,10 +217,10 @@ fn update_transform(
 
         // Send to all observers
         if let Some(visibility) = visibilities.visibility.get(identity) {
+            let serialized = bincode::serialize(&TransformMessage::Update(update.clone())).unwrap();
             for connection in visibility.observers() {
-                network
-                    .send_message(connection.0, TransformMessage::Update(update.clone()))
-                    .unwrap();
+                server
+                    .send_message(connection.0, Channel::Transforms.id(), serialized.clone());
             }
         }
 
@@ -237,7 +234,7 @@ fn handle_retransmission(
     mut query: Query<(&mut NetworkTransform, &NetworkIdentity)>,
     time: Res<Time>,
     visibilities: Res<NetworkVisibilities>,
-    mut network: ResMut<NetworkResource>,
+    mut server: ResMut<RenetServer>,
 ) {
     let seconds = time.time_since_startup().as_secs_f32();
     for (mut networked, identity) in query.iter_mut() {
@@ -260,6 +257,8 @@ fn handle_retransmission(
             None => continue,
         };
 
+        let serialized = bincode::serialize(&TransformMessage::Update(last_update.clone())).unwrap();
+
         // Retransmit for missed acks
         for (connection, data) in networked.client_data.iter_mut() {
             if data.last_sequence == networked.last_sequence {
@@ -267,6 +266,7 @@ fn handle_retransmission(
             }
 
             if !visibility.has_observer(connection) {
+                // TODO: remove client data after some time
                 continue;
             }
 
@@ -274,9 +274,8 @@ fn handle_retransmission(
                 continue;
             }
 
-            network
-                .send_message(connection.0, TransformMessage::Update(last_update.clone()))
-                .unwrap();
+            server
+                .send_message(connection.0, Channel::Transforms.id(), serialized.clone());
             data.last_sent = seconds;
         }
 
@@ -288,9 +287,8 @@ fn handle_retransmission(
                     last_sent: seconds,
                     ..Default::default()
                 });
-                network
-                    .send_message(connection.0, TransformMessage::Update(last_update.clone()))
-                    .unwrap();
+                server
+                    .send_message(connection.0, Channel::Transforms.id(), serialized.clone());
             }
         }
     }
@@ -304,7 +302,7 @@ fn handle_occasional_sync(
     mut query: Query<(&mut NetworkTransform, &NetworkIdentity)>,
     time: Res<Time>,
     visibilities: Res<NetworkVisibilities>,
-    mut network: ResMut<NetworkResource>,
+    mut server: ResMut<RenetServer>,
 ) {
     let seconds = time.time_since_startup().as_secs_f32();
 
@@ -322,14 +320,14 @@ fn handle_occasional_sync(
             None => continue,
         };
 
+        let serialized = bincode::serialize(&TransformMessage::Update(last_update.clone())).unwrap();
         for (connection, data) in networked.client_data.iter_mut() {
             if !visibility.has_observer(connection) {
                 continue;
             }
 
-            network
-                .send_message(connection.0, TransformMessage::Update(last_update.clone()))
-                .unwrap();
+            server
+                .send_message(connection.0, Channel::Transforms.id(), serialized.clone());
             data.last_sent = seconds;
         }
 
@@ -340,14 +338,17 @@ fn handle_occasional_sync(
 /// Process acknowledgments from clients
 fn handle_acks(
     mut query: Query<&mut NetworkTransform>,
-    mut network: ResMut<NetworkResource>,
+    mut server: ResMut<RenetServer>,
     identities: Res<NetworkIdentities>,
     time: Res<Time>,
 ) {
     let seconds = time.time_since_startup().as_secs_f32();
-    for (handle, connection) in network.connections.iter_mut() {
-        let channels = connection.channels().unwrap();
-        while let Some(message) = channels.recv::<TransformMessage>() {
+    'clients: for client_id in server.clients_id().into_iter() {
+        while let Some(message) = server.receive_message(client_id, Channel::Transforms.id()) {
+            let message: TransformMessage = match bincode::deserialize(&message) {
+                Ok(m) => m,
+                Err(_) => { warn!(client_id, "Invalid transform message from client"); continue 'clients },
+            };
             match message {
                 TransformMessage::Ack(ack) => {
                     let entity = match identities.get_entity(ack.identity) {
@@ -355,7 +356,7 @@ fn handle_acks(
                         None => {
                             warn!(
                                 "Received transform ack for non-existent {:?} from {}",
-                                ack.identity, handle
+                                ack.identity, client_id
                             );
                             continue;
                         }
@@ -364,14 +365,14 @@ fn handle_acks(
                     let mut transform = match query.get_mut(entity) {
                         Ok(t) => t,
                         Err(_) => {
-                            warn!("Received transform ack for entity without network transform {:?} from {}", entity, handle);
+                            warn!("Received transform ack for entity without network transform {:?} from {}", entity, client_id);
                             continue;
                         }
                     };
 
                     let mut data = transform
                         .client_data
-                        .entry(ConnectionId(*handle))
+                        .entry(ConnectionId(client_id))
                         .or_default();
                     if data.last_sequence < ack.sequence_number {
                         data.last_sequence = ack.sequence_number;
@@ -379,7 +380,7 @@ fn handle_acks(
                     }
                 }
                 _ => {
-                    warn!("Received invalid transform message from {}", handle);
+                    warn!("Received invalid transform message from {}", client_id);
                 }
             }
         }
@@ -459,35 +460,29 @@ impl BufferedTransformUpdates {
 
 /// Receives transform messages and sends acknowledgments
 fn handle_transform_messages(
-    mut network: ResMut<NetworkResource>,
+    mut client: ResMut<RenetClient>,
     mut buffer: ResMut<BufferedTransformUpdates>,
     mut acknowledgments: Local<Vec<Acknowledgment>>,
 ) {
-    if network.connections.is_empty() {
-        return;
-    }
-
-    for (_, connection) in network.connections.iter_mut() {
-        let channels = connection.channels().unwrap();
-        while let Some(message) = channels.recv::<TransformMessage>() {
-            match message {
-                TransformMessage::Update(update) => {
-                    acknowledgments.push(Acknowledgment {
-                        identity: update.identity,
-                        sequence_number: update.sequence_number,
-                    });
-                    buffer.add(update);
-                }
-                _ => panic!("Unsupported transform message"),
+    while let Some(message) = client.receive_message(Channel::Transforms.id()) {
+        let message: TransformMessage = match bincode::deserialize(&message) {
+            Ok(m) => m,
+            Err(_) => { warn!("Invalid transform message"); continue },
+        };
+        match message {
+            TransformMessage::Update(update) => {
+                acknowledgments.push(Acknowledgment {
+                    identity: update.identity,
+                    sequence_number: update.sequence_number,
+                });
+                buffer.add(update);
             }
+            _ => panic!("Unsupported transform message"),
         }
     }
 
-    let connection = *network.connections.iter().next().unwrap().0;
     for ack in acknowledgments.drain(..) {
-        network
-            .send_message(connection, TransformMessage::Ack(ack))
-            .unwrap();
+        client.send_message(Channel::Transforms.id(), bincode::serialize(&TransformMessage::Ack(ack)).unwrap());
     }
 }
 
@@ -543,7 +538,7 @@ fn apply_buffered_updates(
 fn sync_networked_transform(
     mut query: Query<
         (&mut NetworkedTransform, &mut Transform),
-        Without<RigidBodyPositionComponent>,
+        Without<RigidBody>,
     >,
     network_time: Res<ClientNetworkTime>,
 ) {
@@ -574,17 +569,17 @@ fn sync_networked_transform(
 fn sync_networked_transform_physics(
     mut query: Query<(
         &mut NetworkedTransform,
-        &mut RigidBodyPositionComponent,
-        &mut RigidBodyVelocityComponent,
-    )>,
+        &mut Transform,
+        &mut Velocity,
+    ), With<RigidBody>>,
     network_time: Res<ClientNetworkTime>,
 ) {
     let current_tick = network_time.interpolated_tick();
-    for (mut transform, mut rigidbody, mut velocity) in query.iter_mut() {
-        let (next_update, previous_update) = match transform.relevant_updates(current_tick) {
+    for (mut networked_transform, mut transform, mut velocity) in query.iter_mut() {
+        let (next_update, previous_update) = match networked_transform.relevant_updates(current_tick) {
             Some(u) => u,
             None => {
-                transform.had_next = false;
+                networked_transform.had_next = false;
                 continue;
             },
         };
@@ -596,22 +591,22 @@ fn sync_networked_transform_physics(
         };
 
         if let Some(position) = update.position {
-            rigidbody.position.translation = position.into();
+            transform.translation = position;
         }
 
         if let Some(rotation) = update.rotation {
-            rigidbody.position.rotation = rotation.into();
+            transform.rotation = rotation;
         }
 
         if let Some(linear_velocity) = update.linear_velocity {
-            velocity.linvel = linear_velocity.into();
+            velocity.linvel = linear_velocity;
         }
 
         if let Some(angular_velocity) = update.angular_velocity {
-            velocity.angvel = angular_velocity.into();
+            velocity.angvel = angular_velocity;
         }
 
-        transform.had_next = true;
+        networked_transform.had_next = true;
     }
 }
 
@@ -645,7 +640,7 @@ impl Plugin for TransformPlugin {
             );
         } else {
             app.init_resource::<BufferedTransformUpdates>()
-                .add_system(handle_transform_messages.label(ClientTransformSystem::ReceiveMessages))
+                .add_system(handle_transform_messages.label(ClientTransformSystem::ReceiveMessages).with_run_criteria(run_if_client_conected))
                 .add_system(
                     apply_buffered_updates
                         .label(ClientTransformSystem::ApplyBuffer)
@@ -662,9 +657,7 @@ impl Plugin for TransformPlugin {
                     sync_networked_transform_physics
                         .label(ClientTransformSystem::Sync)
                         .after(ClientTransformSystem::ApplyBuffer)
-                        .after(TimeSystem::Interpolate)
-                        .after(PhysicsSystems::StepWorld)
-                        .before(PhysicsSystems::SyncTransforms),
+                        .after(TimeSystem::Interpolate),
                 );
         }
     }

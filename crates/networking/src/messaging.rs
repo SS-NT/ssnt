@@ -1,10 +1,10 @@
 use std::{any::TypeId, time::Duration};
 
-use bevy::{utils::{HashMap, HashSet}, prelude::{App, EventReader, EventWriter, warn, Res, ResMut, Plugin, ParallelSystemDescriptorCoercion, CoreStage, SystemLabel}, ecs::system::SystemParam};
-use bevy_networking_turbulence::{MessageChannelSettings, MessageChannelMode, ReliableChannelSettings, NetworkResource, ConnectionChannelsBuilder};
+use bevy::{utils::{HashMap, HashSet}, prelude::{App, EventReader, EventWriter, warn, Res, ResMut, Plugin, ParallelSystemDescriptorCoercion, SystemLabel}, ecs::system::SystemParam};
+use bevy_renet::{renet::{ReliableChannelConfig, ChannelConfig, UnreliableChannelConfig, RenetServer, RenetClient}, run_if_client_conected};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
-use crate::{ConnectionId, Players, NetworkSystem, NetworkManager, transform::TransformMessage, time::TimeMessage};
+use crate::{ConnectionId, Players, NetworkSystem, NetworkManager};
 
 
 /// Assigns packet numbers to types uniquely and allows to lookup the id for a specific type.
@@ -63,6 +63,7 @@ pub struct OutboundMessage {
 struct NetworkMessage {
     /// The id registered in [`MessageTypes`]
     type_id: u16,
+    // TODO: Use serde_bytes for optimization
     /// The serialized content of the message
     content: Vec<u8>,
 }
@@ -123,6 +124,7 @@ impl AppExt for App {
 
 #[derive(SystemParam)]
 pub struct MessageSender<'w, 's> {
+    // TODO: Use queue in resource instead, so we can consume the message and avoid a clone
     outbound_messages: EventWriter<'w, 's, OutboundMessage>,
     types: Res<'w, MessageTypes>,
 }
@@ -147,151 +149,137 @@ impl<'w, 's> MessageSender<'w, 's> {
     }
 }
 
-const NETWORK_MESSAGE_SETTINGS: MessageChannelSettings = MessageChannelSettings {
-    channel: 0,
-    channel_mode: MessageChannelMode::Reliable {
-        reliability_settings: ReliableChannelSettings {
-            bandwidth: 4096,
-            recv_window_size: 2048,
-            send_window_size: 2048,
-            burst_bandwidth: 1024,
-            init_send: 512,
-            wakeup_time: Duration::from_millis(100),
-            initial_rtt: Duration::from_millis(200),
-            max_rtt: Duration::from_secs(2),
-            rtt_update_factor: 0.1,
-            rtt_resend_factor: 1.5,
-        },
-        max_message_len: 5000,
-    },
-    message_buffer_size: 10,
-    packet_buffer_size: 10,
-};
+pub(crate) enum Channel {
+    Default,
+    DefaultUnreliable,
+    Timing,
+    Transforms
+}
 
-const TRANSFORM_MESSAGE_SETTINGS: MessageChannelSettings = MessageChannelSettings {
-    channel: 1,
-    channel_mode: MessageChannelMode::Unreliable,
-    message_buffer_size: 100,
-    packet_buffer_size: 100,
-};
+impl Channel {
+    pub fn id(&self) -> u8 {
+        match self {
+            Self::Default => 0,
+            Self::DefaultUnreliable => 1,
+            Self::Timing => 2,
+            Self::Transforms => 3,
+        }
+    }
 
-const TIME_MESSAGE_SETTINGS: MessageChannelSettings = MessageChannelSettings {
-    channel: 2,
-    channel_mode: MessageChannelMode::Unreliable,
-    message_buffer_size: 10,
-    packet_buffer_size: 10,
-};
-
-const UNRELIABLE_MESSAGE_SETTINGS: MessageChannelSettings = MessageChannelSettings {
-    channel: 3,
-    channel_mode: MessageChannelMode::Unreliable,
-    message_buffer_size: 200,
-    packet_buffer_size: 10,
-};
-
-fn setup_channels(mut net: ResMut<NetworkResource>) {
-    net.set_channels_builder(|builder: &mut ConnectionChannelsBuilder| {
-        builder
-            .register::<NetworkMessage>(NETWORK_MESSAGE_SETTINGS)
-            .unwrap();
-        builder
-            .register::<TransformMessage>(TRANSFORM_MESSAGE_SETTINGS)
-            .unwrap();
-        builder
-            .register::<TimeMessage>(TIME_MESSAGE_SETTINGS)
-            .unwrap();
-        builder
-            .register::<UnreliableNetworkMessage>(UNRELIABLE_MESSAGE_SETTINGS)
-            .unwrap();
-    });
+    pub fn channels_config() -> Vec<ChannelConfig> {
+        vec![
+            ChannelConfig::Reliable(ReliableChannelConfig {
+                channel_id: Self::Default.id(),
+                message_resend_time: Duration::ZERO,
+                ..Default::default()
+            }),
+            ChannelConfig::Unreliable(UnreliableChannelConfig {
+                channel_id: Self::DefaultUnreliable.id(),
+                ..Default::default()
+            }),
+            ChannelConfig::Unreliable(UnreliableChannelConfig {
+                channel_id: Self::Timing.id(),
+                ..Default::default()
+            }),
+            ChannelConfig::Unreliable(UnreliableChannelConfig {
+                channel_id: Self::Transforms.id(),
+                ..Default::default()
+            }),
+        ]
+    }
 }
 
 /// Reads from the network channels and sends message events
-fn read_channel(
+fn read_channel_server(
     mut events: EventWriter<IncomingMessage>,
-    mut network: ResMut<NetworkResource>,
+    mut server: ResMut<RenetServer>,
 )
 {
-    for (handle, connection) in network.connections.iter_mut() {
-        let channels = connection.channels().unwrap();
-        while let Some(message) = channels.recv::<NetworkMessage>() {
-            events.send(IncomingMessage {
-                type_id: message.type_id,
-                content: message.content,
-                connection: ConnectionId(*handle),
-            });
-        }
-
-        while let Some(message) = channels.recv::<UnreliableNetworkMessage>() {
-            events.send(IncomingMessage {
-                type_id: message.0.type_id,
-                content: message.0.content,
-                connection: ConnectionId(*handle),
-            });
+    'clients: for client_id in server.clients_id().into_iter() {
+        for channel_id in [Channel::Default.id(), Channel::DefaultUnreliable.id()] {
+            while let Some(message) = server.receive_message(client_id, channel_id) {
+                let message: NetworkMessage = match bincode::deserialize(&message) {
+                    Ok(m) => m,
+                    Err(_) => { warn!(client_id, "Invalid message from client"); continue 'clients },
+                };
+                events.send(IncomingMessage {
+                    type_id: message.type_id,
+                    content: message.content,
+                    connection: ConnectionId(client_id),
+                });
+            }
         }
     }
 }
 
-fn flush_channels(mut net: ResMut<NetworkResource>) {
-    for (_handle, connection) in net.connections.iter_mut() {
-        if let Some(channels) = connection.channels() {
-            channels.flush::<NetworkMessage>();
-            channels.flush::<TransformMessage>();
-            channels.flush::<UnreliableNetworkMessage>();
+fn read_channel_client(
+    mut events: EventWriter<IncomingMessage>,
+    mut client: ResMut<RenetClient>,
+)
+{
+    for channel_id in [Channel::Default.id(), Channel::DefaultUnreliable.id()] {
+        while let Some(message) = client.receive_message(channel_id) {
+            let message: NetworkMessage = match bincode::deserialize(&message) {
+                Ok(m) => m,
+                Err(_) => { warn!("Invalid message from server"); continue },
+            };
+            events.send(IncomingMessage {
+                type_id: message.type_id,
+                content: message.content,
+                // TODO: Client should not have any connection id field for server?
+                // Using 0 as a placeholder here
+                connection: ConnectionId(0),
+            });
         }
     }
 }
 
 // NOTE: This message sending method is inefficient, as it needs to clone for every receiver.
 //       It should be made more efficient if the networking crate is updated or is switched for something else.
-fn send_outbound_messages_server(mut messages: EventReader<OutboundMessage>, mut network: ResMut<NetworkResource>, players: Res<Players>) {
+fn send_outbound_messages_server(mut messages: EventReader<OutboundMessage>, mut server: ResMut<RenetServer>, players: Res<Players>) {
     for outbound in messages.iter() {
-        let message: NetworkMessage = outbound.into();
         match &outbound.receivers {
             MessageReceivers::AllPlayers => {
-                for (&id, _) in players.players.iter() {
-                    if let MessageKind::Reliable = outbound.kind {
-                        network.send_message(id.0, message.clone()).unwrap();
-                    } else {
-                        network.send_message(id.0, UnreliableNetworkMessage(message.clone())).unwrap();
-                    };
-                }
+                send_message_to(&mut server, outbound, players.players.iter().map(|(id, _)| id).copied());
             },
             MessageReceivers::Set(connections) => {
-                for &id in connections.iter() {
-                    if let MessageKind::Reliable = outbound.kind {
-                        network.send_message(id.0, message.clone()).unwrap();
-                    } else {
-                        network.send_message(id.0, UnreliableNetworkMessage(message.clone())).unwrap();
-                    };
-                }
+                send_message_to(&mut server, outbound, connections.iter().copied());
             },
             MessageReceivers::Server => {
                 panic!("Trying to send to server from server");
             },
             MessageReceivers::Single(id) => {
-                if let MessageKind::Reliable = outbound.kind {
-                    network.send_message(id.0, message).unwrap();
-                } else {
-                    network.send_message(id.0, UnreliableNetworkMessage(message)).unwrap();
-                };
+                send_message_to(&mut server, outbound, std::iter::once(*id));
             },
         }
     }
 }
 
-fn send_outbound_messages_client(mut messages: EventReader<OutboundMessage>, mut network: ResMut<NetworkResource>) {
+fn send_message_to(server: &mut RenetServer, outbound: &OutboundMessage, receivers: impl Iterator<Item = ConnectionId>) {
+    let message = NetworkMessage {
+        type_id: outbound.type_id,
+        content: outbound.content.clone(),
+    };
+
+    let serialized = bincode::serialize(&message).unwrap();
+    let channel = match outbound.kind {
+        MessageKind::Reliable => Channel::Default,
+        MessageKind::Unreliable => Channel::DefaultUnreliable,
+    };
+    for id in receivers {
+        server.send_message(id.0, channel.id(), serialized.clone());
+    }
+}
+
+fn send_outbound_messages_client(mut messages: EventReader<OutboundMessage>, mut client: ResMut<RenetClient>) {
     for outbound in messages.iter() {
-        let message: NetworkMessage = outbound.into();
-
-        if network.connections.len() != 1 {
-            panic!("Trying to send message to server while having multiple connections");
-        }
-
-        match outbound.kind {
-            MessageKind::Reliable => network.broadcast_message(message),
-            MessageKind::Unreliable => network.broadcast_message(UnreliableNetworkMessage(message)),
+        let channel = match outbound.kind {
+            MessageKind::Reliable => Channel::Default,
+            MessageKind::Unreliable => Channel::DefaultUnreliable,
         };
+
+        let message: NetworkMessage = outbound.into();
+        client.send_message(channel.id(), bincode::serialize(&message).unwrap());
     }
 }
 
@@ -306,15 +294,14 @@ impl Plugin for MessagingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MessageTypes>()
             .add_event::<IncomingMessage>()
-            .add_event::<OutboundMessage>()
-            .add_startup_system(setup_channels)
-            .add_system(read_channel.label(MessagingSystem::ReadRaw))
-            .add_system_to_stage(CoreStage::PostUpdate, flush_channels);
+            .add_event::<OutboundMessage>();
 
         if app.world.get_resource::<NetworkManager>().unwrap().is_client() {
-            app.add_system(send_outbound_messages_client);
+            app.add_system(send_outbound_messages_client.with_run_criteria(run_if_client_conected))
+                .add_system(read_channel_client.label(MessagingSystem::ReadRaw).with_run_criteria(run_if_client_conected));
         } else {
-            app.add_system(send_outbound_messages_server);
+            app.add_system(send_outbound_messages_server)
+                .add_system(read_channel_server.label(MessagingSystem::ReadRaw));
         }
     }
 }

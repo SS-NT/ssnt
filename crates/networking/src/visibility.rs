@@ -1,13 +1,11 @@
 
-use std::collections::hash_map::Entry;
-
 use bevy::{
     math::{IVec2, Vec2, Vec3Swizzles},
     prelude::{
         App, Changed, Component, Entity, GlobalTransform, ParallelSystemDescriptorCoercion, Plugin,
         Query, Res, ResMut, SystemLabel,
     },
-    utils::{HashMap, HashSet},
+    utils::{HashMap, HashSet, hashbrown::hash_map::Entry},
 };
 
 use crate::{identity::NetworkIdentity, ConnectionId, NetworkManager, NetworkSystem};

@@ -5,22 +5,16 @@ use bevy::{
     prelude::{
         shape, warn, App, Assets, Camera, Commands, Component, EventReader, GlobalTransform,
         Handle, Mesh, MouseButton, ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut,
-        Transform, With,
+        Transform, With, info,
     },
     utils::HashMap,
-    window::Windows,
+    window::Windows, transform::TransformBundle,
 };
 use bevy_egui::{
     egui::{Window},
     EguiContext,
 };
-use bevy_rapier3d::{
-    physics::{
-        ColliderBundle, QueryPipelineColliderComponentsQuery,
-        QueryPipelineColliderComponentsSet, RigidBodyBundle, RigidBodyPositionSync,
-    },
-    prelude::{ColliderShape, InteractionGroups, QueryPipeline, Ray},
-};
+use bevy_rapier3d::{rapier::prelude::ColliderShape, plugin::RapierContext, prelude::{Collider, RigidBody, Velocity}};
 use glam::{Mat4, Vec2, Vec3};
 use networking::{
     identity::{EntityCommandsExt, NetworkIdentities, NetworkIdentity},
@@ -84,8 +78,8 @@ struct SpawnerUiState {
     to_spawn: Option<Spawnable>,
 }
 
-fn spawning_ui(egui_context: ResMut<EguiContext>, mut state: ResMut<SpawnerUiState>) {
-    Window::new("Spawning").show(egui_context.ctx(), |ui| {
+fn spawning_ui(mut egui_context: ResMut<EguiContext>, mut state: ResMut<SpawnerUiState>) {
+    Window::new("Spawning").show(egui_context.ctx_mut(), |ui| {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut state.to_spawn, None, "None");
             ui.selectable_value(&mut state.to_spawn, Some(Spawnable::Cube), "Cube");
@@ -104,9 +98,8 @@ enum SpawnerMessage {
 fn spawn_requesting(
     ui_state: Res<SpawnerUiState>,
     buttons: Res<Input<MouseButton>>,
-    context: ResMut<EguiContext>,
-    query_pipeline: Res<QueryPipeline>,
-    collider_query: QueryPipelineColliderComponentsQuery,
+    mut context: ResMut<EguiContext>,
+    rapier_context: Res<RapierContext>,
     windows: Res<Windows>,
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut sender: MessageSender,
@@ -125,7 +118,7 @@ fn spawn_requesting(
     };
 
     if context
-        .try_ctx_for_window(window.id())
+        .try_ctx_for_window_mut(window.id())
         .map(|c| c.wants_pointer_input())
         == Some(true)
     {
@@ -141,21 +134,20 @@ fn spawn_requesting(
         None => return,
     };
 
-    let ray = match ray_from_cursor(cursor_position, &windows, camera, camera_transform) {
+    let (origin, direction) = match ray_from_cursor(cursor_position, &windows, camera, camera_transform) {
         Some(r) => r,
         None => return,
     };
 
-    let collider_set = QueryPipelineColliderComponentsSet(&collider_query);
-    if let Some((_, toi)) = query_pipeline.cast_ray(
-        &collider_set,
-        &ray,
+    if let Some((_, toi)) = rapier_context.cast_ray(
+        origin,
+        direction,
         100.0,
         true,
-        InteractionGroups::all(),
-        None,
+        Default::default()
     ) {
-        let hit_point: Vec3 = ray.point_at(toi).into();
+        let hit_point = origin + direction * toi;
+        info!(position=?hit_point, "Requesting object spawn");
         sender.send_to_server(&SpawnerMessage::Request((
             hit_point,
             ui_state.to_spawn.unwrap(),
@@ -169,24 +161,13 @@ fn create_spawnable(
     assets: &SpawnerAssets,
     position: Vec3,
 ) {
-    let rigid_body = RigidBodyBundle {
-        position: position.into(),
-        ..Default::default()
-    };
-
     let definition = assets.spawnables.get(&kind).unwrap();
 
-    let collider = ColliderBundle {
-        shape: definition.shape.clone().into(),
-        ..Default::default()
-    };
-
     commands
-        .insert_bundle(rigid_body)
-        .insert_bundle(collider)
-        .insert(RigidBodyPositionSync::Discrete)
-        .insert(Transform::from_translation(position))
-        .insert(GlobalTransform::default())
+        .insert(RigidBody::Dynamic)
+        .insert(Velocity::default())
+        .insert(Collider::from(definition.shape.clone()))
+        .insert_bundle(TransformBundle::from(Transform::from_translation(position)))
         .insert(kind);
 }
 
@@ -283,9 +264,14 @@ fn ray_from_cursor(
     windows: &Res<Windows>,
     camera: &Camera,
     camera_transform: &GlobalTransform,
-) -> Option<Ray> {
+) -> Option<(Vec3, Vec3)> {
     let view = camera_transform.compute_matrix();
-    let window = match windows.get(camera.window) {
+    let window_id = match camera.target {
+        bevy::render::camera::RenderTarget::Window(w) => w,
+        _ => return None
+    };
+
+    let window = match windows.get(window_id) {
         Some(window) => window,
         None => {
             return None;
@@ -310,5 +296,5 @@ fn ray_from_cursor(
         false => cursor_pos_near - camera_transform.translation, // Direction from camera to cursor
     };
 
-    Some(Ray::new(cursor_pos_near.into(), ray_direction.into()))
+    Some((cursor_pos_near, ray_direction))
 }

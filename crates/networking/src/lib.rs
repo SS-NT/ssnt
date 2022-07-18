@@ -5,28 +5,27 @@ pub mod spawning;
 pub mod transform;
 pub mod time;
 
-pub use bevy_networking_turbulence::NetworkResource;
+use bevy_renet::{renet::{NETCODE_KEY_BYTES, RenetClient, ConnectToken, RenetConnectionConfig, ServerConfig, RenetServer, RenetError}, RenetServerPlugin, RenetClientPlugin};
 use time::{TimePlugin, ServerNetworkTime, ClientNetworkTime};
 
-use std::{net::SocketAddr, fmt::Display};
+use std::{net::{SocketAddr, UdpSocket, SocketAddrV4}, fmt::Display, time::SystemTime};
 
 use bevy::{
     prelude::{
-        info, warn, App, Component, EventReader, EventWriter,
-        ParallelSystemDescriptorCoercion, Plugin, ResMut, State, SystemLabel, Res,
+        info, warn, error, App, Component, EventReader, EventWriter,
+        ParallelSystemDescriptorCoercion, Plugin, ResMut, State, SystemLabel, Res, Local, Commands,
     },
     utils::HashMap,
 };
-use bevy_networking_turbulence::{
-    MessageFlushingStrategy,
-    NetworkEvent,
-};
 use identity::IdentityPlugin;
-use messaging::{MessageSender, MessageReceivers, MessageEvent, MessagingPlugin, AppExt};
+use messaging::{MessageSender, MessageReceivers, MessageEvent, MessagingPlugin, AppExt, Channel};
 use serde::{Deserialize, Serialize};
 use spawning::SpawningPlugin;
 use transform::TransformPlugin;
 use visibility::VisibilityPlugin;
+
+const PROTOCOL_ID: u64 = 859058192;
+const PRIVATE_KEY: &[u8; NETCODE_KEY_BYTES] = b"an insecure key used for now :((";
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum NetworkRole {
@@ -81,10 +80,25 @@ struct ServerInfo {
     tick_duration_seconds: f32,
 }
 
+
+pub fn create_server(port: u16) -> RenetServer {
+    // TODO: Allow listen ip to be specified
+    let server_addr = SocketAddrV4::new("127.0.0.1".parse().unwrap(), port);
+    let socket = UdpSocket::bind(server_addr).unwrap();
+    let connection_config = RenetConnectionConfig {
+        channels_config: Channel::channels_config(),
+        ..Default::default()
+    };
+    let server_config = ServerConfig::new(64, PROTOCOL_ID, server_addr.into(), *PRIVATE_KEY);
+    let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+    RenetServer::new(current_time, server_config, connection_config, socket).unwrap()
+}
+
+
 fn handle_joining_server(
     mut events: EventReader<ClientEvent>,
-    mut network: ResMut<NetworkResource>,
     mut state: ResMut<State<ClientState>>,
+    mut commands: Commands,
 ) {
     for event in events.iter() {
         if let ClientEvent::Join(address) = event {
@@ -95,7 +109,18 @@ fn handle_joining_server(
                 _ => {
                     state.set(ClientState::Joining(*address)).unwrap();
                     info!("Joining server {}", address);
-                    network.connect(*address);
+
+                    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+                    let connection_config = RenetConnectionConfig {
+                        channels_config: messaging::Channel::channels_config(),
+                        ..Default::default()
+                    };
+                    // TODO: use actual authentication here
+                    let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+                    let client_id = current_time.as_millis() as u64;
+                    let token = ConnectToken::generate(current_time, PROTOCOL_ID, 300, client_id, 15, vec![*address], None, PRIVATE_KEY).unwrap();
+                    let client = RenetClient::new(current_time, socket, client_id, token, connection_config).unwrap();
+                    commands.insert_resource(client);
                 }
             }
         }
@@ -103,21 +128,32 @@ fn handle_joining_server(
 }
 
 fn client_send_hello(
-    mut network_events: EventReader<NetworkEvent>,
+    client: Option<Res<RenetClient>>,
     mut sender: MessageSender,
+    mut last_state: Local<bool>,
 ) {
-    for event in network_events.iter() {
-        if let NetworkEvent::Connected(_) = event {
-            sender
-                .send(
-                    &ClientHello {
-                        token: Vec::new(),
-                        version: "TODO".into(),
-                    },
-                    MessageReceivers::Server,
-                );
-        }
+    let client = match client {
+        Some(c) => c,
+        None => return,
+    };
+
+    match (client.is_connected(), *last_state) {
+        // Connected
+        (true, false) => { *last_state = true },
+        // Disconnected
+        (false, true) => { *last_state = false; return },
+        _ => return,
     }
+
+    info!("Connected to server");
+    sender
+        .send(
+            &ClientHello {
+                token: Vec::new(),
+                version: "TODO".into(),
+            },
+            MessageReceivers::Server,
+        );
 }
 
 fn client_joined_server(
@@ -136,7 +172,7 @@ fn client_joined_server(
 }
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub struct ConnectionId(u32);
+pub struct ConnectionId(u64);
 
 impl Display for ConnectionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -176,6 +212,12 @@ fn server_handle_connect(
     }
 }
 
+fn report_errors(mut events: EventReader<RenetError>) {
+    for error in events.iter() {
+        error!(?error, "Network error");
+    }
+}
+
 pub struct NetworkingPlugin {
     pub role: NetworkRole,
 }
@@ -188,13 +230,13 @@ enum NetworkSystem {
 
 impl Plugin for NetworkingPlugin {
     fn build(&self, app: &mut App) {
-        let sub_plugin = bevy_networking_turbulence::NetworkingPlugin {
-            message_flushing_strategy: MessageFlushingStrategy::Never,
-            ..Default::default()
+
+        match self.role {
+            NetworkRole::Server => app.add_plugin(RenetServerPlugin),
+            NetworkRole::Client => app.add_plugin(RenetClientPlugin),
         };
 
-        app.add_plugin(sub_plugin)
-            .insert_resource(NetworkManager { role: self.role })
+        app.insert_resource(NetworkManager { role: self.role })
             .add_plugin(MessagingPlugin)
             .add_network_message::<ClientHello>()
             .add_network_message::<ServerInfo>()
@@ -202,7 +244,8 @@ impl Plugin for NetworkingPlugin {
             .add_plugin(IdentityPlugin)
             .add_plugin(VisibilityPlugin)
             .add_plugin(SpawningPlugin)
-            .add_plugin(TransformPlugin);
+            .add_plugin(TransformPlugin)
+            .add_system(report_errors);
 
         if self.role == NetworkRole::Client {
             app.add_state(ClientState::Initial)

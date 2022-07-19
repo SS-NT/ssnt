@@ -7,7 +7,7 @@ mod movement;
 mod ui;
 mod admin;
 
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use admin::AdminPlugin;
@@ -17,23 +17,11 @@ use bevy::ecs::system::EntityCommands;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
-use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
-use bevy_rapier3d::na::{Point3, Vector3};
-use bevy_rapier3d::physics::{
-    ColliderBundle, NoUserData, RapierPhysicsPlugin, RigidBodyPositionSync,
-};
-use bevy_rapier3d::prelude::{
-    ColliderMassProps, ColliderShape, RigidBodyDamping,
-    RigidBodyMassPropsFlags, RigidBodyPositionComponent, ColliderPosition, Isometry,
-};
-use bevy_rapier3d::{
-    physics::RigidBodyBundle,
-    prelude::{RigidBodyActivation, RigidBodyCcd},
-};
+use bevy_rapier3d::plugin::{RapierPhysicsPlugin, NoUserData};
+use bevy_rapier3d::prelude::{Collider, RigidBody, LockedAxes, Damping, ColliderMassProperties, ReadMassProperties, Velocity};
 use byond::tgm::TgmLoader;
 use camera::TopDownCamera;
 use clap::{Parser, Subcommand};
-use components::{Disabled, EntityCommandsExt};
 use futures_lite::future;
 use items::{
     containers::{
@@ -47,7 +35,7 @@ use networking::identity::{EntityCommandsExt as NetworkingEntityCommandsExt, Net
 use networking::spawning::{NetworkedEntityEvent, PrefabPath, ClientControls, ClientControlled};
 use networking::transform::{NetworkedTransform, NetworkTransform};
 use networking::visibility::NetworkObserver;
-use networking::{NetworkRole, NetworkingPlugin, ClientEvent, ConnectionId, ServerEvent, NetworkResource};
+use networking::{NetworkRole, NetworkingPlugin, ClientEvent, ConnectionId, ServerEvent};
 
 /// How many ticks the server runs per second
 const SERVER_TPS: u32 = 60; 
@@ -91,6 +79,8 @@ fn main() {
                 .add_system(convert_tgm_map)
                 .add_system(create_tilemap_from_converted)
                 .add_asset::<byond::tgm::TileMap>()
+                .add_asset::<Mesh>() // TODO: remove once no longer needed by rapier
+                .add_asset::<Scene>() // TODO: remove once no longer needed by rapier
                 .add_asset_loader(TgmLoader)
                 .add_startup_system(load_map)
                 .add_startup_system(setup_server)
@@ -99,7 +89,6 @@ fn main() {
         NetworkRole::Client => {
             app.add_plugins(DefaultPlugins)
                 .add_plugin(networking_plugin)
-                .add_plugin(FlyCameraPlugin)
                 .add_plugin(camera::CameraPlugin)
                 .add_plugin(ui::UiPlugin)
                 .insert_resource(ClearColor(Color::rgb(
@@ -107,7 +96,6 @@ fn main() {
                     68.0 / 255.0,
                     107.0 / 255.0,
                 )))
-                .add_system(switch_camera_system)
                 .add_startup_system(setup_client)
                 .add_system_to_stage(CoreStage::PostUpdate, handle_player_spawn)
                 .add_system(set_camera_target);
@@ -149,27 +137,18 @@ pub struct Map {
 }
 
 fn setup_shared(mut commands: Commands) {
-    let ground_collider = ColliderBundle {
-        shape: ColliderShape::cuboid(100.0, 0.5, 100.0)
-            .into(),
-        position: ColliderPosition(Isometry::new(Vector3::new(0.0, -1.0, 0.0), Vector3::y())).into(),
-        ..Default::default()
-    };
-
+    // Spawn ground plane
     commands.spawn()
-        .insert_bundle(ground_collider);
+        .insert_bundle(TransformBundle::from(Transform::from_xyz(0.0, -1.0, 0.0)))
+        .insert(Collider::cuboid(100.0, 0.5, 100.0));
 }
 
-fn setup_server(mut network: ResMut<NetworkResource>, args: Res<Args>) {
+fn setup_server(args: Res<Args>, mut commands: Commands) {
     let port = match args.command {
         ArgCommands::Host { port } => port,
         _ => panic!("Missing commandline argument"),
     };
-    network.listen(
-        SocketAddr::V4(SocketAddrV4::new("0.0.0.0".parse().unwrap(), port)),
-        None,
-        None,
-    );
+    commands.insert_resource(networking::create_server(port));
 }
 
 fn setup_client(mut commands: Commands, args: Res<Args>, mut client_events: EventWriter<ClientEvent>) {
@@ -187,7 +166,6 @@ fn setup_client(mut commands: Commands, args: Res<Args>, mut client_events: Even
             ..Default::default()
         })
         .insert(TopDownCamera::new(temporary_camera_target))
-        .insert(Disabled(FlyCamera::default()))
         .insert(camera::MainCamera);
     
     if let ArgCommands::Join { address } = args.command {
@@ -196,34 +174,12 @@ fn setup_client(mut commands: Commands, args: Res<Args>, mut client_events: Even
 }
 
 fn create_player(commands: &mut EntityCommands) -> Entity {
-    let player_rigid_body = RigidBodyBundle {
-        activation: RigidBodyActivation::cannot_sleep().into(),
-        ccd: RigidBodyCcd {
-            ccd_enabled: true,
-            ..Default::default()
-        }
-        .into(),
-        mass_properties: RigidBodyMassPropsFlags::ROTATION_LOCKED.into(),
-        damping: RigidBodyDamping {
-            linear_damping: 0.0,
-            angular_damping: 0.0,
-        }
-        .into(),
-        ..Default::default()
-    };
-    let player_collider = ColliderBundle {
-        shape: ColliderShape::capsule(Point3::new(0.0, 0.0, 0.0), Point3::new(0.0, 1.0, 0.0), 0.2)
-            .into(),
-        mass_properties: ColliderMassProps::Density(5.0).into(),
-        ..Default::default()
-    };
-    commands
-        .insert(Transform::default())
-        .insert(GlobalTransform::default())
+    let player_rigid_body = (RigidBody::Dynamic, LockedAxes::ROTATION_LOCKED, Damping { linear_damping: 0.0, angular_damping: 0.0 }, Velocity::default());
+    let player_collider = (Collider::capsule(Vec3::ZERO, (0.0, 1.0, 0.0).into(), 0.2), ColliderMassProperties::Density(5.0), ReadMassProperties::default());
+    commands.insert_bundle(TransformBundle::default())
         .insert(Player::default())
         .insert_bundle(player_rigid_body)
         .insert_bundle(player_collider)
-        .insert(RigidBodyPositionSync::default())
         .id()
 }
 
@@ -273,31 +229,6 @@ fn set_camera_target(query: Query<Entity, Added<ClientControlled>>, mut camera: 
     }
 }
 
-fn switch_camera_system(
-    mut commands: Commands,
-    keyboard_input: Res<Input<KeyCode>>,
-    fly_cams: Query<(Entity, &FlyCamera), (With<Disabled<TopDownCamera>>, Without<TopDownCamera>)>,
-    top_down_cams: Query<(Entity, &TopDownCamera), (With<Disabled<FlyCamera>>, Without<FlyCamera>)>,
-) {
-    if !keyboard_input.just_pressed(KeyCode::C) {
-        return;
-    }
-
-    for (entity, _) in fly_cams.iter() {
-        commands
-            .entity(entity)
-            .disable_component::<FlyCamera>()
-            .enable_component::<TopDownCamera>();
-    }
-
-    for (entity, _) in top_down_cams.iter() {
-        commands
-            .entity(entity)
-            .disable_component::<TopDownCamera>()
-            .enable_component::<FlyCamera>();
-    }
-}
-
 fn load_map(mut commands: Commands, server: Res<AssetServer>) {
     let handle = server.load("maps/DeltaStation2.dmm");
     commands.insert_resource(Map {
@@ -341,16 +272,16 @@ fn convert_tgm_map(
 fn create_tilemap_from_converted(
     mut commands: Commands,
     mut map_tasks: Query<(Entity, &mut Task<MapData>)>,
-    mut players: Query<&mut RigidBodyPositionComponent, With<Player>>,
+    mut players: Query<&mut Transform, With<Player>>,
 ) {
     for (entity, mut map_task) in map_tasks.iter_mut() {
         if let Some(map_data) = future::block_on(future::poll_once(&mut *map_task)) {
             for mut player in players.iter_mut() {
-                player.0.position = Vector3::new(
+                player.translation = Vec3::new(
                     map_data.spawn_position.x as f32,
                     0.0,
                     map_data.spawn_position.y as f32,
-                ).into();
+                );
             }
             
             commands

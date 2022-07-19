@@ -3,13 +3,7 @@ use crate::{
     Player,
 };
 use bevy::{core::FixedTimestep, math::Vec3Swizzles, prelude::*};
-use bevy_rapier3d::{
-    na::Vector3,
-    prelude::{
-        RigidBodyForcesComponent, RigidBodyMassPropsComponent, RigidBodyPositionComponent,
-        RigidBodyVelocityComponent,
-    },
-};
+use bevy_rapier3d::prelude::{Velocity, ExternalForce, ReadMassProperties};
 use networking::{
     messaging::{AppExt, MessageReceivers, MessageSender, MessageEvent},
     spawning::{ClientControlled, ClientControls},
@@ -22,16 +16,18 @@ pub fn movement_system(
     keyboard_input: Res<Input<KeyCode>>,
     mut query: Query<
         (
+            Entity,
             &mut Player,
-            &RigidBodyVelocityComponent,
-            &mut RigidBodyForcesComponent,
-            &RigidBodyMassPropsComponent,
+            &Velocity,
+            Option<&mut ExternalForce>,
+            &ReadMassProperties,
         ),
         With<ClientControlled>,
     >,
     camera_query: Query<&TopDownCamera, With<MainCamera>>,
+    mut commands: Commands,
 ) {
-    for (mut player, velocity, mut forces, mass_properties) in query.iter_mut() {
+    for (entity, mut player, velocity, mut forces, mass_properties) in query.iter_mut() {
         let axis_x = movement_axis(&keyboard_input, KeyCode::W, KeyCode::S);
         let axis_z = movement_axis(&keyboard_input, KeyCode::D, KeyCode::A);
 
@@ -69,19 +65,23 @@ pub fn movement_system(
         if one_tick < f32::EPSILON {
             one_tick = 1.0;
         }
-        let current_velocity = Vec2::from(velocity.0.linvel.xz());
+        let current_velocity = Vec2::from(velocity.linvel.xz());
         let needed_acceleration: Vec2 = (player.target_velocity - current_velocity) / one_tick;
         let max_acceleration = player.max_acceleration_force;
         let allowed_acceleration = needed_acceleration.clamp_length_max(max_acceleration);
-        let force: Vec2 = allowed_acceleration * mass_properties.0.mass();
+        let force: Vec2 = allowed_acceleration * mass_properties.0.mass;
 
-        forces.0.force = Vector3::new(force.x, 0.0, force.y);
+        if let Some(mut forces) = forces {
+            forces.force = Vec3::new(force.x, 0.0, force.y);
+        } else {
+            commands.entity(entity).insert(ExternalForce { force: Vec3::new(force.x, 0.0, force.y), ..Default::default() });
+        }
     }
 }
 
 fn character_rotation_system(
     time: Res<Time>,
-    mut query: Query<(&Player, &mut RigidBodyPositionComponent), With<Player>>,
+    mut query: Query<(&Player, &mut Transform), With<Player>>,
 ) {
     for (player, mut transform) in query.iter_mut() {
         let mut target_direction: Vec2 = player.target_direction;
@@ -90,13 +90,13 @@ fn character_rotation_system(
         }
         target_direction = target_direction.normalize();
 
-        let current_rotation: Quat = transform.0.position.rotation.into();
+        let current_rotation: Quat = transform.rotation.into();
         let target_rotation = Quat::from_rotation_arc(
             Vec3::Z,
             Vec3::new(target_direction.x, 0.0, target_direction.y),
         );
         let final_rotation = current_rotation.lerp(target_rotation, time.delta_seconds() * 5.0);
-        transform.0.position.rotation = final_rotation.into();
+        transform.rotation = final_rotation.into();
     }
 }
 
@@ -127,15 +127,15 @@ fn send_movement_update(
 }
 
 fn handle_movement_message(
-    mut query: Query<&mut RigidBodyPositionComponent>,
+    mut query: Query<&mut Transform>,
     controls: Res<ClientControls>,
     mut messages: EventReader<MessageEvent<MovementMessage>>,
 ) {
     for event in messages.iter() {
         if let Some(controlled) = controls.controlled_entity(event.connection) {
-            if let Ok(mut rigidbody) = query.get_mut(controlled) {
-                rigidbody.position.translation = event.message.position.into();
-                rigidbody.position.rotation = event.message.rotation.into();
+            if let Ok(mut transform) = query.get_mut(controlled) {
+                transform.translation = event.message.position.into();
+                transform.rotation = event.message.rotation.into();
             }
         }
     }
@@ -145,6 +145,11 @@ fn handle_movement_message(
 struct MovementMessage {
     position: Vec3,
     rotation: Quat,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
+pub enum MovementSystem {
+    Update,
 }
 
 pub struct MovementPlugin;
@@ -159,10 +164,10 @@ impl Plugin for MovementPlugin {
             .unwrap()
             .is_client()
         {
-            app.add_system(movement_system.label("movement"))
+            app.add_system(movement_system.label(MovementSystem::Update))
                 .add_system(
                     send_movement_update
-                        .after("movement")
+                        .after(MovementSystem::Update)
                         .with_run_criteria(FixedTimestep::step(0.1)),
                 )
                 .add_system_to_stage(CoreStage::PostUpdate, character_rotation_system);

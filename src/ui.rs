@@ -16,12 +16,12 @@ struct UiState {
 }
 
 fn map_loader_system(
-    egui_context: Res<EguiContext>,
+    mut egui_context: ResMut<EguiContext>,
     mut commands: Commands,
     server: Res<AssetServer>,
     tilemaps: Query<Entity, With<TileMap>>,
 ) {
-    egui::Window::new("Load map").show(egui_context.ctx(), |ui| {
+    egui::Window::new("Load map").show(egui_context.ctx_mut(), |ui| {
         for &map_name in ["DeltaStation2", "BoxStation", "MetaStation"].iter() {
             if ui.button(map_name).clicked() {
                 // Delete existing maps

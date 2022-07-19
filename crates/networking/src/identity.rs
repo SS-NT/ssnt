@@ -9,7 +9,7 @@ use crate::{NetworkManager, visibility::GridPosition};
 pub struct NetworkIdentity(u32);
 
 /// A lookup to match network identities with ECS entity ids.
-/// 
+///
 /// Entity ids cannot be used over the network as they are an implementation detail and may conflict.
 /// To solve this, we create our own counter and map it to the actual entity id.
 #[derive(Default)]

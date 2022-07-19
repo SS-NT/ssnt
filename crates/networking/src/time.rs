@@ -3,13 +3,13 @@ use std::collections::VecDeque;
 use bevy::{
     app::ScheduleRunnerSettings,
     core::Time,
-    prelude::{App, ParallelSystemDescriptorCoercion, Plugin, Res, ResMut, SystemLabel, SystemSet},
+    prelude::{App, ParallelSystemDescriptorCoercion, Plugin, Res, ResMut, SystemLabel, SystemSet, warn},
     utils::HashMap,
 };
-use bevy_networking_turbulence::NetworkResource;
+use bevy_renet::{renet::{RenetServer, RenetClient}, run_if_client_conected};
 use serde::{Deserialize, Serialize};
 
-use crate::{ConnectionId, NetworkManager, Players};
+use crate::{ConnectionId, NetworkManager, Players, messaging::Channel};
 
 pub(crate) struct ServerNetworkTime {
     /// How many seconds a server tick lasts
@@ -163,7 +163,7 @@ fn update_server_tick(mut network_time: ResMut<ServerNetworkTime>) {
 }
 
 fn send_server_tick(
-    mut network: ResMut<NetworkResource>,
+    mut server: ResMut<RenetServer>,
     mut client_times: ResMut<ClientTimes>,
     time: Res<Time>,
     network_time: Res<ServerNetworkTime>,
@@ -182,14 +182,8 @@ fn send_server_tick(
 
         let rtt = timing.and_then(|t| t.last_rtt);
         let message = TimeMessage::ServerTick(ServerTick { tick, rtt });
-        network.send_message(connection.0, message).unwrap();
-        network
-            .connections
-            .get_mut(&connection.0)
-            .unwrap()
-            .channels()
-            .unwrap()
-            .flush::<TimeMessage>();
+        server.send_message(connection.0, Channel::Timing.id(), bincode::serialize(&message).unwrap());
+        // TODO: Can we send this message immediately?
 
         client_times
             .timings
@@ -200,15 +194,17 @@ fn send_server_tick(
 }
 
 fn receive_server_tick(
-    mut network: ResMut<NetworkResource>,
+    mut client: ResMut<RenetClient>,
     mut network_time: ResMut<ClientNetworkTime>,
     time: Res<Time>,
 ) {
-    let connection = *match network.connections.iter().next() {
-        Some((c, _)) => c,
-        None => return,
-    };
-    while let Some(message) = network.recv_message::<TimeMessage>(connection) {
+
+    while let Some(message) = client.receive_message(Channel::Timing.id()) {
+        let message = match bincode::deserialize(&message) {
+            Ok(m) => m,
+            Err(_) => { warn!("Invalid time message from server"); continue },
+        };
+
         if let TimeMessage::ServerTick(tick) = message {
             // Ignore if last received tick is higher
             if let Some(previous_tick) = &network_time.server_tick {
@@ -218,21 +214,8 @@ fn receive_server_tick(
             }
 
             // Send response as fast as possible
-            network
-                .send_message(
-                    connection,
-                    TimeMessage::ClientResponse {
-                        server_tick: tick.tick,
-                    },
-                )
-                .unwrap();
-            network
-                .connections
-                .get_mut(&connection)
-                .unwrap()
-                .channels()
-                .unwrap()
-                .flush::<TimeMessage>();
+            client.send_message(Channel::Timing.id(), bincode::serialize(&TimeMessage::ClientResponse { server_tick: tick.tick }).unwrap());
+            // TODO: Can we send this message immediately?
 
             let received_tick = ReceivedServerTick {
                 tick: tick.tick,
@@ -248,16 +231,20 @@ fn receive_server_tick(
 }
 
 fn server_handle_response(
-    mut network: ResMut<NetworkResource>,
+    mut server: ResMut<RenetServer>,
     network_time: Res<ServerNetworkTime>,
     mut client_times: ResMut<ClientTimes>,
 ) {
-    for (&id, connection) in network.connections.iter_mut() {
-        let channels = connection.channels().unwrap();
-        while let Some(message) = channels.recv::<TimeMessage>() {
+    'clients: for client_id in server.clients_id().into_iter() {
+        while let Some(message) = server.receive_message(client_id, Channel::Timing.id()) {
+            let message: TimeMessage = match bincode::deserialize(&message) {
+                Ok(m) => m,
+                Err(_) => { warn!(client_id, "Invalid time message from client"); continue 'clients },
+            };
+
             if let TimeMessage::ClientResponse { server_tick } = message {
                 let rtt = network_time.server_tick - server_tick;
-                if let Some(timing) = client_times.timings.get_mut(&ConnectionId(id)) {
+                if let Some(timing) = client_times.timings.get_mut(&ConnectionId(client_id)) {
                     timing.last_rtt = Some(rtt);
                 }
             }
@@ -329,7 +316,7 @@ impl Plugin for TimePlugin {
             );
         } else {
             app.init_resource::<ClientNetworkTime>()
-                .add_system(receive_server_tick.label(TimeSystem::Tick))
+                .add_system(receive_server_tick.label(TimeSystem::Tick).with_run_criteria(run_if_client_conected))
                 .add_system(
                     update_interpolated_tick
                         .label(TimeSystem::Interpolate)

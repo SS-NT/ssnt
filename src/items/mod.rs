@@ -1,4 +1,7 @@
-use bevy::{math::UVec2, prelude::{Entity, Component}};
+use bevy::{
+    math::UVec2,
+    prelude::{Component, Entity},
+};
 
 pub mod containers;
 

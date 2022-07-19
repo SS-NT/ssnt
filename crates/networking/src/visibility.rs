@@ -1,11 +1,10 @@
-
 use bevy::{
     math::{IVec2, Vec2, Vec3Swizzles},
     prelude::{
         App, Changed, Component, Entity, GlobalTransform, ParallelSystemDescriptorCoercion, Plugin,
         Query, Res, ResMut, SystemLabel,
     },
-    utils::{HashMap, HashSet, hashbrown::hash_map::Entry},
+    utils::{hashbrown::hash_map::Entry, HashMap, HashSet},
 };
 
 use crate::{identity::NetworkIdentity, ConnectionId, NetworkManager, NetworkSystem};
@@ -35,31 +34,38 @@ pub struct NetworkVisibility {
 
 impl NetworkVisibility {
     fn add_observer(&mut self, connection: ConnectionId) {
-        self.observers.entry(connection).and_modify(|s| {
-            if let ObserverState::Removed = s {
-                *s = ObserverState::Observing;
-            }
-        }).or_insert(ObserverState::Added);
+        self.observers
+            .entry(connection)
+            .and_modify(|s| {
+                if let ObserverState::Removed = s {
+                    *s = ObserverState::Observing;
+                }
+            })
+            .or_insert(ObserverState::Added);
     }
 
     fn remove_observer(&mut self, connection: ConnectionId) {
-        if let Entry::Occupied(mut o) = self.observers.entry(connection) { match o.get() {
-            ObserverState::Added => { o.remove_entry(); },
-            ObserverState::Observing => { *o.get_mut() = ObserverState::Removed; },
-            ObserverState::Removed => {},
-        } };
+        if let Entry::Occupied(mut o) = self.observers.entry(connection) {
+            match o.get() {
+                ObserverState::Added => {
+                    o.remove_entry();
+                }
+                ObserverState::Observing => {
+                    *o.get_mut() = ObserverState::Removed;
+                }
+                ObserverState::Removed => {}
+            }
+        };
     }
 
     fn update(&mut self) {
-        self.observers.retain(|_, state| {
-            match state {
-                ObserverState::Added => {
-                    *state = ObserverState::Observing;
-                    true
-                },
-                ObserverState::Observing => true,
-                ObserverState::Removed => false,
+        self.observers.retain(|_, state| match state {
+            ObserverState::Added => {
+                *state = ObserverState::Observing;
+                true
             }
+            ObserverState::Observing => true,
+            ObserverState::Removed => false,
         });
     }
 
@@ -85,7 +91,10 @@ impl NetworkVisibility {
     }
 
     pub fn has_observer(&self, connection: &ConnectionId) -> bool {
-        self.observers.get(connection).map(|s| *s != ObserverState::Removed) == Some(true)
+        self.observers
+            .get(connection)
+            .map(|s| *s != ObserverState::Removed)
+            == Some(true)
     }
 }
 

@@ -1,25 +1,27 @@
 use bevy::{
     ecs::system::EntityCommands,
     input::Input,
-    pbr::{PbrBundle},
+    pbr::PbrBundle,
     prelude::{
-        shape, warn, App, Assets, Camera, Commands, Component, EventReader, GlobalTransform,
+        info, shape, warn, App, Assets, Camera, Commands, Component, EventReader, GlobalTransform,
         Handle, Mesh, MouseButton, ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut,
-        Transform, With, info,
+        Transform, With,
     },
+    transform::TransformBundle,
     utils::HashMap,
-    window::Windows, transform::TransformBundle,
+    window::Windows,
 };
-use bevy_egui::{
-    egui::{Window},
-    EguiContext,
+use bevy_egui::{egui::Window, EguiContext};
+use bevy_rapier3d::{
+    plugin::RapierContext,
+    prelude::{Collider, RigidBody, Velocity},
+    rapier::prelude::ColliderShape,
 };
-use bevy_rapier3d::{rapier::prelude::ColliderShape, plugin::RapierContext, prelude::{Collider, RigidBody, Velocity}};
 use glam::{Mat4, Vec2, Vec3};
 use networking::{
     identity::{EntityCommandsExt, NetworkIdentities, NetworkIdentity},
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
-    spawning::{ServerEntityEvent, SpawningSystems, PrefabPath},
+    spawning::{PrefabPath, ServerEntityEvent, SpawningSystems},
     transform::{NetworkTransform, NetworkedTransform},
     NetworkManager,
 };
@@ -134,18 +136,15 @@ fn spawn_requesting(
         None => return,
     };
 
-    let (origin, direction) = match ray_from_cursor(cursor_position, &windows, camera, camera_transform) {
-        Some(r) => r,
-        None => return,
-    };
+    let (origin, direction) =
+        match ray_from_cursor(cursor_position, &windows, camera, camera_transform) {
+            Some(r) => r,
+            None => return,
+        };
 
-    if let Some((_, toi)) = rapier_context.cast_ray(
-        origin,
-        direction,
-        100.0,
-        true,
-        Default::default()
-    ) {
+    if let Some((_, toi)) =
+        rapier_context.cast_ray(origin, direction, 100.0, true, Default::default())
+    {
         let hit_point = origin + direction * toi;
         info!(position=?hit_point, "Requesting object spawn");
         sender.send_to_server(&SpawnerMessage::Request((
@@ -180,7 +179,8 @@ fn handle_spawn_request(
         if let SpawnerMessage::Request((position, kind)) = event.message {
             let mut builder = commands.spawn();
             create_spawnable(&mut builder, kind, &assets, position);
-            builder.insert(PrefabPath("spawnable".to_owned()))
+            builder
+                .insert(PrefabPath("spawnable".to_owned()))
                 .insert(NetworkTransform::default())
                 .networked();
         }
@@ -225,7 +225,8 @@ fn receive_spawned_type(
 
             let mut builder = commands.entity(entity);
             create_spawnable(&mut builder, spawnable, &assets, Vec3::ZERO);
-            builder.insert(NetworkedTransform::default())
+            builder
+                .insert(NetworkedTransform::default())
                 .insert_bundle(PbrBundle {
                     mesh: assets.spawnables.get(&spawnable).unwrap().mesh.clone(),
                     ..Default::default()
@@ -268,7 +269,7 @@ fn ray_from_cursor(
     let view = camera_transform.compute_matrix();
     let window_id = match camera.target {
         bevy::render::camera::RenderTarget::Window(w) => w,
-        _ => return None
+        _ => return None,
     };
 
     let window = match windows.get(window_id) {

@@ -1,8 +1,8 @@
 use bevy::{
     ecs::system::QuerySingleError,
     prelude::{
-        info, warn, App, Commands, Component, Entity, EventReader, EventWriter,
-        ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SystemLabel, SystemSet, With, error,
+        error, info, warn, App, Commands, Component, Entity, EventReader, EventWriter,
+        ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SystemLabel, SystemSet, With,
     },
     utils::{HashMap, HashSet},
 };
@@ -57,13 +57,17 @@ fn send_spawn_messages(
 ) {
     for (entity, identity, prefab) in query.iter() {
         if let Some(visibility) = visibilities.visibility.get(identity) {
-            let new_observers: HashSet<ConnectionId> = visibility.new_observers().copied().collect();
+            let new_observers: HashSet<ConnectionId> =
+                visibility.new_observers().copied().collect();
             if !new_observers.is_empty() {
                 let message = SpawnEntity {
                     name: prefab.0.clone(),
                     network_id: *identity,
                 };
-                sender.send(&SpawnMessage::Spawn(message), MessageReceivers::Set(new_observers.clone()));
+                sender.send(
+                    &SpawnMessage::Spawn(message),
+                    MessageReceivers::Set(new_observers.clone()),
+                );
                 entity_events.send_batch(
                     new_observers
                         .iter()
@@ -71,9 +75,13 @@ fn send_spawn_messages(
                 );
             }
 
-            let removed_observers: HashSet<ConnectionId> = visibility.removed_observers().copied().collect();
+            let removed_observers: HashSet<ConnectionId> =
+                visibility.removed_observers().copied().collect();
             if !removed_observers.is_empty() {
-                sender.send(&SpawnMessage::Despawn(*identity), MessageReceivers::Set(removed_observers.clone()));
+                sender.send(
+                    &SpawnMessage::Despawn(*identity),
+                    MessageReceivers::Set(removed_observers.clone()),
+                );
                 entity_events.send_batch(
                     removed_observers
                         .iter()
@@ -96,7 +104,10 @@ fn receive_spawn(
                 let spawn = s.clone();
 
                 if ids.get_entity(spawn.network_id).is_some() {
-                    warn!("Received spawn message for already existing {:?}", spawn.network_id);
+                    warn!(
+                        "Received spawn message for already existing {:?}",
+                        spawn.network_id
+                    );
                     continue;
                 }
 
@@ -111,7 +122,7 @@ fn receive_spawn(
                 entity_events.send(NetworkedEntityEvent::Spawned(entity));
 
                 info!("Received spawn message for {:?}", spawn.network_id);
-            },
+            }
             SpawnMessage::Despawn(id) => {
                 if let Some(entity) = ids.get_entity(*id) {
                     // TODO: Uncomment once rapier doesn't f***ing panic
@@ -121,9 +132,8 @@ fn receive_spawn(
                 } else {
                     warn!("Received despawn message for non-existent {:?}", id);
                 }
-            },
+            }
         }
-        
     }
 }
 
@@ -242,16 +252,21 @@ impl Plugin for SpawningPlugin {
             .is_server()
         {
             app.add_event::<ServerEntityEvent>()
-                .init_resource::<ClientControls>().add_system_set(
-                SystemSet::new()
-                    .after(NetworkSystem::ReadNetworkMessages)
-                    .with_system(send_spawn_messages.label(SpawningSystems::Spawn).after(NetworkSystem::Visibility))
-                    .with_system(
-                        send_control_updates
-                            .label(SpawningSystems::ClientControl)
-                            .after(SpawningSystems::Spawn),
-                    ),
-            );
+                .init_resource::<ClientControls>()
+                .add_system_set(
+                    SystemSet::new()
+                        .after(NetworkSystem::ReadNetworkMessages)
+                        .with_system(
+                            send_spawn_messages
+                                .label(SpawningSystems::Spawn)
+                                .after(NetworkSystem::Visibility),
+                        )
+                        .with_system(
+                            send_control_updates
+                                .label(SpawningSystems::ClientControl)
+                                .after(SpawningSystems::Spawn),
+                        ),
+                );
         } else {
             app.add_event::<NetworkedEntityEvent>().add_system_set(
                 SystemSet::new()

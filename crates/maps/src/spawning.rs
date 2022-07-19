@@ -1,9 +1,17 @@
 use crate::TilemapMesh;
 
-use super::{AdjacencyInformation, CHUNK_LENGTH, CHUNK_SIZE, DIRECTIONS, FurnitureData, FurnitureDefinition, FurnitureKind, MapData, TileData, TurfData, TurfDefinition, components::{SpawnedTileObject, SpawnedTileObjectBundle}, tile_neighbours};
-use bevy::{math::{IVec2, Quat, UVec2, Vec3}, pbr::PbrBundle, prelude::{
+use super::{
+    components::{SpawnedTileObject, SpawnedTileObjectBundle},
+    tile_neighbours, AdjacencyInformation, FurnitureData, FurnitureDefinition, FurnitureKind,
+    MapData, TileData, TurfData, TurfDefinition, CHUNK_LENGTH, CHUNK_SIZE, DIRECTIONS,
+};
+use bevy::{
+    math::{IVec2, Quat, UVec2, Vec3},
+    pbr::PbrBundle,
+    prelude::{
         warn, BuildChildren, Commands, DespawnRecursiveExt, Entity, Handle, Mesh, Transform,
-    }};
+    },
+};
 use bevy_rapier3d::{na::Isometry3, prelude::Collider};
 
 const EMPTY_SPAWNED_TILE: Option<SpawnedTile> = None;
@@ -256,13 +264,16 @@ fn apply_turf(
     let mesh = mesh_handle;
 
     let bundle = SpawnedTileObjectBundle {
-        tile_object: SpawnedTileObject { tilemap: tilemap_entity, position: tile_position },
+        tile_object: SpawnedTileObject {
+            tilemap: tilemap_entity,
+            position: tile_position,
+        },
         pbr: PbrBundle {
             mesh,
             material,
             transform: turf_transform,
             ..Default::default()
-        }
+        },
     };
 
     let collider_component = if turf_definition.category == "wall" {
@@ -329,10 +340,13 @@ fn apply_furniture(
         .get_or_insert_with(Default::default)
         .spawned_furniture;
 
-    let is_single_mesh = furniture_definition.mesh.as_ref().map_or(false, |m| match m {
-        TilemapMesh::Single(_) => true,
-        TilemapMesh::Multiple(_) => false,
-    });
+    let is_single_mesh = furniture_definition
+        .mesh
+        .as_ref()
+        .map_or(false, |m| match m {
+            TilemapMesh::Single(_) => true,
+            TilemapMesh::Multiple(_) => false,
+        });
 
     if let Some(dir) = furniture_data.direction {
         if is_single_mesh {
@@ -342,15 +356,10 @@ fn apply_furniture(
                 dir_num += 1;
             }
             if dir_num != 0 {
-                rotation = Quat::from_axis_angle(
-                    Vec3::Y,
-                    std::f32::consts::FRAC_PI_2 * (dir_num as f32),
-                );
+                rotation =
+                    Quat::from_axis_angle(Vec3::Y, std::f32::consts::FRAC_PI_2 * (dir_num as f32));
             } else {
-                rotation = Quat::from_axis_angle(
-                    Vec3::Y,
-                    std::f32::consts::FRAC_PI_2 * 2.0,
-                );
+                rotation = Quat::from_axis_angle(Vec3::Y, std::f32::consts::FRAC_PI_2 * 2.0);
             }
         }
     }
@@ -365,25 +374,24 @@ fn apply_furniture(
     let mesh = mesh_handle;
 
     let bundle = SpawnedTileObjectBundle {
-        tile_object: SpawnedTileObject { tilemap: tilemap_entity, position: tile_position },
+        tile_object: SpawnedTileObject {
+            tilemap: tilemap_entity,
+            position: tile_position,
+        },
         pbr: PbrBundle {
             mesh,
             material: material.clone(),
             transform: turf_transform,
             ..Default::default()
-        }
+        },
     };
 
     if let Some((current_data, entity)) = spawned_furniture {
         if furniture_data != current_data {
-            commands
-                .entity(*entity)
-                .insert_bundle(bundle);
+            commands.entity(*entity).insert_bundle(bundle);
         }
     } else {
-        let turf = commands
-            .spawn_bundle(bundle)
-            .id();
+        let turf = commands.spawn_bundle(bundle).id();
         if furniture_definition.kind == FurnitureKind::Door {
             let connector_left = commands
                 .spawn_bundle(PbrBundle {

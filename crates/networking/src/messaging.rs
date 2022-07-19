@@ -1,11 +1,22 @@
 use std::{any::TypeId, time::Duration};
 
-use bevy::{utils::{HashMap, HashSet}, prelude::{App, EventReader, EventWriter, warn, Res, ResMut, Plugin, ParallelSystemDescriptorCoercion, SystemLabel}, ecs::system::SystemParam};
-use bevy_renet::{renet::{ReliableChannelConfig, ChannelConfig, UnreliableChannelConfig, RenetServer, RenetClient}, run_if_client_conected};
-use serde::{Serialize, Deserialize, de::DeserializeOwned};
+use bevy::{
+    ecs::system::SystemParam,
+    prelude::{
+        warn, App, EventReader, EventWriter, ParallelSystemDescriptorCoercion, Plugin, Res, ResMut,
+        SystemLabel,
+    },
+    utils::{HashMap, HashSet},
+};
+use bevy_renet::{
+    renet::{
+        ChannelConfig, ReliableChannelConfig, RenetClient, RenetServer, UnreliableChannelConfig,
+    },
+    run_if_client_conected,
+};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::{ConnectionId, Players, NetworkSystem, NetworkManager};
-
+use crate::{ConnectionId, NetworkManager, NetworkSystem, Players};
 
 /// Assigns packet numbers to types uniquely and allows to lookup the id for a specific type.
 /// Used in packet registration, serialization and deserialization.
@@ -88,37 +99,53 @@ pub struct MessageEvent<T> {
 }
 
 pub trait AppExt {
-    fn add_network_message<T>(&mut self) -> &mut Self where T: 'static + Serialize + DeserializeOwned + Send + Sync;
+    fn add_network_message<T>(&mut self) -> &mut Self
+    where
+        T: 'static + Serialize + DeserializeOwned + Send + Sync;
 }
 
 impl AppExt for App {
     /// Registers a message type which can be sent over the network.
-    /// 
+    ///
     /// Messages can be read from an [`EventReader<MessageEvent<T>>`] and sent using a [`MessageSender`].
-    fn add_network_message<T>(&mut self) -> &mut Self where T: 'static + Serialize + DeserializeOwned + Send + Sync {
+    fn add_network_message<T>(&mut self) -> &mut Self
+    where
+        T: 'static + Serialize + DeserializeOwned + Send + Sync,
+    {
         let mut types = self.world.get_resource_mut::<MessageTypes>().unwrap();
         let type_id = types.register::<T>();
 
-        let packet_reader = move |mut raw_events: EventReader<IncomingMessage>, mut events: EventWriter<MessageEvent<T>>| {
-            for event in raw_events.iter() {
-                if event.type_id != type_id {
-                    continue;
-                }
-
-                let message: T = match bincode::deserialize(&event.content) {
-                    Ok(m) => m,
-                    Err(_) => {
-                        // TODO: Disconnect after X invalid packets?
-                        warn!("Received malformed packet from connection={} message_id={}", event.connection, event.type_id);
+        let packet_reader =
+            move |mut raw_events: EventReader<IncomingMessage>,
+                  mut events: EventWriter<MessageEvent<T>>| {
+                for event in raw_events.iter() {
+                    if event.type_id != type_id {
                         continue;
-                    },
-                };
-                events.send(MessageEvent { message, connection: event.connection});
-            }
-        };
+                    }
 
-        self.add_event::<MessageEvent<T>>()
-            .add_system(packet_reader.label(NetworkSystem::ReadNetworkMessages).after(MessagingSystem::ReadRaw))
+                    let message: T = match bincode::deserialize(&event.content) {
+                        Ok(m) => m,
+                        Err(_) => {
+                            // TODO: Disconnect after X invalid packets?
+                            warn!(
+                                "Received malformed packet from connection={} message_id={}",
+                                event.connection, event.type_id
+                            );
+                            continue;
+                        }
+                    };
+                    events.send(MessageEvent {
+                        message,
+                        connection: event.connection,
+                    });
+                }
+            };
+
+        self.add_event::<MessageEvent<T>>().add_system(
+            packet_reader
+                .label(NetworkSystem::ReadNetworkMessages)
+                .after(MessagingSystem::ReadRaw),
+        )
     }
 }
 
@@ -130,21 +157,42 @@ pub struct MessageSender<'w, 's> {
 }
 
 impl<'w, 's> MessageSender<'w, 's> {
-    pub fn send<T>(&mut self, message: &T, receivers: MessageReceivers) where T: 'static + Serialize + Send + Sync {
+    pub fn send<T>(&mut self, message: &T, receivers: MessageReceivers)
+    where
+        T: 'static + Serialize + Send + Sync,
+    {
         self.send_internal(message, receivers, MessageKind::Reliable);
     }
 
-    pub fn send_to_server<T>(&mut self, message: &T) where T: 'static + Serialize + Send + Sync {
+    pub fn send_to_server<T>(&mut self, message: &T)
+    where
+        T: 'static + Serialize + Send + Sync,
+    {
         self.send(message, MessageReceivers::Server);
     }
 
-    pub fn send_unreliable<T>(&mut self, message: &T, receivers: MessageReceivers) where T: 'static + Serialize + Send + Sync {
+    pub fn send_unreliable<T>(&mut self, message: &T, receivers: MessageReceivers)
+    where
+        T: 'static + Serialize + Send + Sync,
+    {
         self.send_internal(message, receivers, MessageKind::Unreliable);
     }
 
-    fn send_internal<T>(&mut self, message: &T, receivers: MessageReceivers, kind: MessageKind) where T: 'static + Serialize + Send + Sync {
-        let type_id = self.types.types.get(&TypeId::of::<T>()).expect("Tried to send unregistered message type");
-        let event = OutboundMessage { type_id: *type_id, content: bincode::serialize(message).expect("Unable to serialize message"), receivers, kind };
+    fn send_internal<T>(&mut self, message: &T, receivers: MessageReceivers, kind: MessageKind)
+    where
+        T: 'static + Serialize + Send + Sync,
+    {
+        let type_id = self
+            .types
+            .types
+            .get(&TypeId::of::<T>())
+            .expect("Tried to send unregistered message type");
+        let event = OutboundMessage {
+            type_id: *type_id,
+            content: bincode::serialize(message).expect("Unable to serialize message"),
+            receivers,
+            kind,
+        };
         self.outbound_messages.send(event);
     }
 }
@@ -153,7 +201,7 @@ pub(crate) enum Channel {
     Default,
     DefaultUnreliable,
     Timing,
-    Transforms
+    Transforms,
 }
 
 impl Channel {
@@ -190,17 +238,16 @@ impl Channel {
 }
 
 /// Reads from the network channels and sends message events
-fn read_channel_server(
-    mut events: EventWriter<IncomingMessage>,
-    mut server: ResMut<RenetServer>,
-)
-{
+fn read_channel_server(mut events: EventWriter<IncomingMessage>, mut server: ResMut<RenetServer>) {
     'clients: for client_id in server.clients_id().into_iter() {
         for channel_id in [Channel::Default.id(), Channel::DefaultUnreliable.id()] {
             while let Some(message) = server.receive_message(client_id, channel_id) {
                 let message: NetworkMessage = match bincode::deserialize(&message) {
                     Ok(m) => m,
-                    Err(_) => { warn!(client_id, "Invalid message from client"); continue 'clients },
+                    Err(_) => {
+                        warn!(client_id, "Invalid message from client");
+                        continue 'clients;
+                    }
                 };
                 events.send(IncomingMessage {
                     type_id: message.type_id,
@@ -212,16 +259,15 @@ fn read_channel_server(
     }
 }
 
-fn read_channel_client(
-    mut events: EventWriter<IncomingMessage>,
-    mut client: ResMut<RenetClient>,
-)
-{
+fn read_channel_client(mut events: EventWriter<IncomingMessage>, mut client: ResMut<RenetClient>) {
     for channel_id in [Channel::Default.id(), Channel::DefaultUnreliable.id()] {
         while let Some(message) = client.receive_message(channel_id) {
             let message: NetworkMessage = match bincode::deserialize(&message) {
                 Ok(m) => m,
-                Err(_) => { warn!("Invalid message from server"); continue },
+                Err(_) => {
+                    warn!("Invalid message from server");
+                    continue;
+                }
             };
             events.send(IncomingMessage {
                 type_id: message.type_id,
@@ -236,26 +282,38 @@ fn read_channel_client(
 
 // NOTE: This message sending method is inefficient, as it needs to clone for every receiver.
 //       It should be made more efficient if the networking crate is updated or is switched for something else.
-fn send_outbound_messages_server(mut messages: EventReader<OutboundMessage>, mut server: ResMut<RenetServer>, players: Res<Players>) {
+fn send_outbound_messages_server(
+    mut messages: EventReader<OutboundMessage>,
+    mut server: ResMut<RenetServer>,
+    players: Res<Players>,
+) {
     for outbound in messages.iter() {
         match &outbound.receivers {
             MessageReceivers::AllPlayers => {
-                send_message_to(&mut server, outbound, players.players.iter().map(|(id, _)| id).copied());
-            },
+                send_message_to(
+                    &mut server,
+                    outbound,
+                    players.players.iter().map(|(id, _)| id).copied(),
+                );
+            }
             MessageReceivers::Set(connections) => {
                 send_message_to(&mut server, outbound, connections.iter().copied());
-            },
+            }
             MessageReceivers::Server => {
                 panic!("Trying to send to server from server");
-            },
+            }
             MessageReceivers::Single(id) => {
                 send_message_to(&mut server, outbound, std::iter::once(*id));
-            },
+            }
         }
     }
 }
 
-fn send_message_to(server: &mut RenetServer, outbound: &OutboundMessage, receivers: impl Iterator<Item = ConnectionId>) {
+fn send_message_to(
+    server: &mut RenetServer,
+    outbound: &OutboundMessage,
+    receivers: impl Iterator<Item = ConnectionId>,
+) {
     let message = NetworkMessage {
         type_id: outbound.type_id,
         content: outbound.content.clone(),
@@ -271,7 +329,10 @@ fn send_message_to(server: &mut RenetServer, outbound: &OutboundMessage, receive
     }
 }
 
-fn send_outbound_messages_client(mut messages: EventReader<OutboundMessage>, mut client: ResMut<RenetClient>) {
+fn send_outbound_messages_client(
+    mut messages: EventReader<OutboundMessage>,
+    mut client: ResMut<RenetClient>,
+) {
     for outbound in messages.iter() {
         let channel = match outbound.kind {
             MessageKind::Reliable => Channel::Default,
@@ -296,9 +357,18 @@ impl Plugin for MessagingPlugin {
             .add_event::<IncomingMessage>()
             .add_event::<OutboundMessage>();
 
-        if app.world.get_resource::<NetworkManager>().unwrap().is_client() {
+        if app
+            .world
+            .get_resource::<NetworkManager>()
+            .unwrap()
+            .is_client()
+        {
             app.add_system(send_outbound_messages_client.with_run_criteria(run_if_client_conected))
-                .add_system(read_channel_client.label(MessagingSystem::ReadRaw).with_run_criteria(run_if_client_conected));
+                .add_system(
+                    read_channel_client
+                        .label(MessagingSystem::ReadRaw)
+                        .with_run_criteria(run_if_client_conected),
+                );
         } else {
             app.add_system(send_outbound_messages_server)
                 .add_system(read_channel_server.label(MessagingSystem::ReadRaw));

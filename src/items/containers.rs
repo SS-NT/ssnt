@@ -1,6 +1,6 @@
 use bevy::{
     math::UVec2,
-    prelude::{Entity, Query, RemovedComponents, Component},
+    prelude::{Component, Entity, Query, RemovedComponents},
     utils::HashMap,
 };
 
@@ -52,7 +52,9 @@ impl<'a, 'world, 'state> Iterator for ContainerItemIterator<'a, 'world, 'state> 
     }
 }
 
-impl<'a, 'world, 'state> From<&ContainerAccessor<'a, 'world, 'state>> for ContainerItemIterator<'a, 'world, 'state> {
+impl<'a, 'world, 'state> From<&ContainerAccessor<'a, 'world, 'state>>
+    for ContainerItemIterator<'a, 'world, 'state>
+{
     fn from(accessor: &ContainerAccessor<'a, 'world, 'state>) -> Self {
         Self {
             query: accessor.query,
@@ -105,7 +107,11 @@ impl<'a, 'world, 'state> ContainerWriter<'a, 'world, 'state> {
         entity: Entity,
         query: &'a ContainerQuery<'world, 'state>,
     ) -> Self {
-        Self { container, entity, query }
+        Self {
+            container,
+            entity,
+            query,
+        }
     }
 
     pub fn insert_item(&'a mut self, item: &mut Item, item_entity: Entity, position: UVec2) {

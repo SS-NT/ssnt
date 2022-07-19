@@ -5,20 +5,24 @@ use bevy::{
     math::{Quat, Vec3},
     prelude::{
         warn, App, Component, Local, ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut,
-        SystemLabel, SystemSet, Transform, Without, With,
+        SystemLabel, SystemSet, Transform, With, Without,
     },
-    utils::{HashMap, hashbrown::hash_map::Entry},
+    utils::{hashbrown::hash_map::Entry, HashMap},
 };
-use bevy_rapier3d::prelude::{Velocity, RigidBody};
-use bevy_renet::{renet::{RenetServer, RenetClient}, run_if_client_conected};
+use bevy_rapier3d::prelude::{RigidBody, Velocity};
+use bevy_renet::{
+    renet::{RenetClient, RenetServer},
+    run_if_client_conected,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
+    messaging::Channel,
     spawning::{ClientControlled, SpawningSystems},
     time::{ClientNetworkTime, ServerNetworkTime, TimeSystem},
     visibility::NetworkVisibilities,
-    ConnectionId, NetworkManager, messaging::Channel,
+    ConnectionId, NetworkManager,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -46,7 +50,7 @@ impl TransformUpdate {
 
         // Swap direction if necessary
         let mut from = self;
-        let mut  to = other;
+        let mut to = other;
         if from.sequence_number > to.sequence_number {
             std::mem::swap(&mut from, &mut to);
         }
@@ -58,8 +62,10 @@ impl TransformUpdate {
 
         let position = Self::interpolate_component(from.position, to.position, t, Vec3::lerp);
         let rotation = Self::interpolate_component(from.rotation, to.rotation, t, Quat::lerp);
-        let linear_velocity = Self::interpolate_component(from.linear_velocity, to.linear_velocity, t, Vec3::lerp);
-        let angular_velocity = Self::interpolate_component(from.angular_velocity, to.angular_velocity, t, Vec3::lerp);
+        let linear_velocity =
+            Self::interpolate_component(from.linear_velocity, to.linear_velocity, t, Vec3::lerp);
+        let angular_velocity =
+            Self::interpolate_component(from.angular_velocity, to.angular_velocity, t, Vec3::lerp);
 
         TransformUpdate {
             identity: from.identity,
@@ -72,9 +78,20 @@ impl TransformUpdate {
     }
 
     /// Interpolates two values
-    fn interpolate_component<T>(from: Option<T>, to: Option<T>, t: f32, lerp: impl Fn(T, T, f32) -> T) -> Option<T> {
+    fn interpolate_component<T>(
+        from: Option<T>,
+        to: Option<T>,
+        t: f32,
+        lerp: impl Fn(T, T, f32) -> T,
+    ) -> Option<T> {
         match from {
-            Some(from) => if let Some(to) = to { Some(lerp(from, to, t)) } else { Some(from) },
+            Some(from) => {
+                if let Some(to) = to {
+                    Some(lerp(from, to, t))
+                } else {
+                    Some(from)
+                }
+            }
             None => to,
         }
     }
@@ -219,8 +236,7 @@ fn update_transform(
         if let Some(visibility) = visibilities.visibility.get(identity) {
             let serialized = bincode::serialize(&TransformMessage::Update(update.clone())).unwrap();
             for connection in visibility.observers() {
-                server
-                    .send_message(connection.0, Channel::Transforms.id(), serialized.clone());
+                server.send_message(connection.0, Channel::Transforms.id(), serialized.clone());
             }
         }
 
@@ -257,7 +273,8 @@ fn handle_retransmission(
             None => continue,
         };
 
-        let serialized = bincode::serialize(&TransformMessage::Update(last_update.clone())).unwrap();
+        let serialized =
+            bincode::serialize(&TransformMessage::Update(last_update.clone())).unwrap();
 
         // Retransmit for missed acks
         for (connection, data) in networked.client_data.iter_mut() {
@@ -274,8 +291,7 @@ fn handle_retransmission(
                 continue;
             }
 
-            server
-                .send_message(connection.0, Channel::Transforms.id(), serialized.clone());
+            server.send_message(connection.0, Channel::Transforms.id(), serialized.clone());
             data.last_sent = seconds;
         }
 
@@ -287,8 +303,7 @@ fn handle_retransmission(
                     last_sent: seconds,
                     ..Default::default()
                 });
-                server
-                    .send_message(connection.0, Channel::Transforms.id(), serialized.clone());
+                server.send_message(connection.0, Channel::Transforms.id(), serialized.clone());
             }
         }
     }
@@ -320,14 +335,14 @@ fn handle_occasional_sync(
             None => continue,
         };
 
-        let serialized = bincode::serialize(&TransformMessage::Update(last_update.clone())).unwrap();
+        let serialized =
+            bincode::serialize(&TransformMessage::Update(last_update.clone())).unwrap();
         for (connection, data) in networked.client_data.iter_mut() {
             if !visibility.has_observer(connection) {
                 continue;
             }
 
-            server
-                .send_message(connection.0, Channel::Transforms.id(), serialized.clone());
+            server.send_message(connection.0, Channel::Transforms.id(), serialized.clone());
             data.last_sent = seconds;
         }
 
@@ -347,7 +362,10 @@ fn handle_acks(
         while let Some(message) = server.receive_message(client_id, Channel::Transforms.id()) {
             let message: TransformMessage = match bincode::deserialize(&message) {
                 Ok(m) => m,
-                Err(_) => { warn!(client_id, "Invalid transform message from client"); continue 'clients },
+                Err(_) => {
+                    warn!(client_id, "Invalid transform message from client");
+                    continue 'clients;
+                }
             };
             match message {
                 TransformMessage::Ack(ack) => {
@@ -401,7 +419,10 @@ pub struct NetworkedTransform {
 
 impl NetworkedTransform {
     /// Gets the relevant transform updates for the given tick
-    fn relevant_updates(&mut self, tick: f32) -> Option<(&TransformUpdate, Option<&TransformUpdate>)> {
+    fn relevant_updates(
+        &mut self,
+        tick: f32,
+    ) -> Option<(&TransformUpdate, Option<&TransformUpdate>)> {
         // Find the next update to be interpolated to
         let next = self
             .buffered_updates
@@ -414,7 +435,7 @@ impl NetworkedTransform {
             None => {
                 // Nothing to interpolate to
                 return None;
-            },
+            }
         };
 
         let previous = if next > 0 { Some(next - 1) } else { None };
@@ -424,7 +445,10 @@ impl NetworkedTransform {
         }
 
         Some(match previous {
-            Some(_) => (self.buffered_updates.get(1).unwrap(), self.buffered_updates.get(0)),
+            Some(_) => (
+                self.buffered_updates.get(1).unwrap(),
+                self.buffered_updates.get(0),
+            ),
             None => (self.buffered_updates.get(0).unwrap(), None),
         })
     }
@@ -467,7 +491,10 @@ fn handle_transform_messages(
     while let Some(message) = client.receive_message(Channel::Transforms.id()) {
         let message: TransformMessage = match bincode::deserialize(&message) {
             Ok(m) => m,
-            Err(_) => { warn!("Invalid transform message"); continue },
+            Err(_) => {
+                warn!("Invalid transform message");
+                continue;
+            }
         };
         match message {
             TransformMessage::Update(update) => {
@@ -482,7 +509,10 @@ fn handle_transform_messages(
     }
 
     for ack in acknowledgments.drain(..) {
-        client.send_message(Channel::Transforms.id(), bincode::serialize(&TransformMessage::Ack(ack)).unwrap());
+        client.send_message(
+            Channel::Transforms.id(),
+            bincode::serialize(&TransformMessage::Ack(ack)).unwrap(),
+        );
     }
 }
 
@@ -536,10 +566,7 @@ fn apply_buffered_updates(
 
 /// Applies transform updates to entities without physics simulation
 fn sync_networked_transform(
-    mut query: Query<
-        (&mut NetworkedTransform, &mut Transform),
-        Without<RigidBody>,
-    >,
+    mut query: Query<(&mut NetworkedTransform, &mut Transform), Without<RigidBody>>,
     network_time: Res<ClientNetworkTime>,
 ) {
     let current_tick = network_time.interpolated_tick();
@@ -567,22 +594,19 @@ fn sync_networked_transform(
 
 /// Applies transform updates to entities with physics
 fn sync_networked_transform_physics(
-    mut query: Query<(
-        &mut NetworkedTransform,
-        &mut Transform,
-        &mut Velocity,
-    ), With<RigidBody>>,
+    mut query: Query<(&mut NetworkedTransform, &mut Transform, &mut Velocity), With<RigidBody>>,
     network_time: Res<ClientNetworkTime>,
 ) {
     let current_tick = network_time.interpolated_tick();
     for (mut networked_transform, mut transform, mut velocity) in query.iter_mut() {
-        let (next_update, previous_update) = match networked_transform.relevant_updates(current_tick) {
-            Some(u) => u,
-            None => {
-                networked_transform.had_next = false;
-                continue;
-            },
-        };
+        let (next_update, previous_update) =
+            match networked_transform.relevant_updates(current_tick) {
+                Some(u) => u,
+                None => {
+                    networked_transform.had_next = false;
+                    continue;
+                }
+            };
 
         // Interpolate between updates if present
         let update = match previous_update {
@@ -640,7 +664,11 @@ impl Plugin for TransformPlugin {
             );
         } else {
             app.init_resource::<BufferedTransformUpdates>()
-                .add_system(handle_transform_messages.label(ClientTransformSystem::ReceiveMessages).with_run_criteria(run_if_client_conected))
+                .add_system(
+                    handle_transform_messages
+                        .label(ClientTransformSystem::ReceiveMessages)
+                        .with_run_criteria(run_if_client_conected),
+                )
                 .add_system(
                     apply_buffered_updates
                         .label(ClientTransformSystem::ApplyBuffer)

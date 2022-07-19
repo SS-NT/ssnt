@@ -3,9 +3,9 @@ use crate::{
     Player,
 };
 use bevy::{core::FixedTimestep, math::Vec3Swizzles, prelude::*};
-use bevy_rapier3d::prelude::{Velocity, ExternalForce, ReadMassProperties};
+use bevy_rapier3d::prelude::{ExternalForce, ReadMassProperties, Velocity};
 use networking::{
-    messaging::{AppExt, MessageReceivers, MessageSender, MessageEvent},
+    messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     spawning::{ClientControlled, ClientControls},
     NetworkManager,
 };
@@ -74,7 +74,10 @@ pub fn movement_system(
         if let Some(mut forces) = forces {
             forces.force = Vec3::new(force.x, 0.0, force.y);
         } else {
-            commands.entity(entity).insert(ExternalForce { force: Vec3::new(force.x, 0.0, force.y), ..Default::default() });
+            commands.entity(entity).insert(ExternalForce {
+                force: Vec3::new(force.x, 0.0, force.y),
+                ..Default::default()
+            });
         }
     }
 }

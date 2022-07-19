@@ -1,24 +1,34 @@
-pub mod messaging;
 pub mod identity;
-pub mod visibility;
+pub mod messaging;
 pub mod spawning;
-pub mod transform;
 pub mod time;
+pub mod transform;
+pub mod visibility;
 
-use bevy_renet::{renet::{NETCODE_KEY_BYTES, RenetClient, ConnectToken, RenetConnectionConfig, ServerConfig, RenetServer, RenetError}, RenetServerPlugin, RenetClientPlugin};
-use time::{TimePlugin, ServerNetworkTime, ClientNetworkTime};
+use bevy_renet::{
+    renet::{
+        ConnectToken, RenetClient, RenetConnectionConfig, RenetError, RenetServer, ServerConfig,
+        NETCODE_KEY_BYTES,
+    },
+    RenetClientPlugin, RenetServerPlugin,
+};
+use time::{ClientNetworkTime, ServerNetworkTime, TimePlugin};
 
-use std::{net::{SocketAddr, UdpSocket, SocketAddrV4}, fmt::Display, time::SystemTime};
+use std::{
+    fmt::Display,
+    net::{SocketAddr, SocketAddrV4, UdpSocket},
+    time::SystemTime,
+};
 
 use bevy::{
     prelude::{
-        info, warn, error, App, Component, EventReader, EventWriter,
-        ParallelSystemDescriptorCoercion, Plugin, ResMut, State, SystemLabel, Res, Local, Commands,
+        error, info, warn, App, Commands, Component, EventReader, EventWriter, Local,
+        ParallelSystemDescriptorCoercion, Plugin, Res, ResMut, State, SystemLabel,
     },
     utils::HashMap,
 };
 use identity::IdentityPlugin;
-use messaging::{MessageSender, MessageReceivers, MessageEvent, MessagingPlugin, AppExt, Channel};
+use messaging::{AppExt, Channel, MessageEvent, MessageReceivers, MessageSender, MessagingPlugin};
 use serde::{Deserialize, Serialize};
 use spawning::SpawningPlugin;
 use transform::TransformPlugin;
@@ -80,7 +90,6 @@ struct ServerInfo {
     tick_duration_seconds: f32,
 }
 
-
 pub fn create_server(port: u16) -> RenetServer {
     // TODO: Allow listen ip to be specified
     let server_addr = SocketAddrV4::new("127.0.0.1".parse().unwrap(), port);
@@ -90,10 +99,11 @@ pub fn create_server(port: u16) -> RenetServer {
         ..Default::default()
     };
     let server_config = ServerConfig::new(64, PROTOCOL_ID, server_addr.into(), *PRIVATE_KEY);
-    let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+    let current_time = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap();
     RenetServer::new(current_time, server_config, connection_config, socket).unwrap()
 }
-
 
 fn handle_joining_server(
     mut events: EventReader<ClientEvent>,
@@ -116,10 +126,24 @@ fn handle_joining_server(
                         ..Default::default()
                     };
                     // TODO: use actual authentication here
-                    let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+                    let current_time = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap();
                     let client_id = current_time.as_millis() as u64;
-                    let token = ConnectToken::generate(current_time, PROTOCOL_ID, 300, client_id, 15, vec![*address], None, PRIVATE_KEY).unwrap();
-                    let client = RenetClient::new(current_time, socket, client_id, token, connection_config).unwrap();
+                    let token = ConnectToken::generate(
+                        current_time,
+                        PROTOCOL_ID,
+                        300,
+                        client_id,
+                        15,
+                        vec![*address],
+                        None,
+                        PRIVATE_KEY,
+                    )
+                    .unwrap();
+                    let client =
+                        RenetClient::new(current_time, socket, client_id, token, connection_config)
+                            .unwrap();
                     commands.insert_resource(client);
                 }
             }
@@ -139,21 +163,23 @@ fn client_send_hello(
 
     match (client.is_connected(), *last_state) {
         // Connected
-        (true, false) => { *last_state = true },
+        (true, false) => *last_state = true,
         // Disconnected
-        (false, true) => { *last_state = false; return },
+        (false, true) => {
+            *last_state = false;
+            return;
+        }
         _ => return,
     }
 
     info!("Connected to server");
-    sender
-        .send(
-            &ClientHello {
-                token: Vec::new(),
-                version: "TODO".into(),
-            },
-            MessageReceivers::Server,
-        );
+    sender.send(
+        &ClientHello {
+            token: Vec::new(),
+            version: "TODO".into(),
+        },
+        MessageReceivers::Server,
+    );
 }
 
 fn client_joined_server(
@@ -230,7 +256,6 @@ enum NetworkSystem {
 
 impl Plugin for NetworkingPlugin {
     fn build(&self, app: &mut App) {
-
         match self.role {
             NetworkRole::Server => app.add_plugin(RenetServerPlugin),
             NetworkRole::Client => app.add_plugin(RenetClientPlugin),

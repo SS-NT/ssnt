@@ -1,8 +1,11 @@
-use bevy::{prelude::{Component, Entity, error, Plugin, App}, utils::HashMap, ecs::system::{Command, EntityCommands}};
+use bevy::{
+    ecs::system::{Command, EntityCommands},
+    prelude::{error, App, Component, Entity, Plugin},
+    utils::HashMap,
+};
 use serde::{Deserialize, Serialize};
 
-use crate::{NetworkManager, visibility::GridPosition};
-
+use crate::{visibility::GridPosition, NetworkManager};
 
 /// A numeric id which matches on the server and clients
 #[derive(Component, Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,9 +49,14 @@ struct NetworkCommand {
 
 impl Command for NetworkCommand {
     fn write(self, world: &mut bevy::prelude::World) {
-        let manager = world.get_resource::<NetworkManager>().expect("Network manager must exist for networked entities");
+        let manager = world
+            .get_resource::<NetworkManager>()
+            .expect("Network manager must exist for networked entities");
         if !manager.is_server() {
-            error!("Tried to create networked entity {:?} without being the server", self.entity);
+            error!(
+                "Tried to create networked entity {:?} without being the server",
+                self.entity
+            );
         }
         let mut identities = world.get_resource_mut::<NetworkIdentities>().unwrap();
         let id = identities.last_id + 1;
@@ -58,7 +66,7 @@ impl Command for NetworkCommand {
 
         let mut entity = world.entity_mut(self.entity);
         entity.insert(NetworkIdentity(id));
-        
+
         if !entity.contains::<GridPosition>() {
             entity.insert(GridPosition::default());
         }

@@ -4,7 +4,13 @@ use super::{
     spawning::{apply_chunk, despawn_chunk, SpawnedTile},
     AdjacencyMeshes, Direction, MapData, TileData, TilemapMesh, CHUNK_SIZE,
 };
-use bevy::{math::{IVec2, UVec2, Vec2, Vec3, Vec3Swizzles}, prelude::{Added, AssetServer, Commands, Entity, EventReader, EventWriter, GlobalTransform, Handle, Mesh, Query, Res, Transform, With}};
+use bevy::{
+    math::{IVec2, UVec2, Vec2, Vec3, Vec3Swizzles},
+    prelude::{
+        Added, AssetServer, Commands, Entity, EventReader, EventWriter, GlobalTransform, Handle,
+        Mesh, Query, Res, Transform, With,
+    },
+};
 
 pub fn tilemap_mesh_loading_system(
     mut tilemaps: Query<&mut TileMap, Added<TileMap>>,
@@ -67,11 +73,21 @@ pub fn tilemap_mesh_loading_system(
                     t: asset_server.load("models/tilemap/walls windows.glb#Mesh37/Primitive0"),
                     x: asset_server.load("models/tilemap/walls windows.glb#Mesh38/Primitive0"),
                 }),
-                "floor" => asset_server.load("models/tilemap/floors.glb#Mesh2/Primitive0").into(),
-                "white floor" => asset_server.load("models/tilemap/floors.glb#Mesh6/Primitive0").into(),
-                "dark floor" => asset_server.load("models/tilemap/floors.glb#Mesh3/Primitive0").into(),
-                "wood floor" => asset_server.load("models/tilemap/floors.glb#Mesh3/Primitive0").into(),
-                "plating" => asset_server.load("models/tilemap/floors.glb#Mesh0/Primitive0").into(),
+                "floor" => asset_server
+                    .load("models/tilemap/floors.glb#Mesh2/Primitive0")
+                    .into(),
+                "white floor" => asset_server
+                    .load("models/tilemap/floors.glb#Mesh6/Primitive0")
+                    .into(),
+                "dark floor" => asset_server
+                    .load("models/tilemap/floors.glb#Mesh3/Primitive0")
+                    .into(),
+                "wood floor" => asset_server
+                    .load("models/tilemap/floors.glb#Mesh3/Primitive0")
+                    .into(),
+                "plating" => asset_server
+                    .load("models/tilemap/floors.glb#Mesh0/Primitive0")
+                    .into(),
                 _ => continue,
             });
         }

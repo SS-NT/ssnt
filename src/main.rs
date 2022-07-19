@@ -1,11 +1,11 @@
 #![allow(clippy::type_complexity)]
 
+mod admin;
 mod camera;
 mod components;
 mod items;
 mod movement;
 mod ui;
-mod admin;
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -17,28 +17,28 @@ use bevy::ecs::system::EntityCommands;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
-use bevy_rapier3d::plugin::{RapierPhysicsPlugin, NoUserData};
-use bevy_rapier3d::prelude::{Collider, RigidBody, LockedAxes, Damping, ColliderMassProperties, ReadMassProperties, Velocity};
+use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
+use bevy_rapier3d::prelude::{
+    Collider, ColliderMassProperties, Damping, LockedAxes, ReadMassProperties, RigidBody, Velocity,
+};
 use byond::tgm::TgmLoader;
 use camera::TopDownCamera;
 use clap::{Parser, Subcommand};
 use futures_lite::future;
 use items::{
-    containers::{
-        Container, ContainerAccessor, ContainerQuery, ContainerWriter,
-    },
+    containers::{Container, ContainerAccessor, ContainerQuery, ContainerWriter},
     Item,
 };
 use maps::components::{TileMap, TileMapObserver};
 use maps::MapData;
 use networking::identity::{EntityCommandsExt as NetworkingEntityCommandsExt, NetworkIdentity};
-use networking::spawning::{NetworkedEntityEvent, PrefabPath, ClientControls, ClientControlled};
-use networking::transform::{NetworkedTransform, NetworkTransform};
+use networking::spawning::{ClientControlled, ClientControls, NetworkedEntityEvent, PrefabPath};
+use networking::transform::{NetworkTransform, NetworkedTransform};
 use networking::visibility::NetworkObserver;
-use networking::{NetworkRole, NetworkingPlugin, ClientEvent, ConnectionId, ServerEvent};
+use networking::{ClientEvent, ConnectionId, NetworkRole, NetworkingPlugin, ServerEvent};
 
 /// How many ticks the server runs per second
-const SERVER_TPS: u32 = 60; 
+const SERVER_TPS: u32 = 60;
 
 #[derive(Parser)]
 struct Args {
@@ -70,21 +70,24 @@ fn main() {
     match role {
         NetworkRole::Server => {
             app.insert_resource(ScheduleRunnerSettings {
-                run_mode: bevy::app::RunMode::Loop { wait: Some(Duration::from_secs_f64(1f64 / SERVER_TPS as f64)) }
-            }).add_plugins(MinimalPlugins)
-                .add_plugin(TransformPlugin)
-                .add_plugin(AssetPlugin)
-                .add_plugin(LogPlugin)
-                .add_plugin(networking_plugin)
-                .add_system(convert_tgm_map)
-                .add_system(create_tilemap_from_converted)
-                .add_asset::<byond::tgm::TileMap>()
-                .add_asset::<Mesh>() // TODO: remove once no longer needed by rapier
-                .add_asset::<Scene>() // TODO: remove once no longer needed by rapier
-                .add_asset_loader(TgmLoader)
-                .add_startup_system(load_map)
-                .add_startup_system(setup_server)
-                .add_system(spawn_player_joined);
+                run_mode: bevy::app::RunMode::Loop {
+                    wait: Some(Duration::from_secs_f64(1f64 / SERVER_TPS as f64)),
+                },
+            })
+            .add_plugins(MinimalPlugins)
+            .add_plugin(TransformPlugin)
+            .add_plugin(AssetPlugin)
+            .add_plugin(LogPlugin)
+            .add_plugin(networking_plugin)
+            .add_system(convert_tgm_map)
+            .add_system(create_tilemap_from_converted)
+            .add_asset::<byond::tgm::TileMap>()
+            .add_asset::<Mesh>() // TODO: remove once no longer needed by rapier
+            .add_asset::<Scene>() // TODO: remove once no longer needed by rapier
+            .add_asset_loader(TgmLoader)
+            .add_startup_system(load_map)
+            .add_startup_system(setup_server)
+            .add_system(spawn_player_joined);
         }
         NetworkRole::Client => {
             app.add_plugins(DefaultPlugins)
@@ -138,7 +141,8 @@ pub struct Map {
 
 fn setup_shared(mut commands: Commands) {
     // Spawn ground plane
-    commands.spawn()
+    commands
+        .spawn()
         .insert_bundle(TransformBundle::from(Transform::from_xyz(0.0, -1.0, 0.0)))
         .insert(Collider::cuboid(100.0, 0.5, 100.0));
 }
@@ -151,7 +155,11 @@ fn setup_server(args: Res<Args>, mut commands: Commands) {
     commands.insert_resource(networking::create_server(port));
 }
 
-fn setup_client(mut commands: Commands, args: Res<Args>, mut client_events: EventWriter<ClientEvent>) {
+fn setup_client(
+    mut commands: Commands,
+    args: Res<Args>,
+    mut client_events: EventWriter<ClientEvent>,
+) {
     // TODO: Replace with on-station lights
     commands.insert_resource(AmbientLight {
         brightness: 0.2,
@@ -167,16 +175,29 @@ fn setup_client(mut commands: Commands, args: Res<Args>, mut client_events: Even
         })
         .insert(TopDownCamera::new(temporary_camera_target))
         .insert(camera::MainCamera);
-    
+
     if let ArgCommands::Join { address } = args.command {
         client_events.send(ClientEvent::Join(address));
     }
 }
 
 fn create_player(commands: &mut EntityCommands) -> Entity {
-    let player_rigid_body = (RigidBody::Dynamic, LockedAxes::ROTATION_LOCKED, Damping { linear_damping: 0.0, angular_damping: 0.0 }, Velocity::default());
-    let player_collider = (Collider::capsule(Vec3::ZERO, (0.0, 1.0, 0.0).into(), 0.2), ColliderMassProperties::Density(5.0), ReadMassProperties::default());
-    commands.insert_bundle(TransformBundle::default())
+    let player_rigid_body = (
+        RigidBody::Dynamic,
+        LockedAxes::ROTATION_LOCKED,
+        Damping {
+            linear_damping: 0.0,
+            angular_damping: 0.0,
+        },
+        Velocity::default(),
+    );
+    let player_collider = (
+        Collider::capsule(Vec3::ZERO, (0.0, 1.0, 0.0).into(), 0.2),
+        ColliderMassProperties::Density(5.0),
+        ReadMassProperties::default(),
+    );
+    commands
+        .insert_bundle(TransformBundle::default())
         .insert(Player::default())
         .insert_bundle(player_rigid_body)
         .insert_bundle(player_collider)
@@ -185,8 +206,12 @@ fn create_player(commands: &mut EntityCommands) -> Entity {
 
 fn create_player_server(commands: &mut Commands, connection: ConnectionId) -> Entity {
     let player = create_player(&mut commands.spawn());
-    commands.entity(player)
-        .insert(NetworkObserver { range: 3, connection })
+    commands
+        .entity(player)
+        .insert(NetworkObserver {
+            range: 3,
+            connection,
+        })
         .insert(TileMapObserver::new(20.0))
         .insert(PrefabPath("player".into()))
         .insert(NetworkTransform::default())
@@ -194,7 +219,11 @@ fn create_player_server(commands: &mut Commands, connection: ConnectionId) -> En
     player
 }
 
-fn spawn_player_joined(mut server_events: EventReader<ServerEvent>, mut controls: ResMut<ClientControls>, mut commands: Commands) {
+fn spawn_player_joined(
+    mut server_events: EventReader<ServerEvent>,
+    mut controls: ResMut<ClientControls>,
+    mut commands: Commands,
+) {
     for event in server_events.iter() {
         if let ServerEvent::PlayerConnected(id) = event {
             let player = create_player_server(&mut commands, *id);
@@ -204,24 +233,33 @@ fn spawn_player_joined(mut server_events: EventReader<ServerEvent>, mut controls
     }
 }
 
-fn handle_player_spawn(query: Query<(&NetworkIdentity, &PrefabPath)>, mut entity_events: EventReader<NetworkedEntityEvent>, mut commands: Commands, mut server: ResMut<AssetServer>) {
+fn handle_player_spawn(
+    query: Query<(&NetworkIdentity, &PrefabPath)>,
+    mut entity_events: EventReader<NetworkedEntityEvent>,
+    mut commands: Commands,
+    mut server: ResMut<AssetServer>,
+) {
     for event in entity_events.iter() {
         if let NetworkedEntityEvent::Spawned(entity) = event {
             let (identity, prefab) = query.get(*entity).unwrap();
             if prefab.0 == "player" {
                 let player = create_player(&mut commands.entity(*entity));
                 let player_model = server.load("models/human.glb#Scene0");
-                commands.entity(player)
+                commands
+                    .entity(player)
                     .insert(NetworkedTransform::default())
                     .with_children(|parent| {
-                    parent.spawn_scene(player_model);
-                });
+                        parent.spawn_scene(player_model);
+                    });
             }
         }
     }
 }
 
-fn set_camera_target(query: Query<Entity, Added<ClientControlled>>, mut camera: Query<&mut TopDownCamera, Without<ClientControlled>>) {
+fn set_camera_target(
+    query: Query<Entity, Added<ClientControlled>>,
+    mut camera: Query<&mut TopDownCamera, Without<ClientControlled>>,
+) {
     for entity in query.iter() {
         if let Ok(mut camera) = camera.get_single_mut() {
             camera.target = entity;
@@ -283,7 +321,7 @@ fn create_tilemap_from_converted(
                     map_data.spawn_position.y as f32,
                 );
             }
-            
+
             commands
                 .entity(entity)
                 .remove::<Task<MapData>>()

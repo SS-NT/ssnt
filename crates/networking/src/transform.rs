@@ -4,10 +4,11 @@ use bevy::{
     core::Time,
     math::{Quat, Vec3},
     prelude::{
-        warn, App, Component, Local, ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut,
-        SystemLabel, SystemSet, Transform, With, Without, EventReader, CoreStage,
+        warn, App, Component, CoreStage, EventReader, Local, ParallelSystemDescriptorCoercion,
+        Plugin, Query, Res, ResMut, SystemLabel, SystemSet, Transform, With, Without,
     },
-    utils::{hashbrown::hash_map::Entry, HashMap}, transform::TransformSystem,
+    transform::TransformSystem,
+    utils::{hashbrown::hash_map::Entry, HashMap},
 };
 use bevy_rapier3d::prelude::{RigidBody, Velocity};
 use bevy_renet::{
@@ -19,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
     messaging::Channel,
-    spawning::{ClientControlled, SpawningSystems, ServerEntityEvent},
+    spawning::{ClientControlled, ServerEntityEvent, SpawningSystems},
     time::{ClientNetworkTime, ServerNetworkTime, TimeSystem},
     visibility::NetworkVisibilities,
     ConnectionId, NetworkManager,
@@ -442,7 +443,7 @@ pub struct NetworkedTransform {
     had_next: bool,
     /// If this has ever been applied to a transform.
     /// Is `false` when newly created and set after the first update is applied.
-    ever_applied: bool, 
+    ever_applied: bool,
 }
 
 impl NetworkedTransform {

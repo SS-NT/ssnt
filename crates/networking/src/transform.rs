@@ -5,9 +5,9 @@ use bevy::{
     math::{Quat, Vec3},
     prelude::{
         warn, App, Component, Local, ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut,
-        SystemLabel, SystemSet, Transform, With, Without,
+        SystemLabel, SystemSet, Transform, With, Without, EventReader, CoreStage,
     },
-    utils::{hashbrown::hash_map::Entry, HashMap},
+    utils::{hashbrown::hash_map::Entry, HashMap}, transform::TransformSystem,
 };
 use bevy_rapier3d::prelude::{RigidBody, Velocity};
 use bevy_renet::{
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
     messaging::Channel,
-    spawning::{ClientControlled, SpawningSystems},
+    spawning::{ClientControlled, SpawningSystems, ServerEntityEvent},
     time::{ClientNetworkTime, ServerNetworkTime, TimeSystem},
     visibility::NetworkVisibilities,
     ConnectionId, NetworkManager,
@@ -350,6 +350,31 @@ fn handle_occasional_sync(
     }
 }
 
+/// Sends the newest position to clients that just had the object enter their visibility/was spawned.
+/// If we didn't do this, networked objects would appear at the world origin for a few milliseconds.
+fn handle_newly_spawned(
+    mut events: EventReader<ServerEntityEvent>,
+    query: Query<&NetworkTransform>,
+    mut server: ResMut<RenetServer>,
+) {
+    for event in events.iter() {
+        if let ServerEntityEvent::Spawned((entity, connection)) = event {
+            let transform = match query.get(*entity) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let last_update = match transform.sent_updates.back() {
+                Some(u) => u.clone(),
+                None => continue,
+            };
+
+            let serialized =
+                bincode::serialize(&TransformMessage::Update(last_update.clone())).unwrap();
+            server.send_message(connection.0, Channel::Transforms.id(), serialized);
+        }
+    }
+}
+
 /// Process acknowledgments from clients
 fn handle_acks(
     mut query: Query<&mut NetworkTransform>,
@@ -415,6 +440,9 @@ pub struct NetworkedTransform {
     // TODO: Actually use this
     visual_position_error: Option<Vec3>,
     had_next: bool,
+    /// If this has ever been applied to a transform.
+    /// Is `false` when newly created and set after the first update is applied.
+    ever_applied: bool, 
 }
 
 impl NetworkedTransform {
@@ -433,7 +461,12 @@ impl NetworkedTransform {
         let next = match next {
             Some(n) => n,
             None => {
-                // Nothing to interpolate to
+                // Try to provide any update if never updated
+                if !self.ever_applied {
+                    return self.buffered_updates.front().map(|u| (u, None));
+                }
+
+                // No relevant update
                 return None;
             }
         };
@@ -630,6 +663,7 @@ fn sync_networked_transform_physics(
             velocity.angvel = angular_velocity;
         }
 
+        networked_transform.ever_applied = true;
         networked_transform.had_next = true;
     }
 }
@@ -660,7 +694,8 @@ impl Plugin for TransformPlugin {
                     .with_system(update_transform.after(TimeSystem::Tick))
                     .with_system(handle_retransmission)
                     .with_system(handle_acks)
-                    .with_system(handle_occasional_sync),
+                    .with_system(handle_occasional_sync)
+                    .with_system(handle_newly_spawned),
             );
         } else {
             app.init_resource::<BufferedTransformUpdates>()
@@ -669,23 +704,28 @@ impl Plugin for TransformPlugin {
                         .label(ClientTransformSystem::ReceiveMessages)
                         .with_run_criteria(run_if_client_conected),
                 )
-                .add_system(
+                .add_system_to_stage(
+                    CoreStage::PostUpdate,
                     apply_buffered_updates
                         .label(ClientTransformSystem::ApplyBuffer)
                         .after(ClientTransformSystem::ReceiveMessages)
                         .after(SpawningSystems::Spawn),
                 )
-                .add_system(
+                .add_system_to_stage(
+                    CoreStage::PostUpdate,
                     sync_networked_transform
                         .label(ClientTransformSystem::Sync)
                         .after(ClientTransformSystem::ApplyBuffer)
-                        .after(TimeSystem::Interpolate),
+                        .after(TimeSystem::Interpolate)
+                        .before(TransformSystem::TransformPropagate),
                 )
-                .add_system(
+                .add_system_to_stage(
+                    CoreStage::PostUpdate,
                     sync_networked_transform_physics
                         .label(ClientTransformSystem::Sync)
                         .after(ClientTransformSystem::ApplyBuffer)
-                        .after(TimeSystem::Interpolate),
+                        .after(TimeSystem::Interpolate)
+                        .before(TransformSystem::TransformPropagate),
                 );
         }
     }

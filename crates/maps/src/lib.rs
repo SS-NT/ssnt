@@ -104,6 +104,7 @@ impl MapData {
             .into()
     }
 
+    #[allow(clippy::result_unit_err)]
     pub fn set_tile(&mut self, position: UVec2, data: Option<TileData>) -> Result<(), ()> {
         let chunk_index = self.index_from_position(position);
         let position_in_chunk = self.position_inside_chunk(position);

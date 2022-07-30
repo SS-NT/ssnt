@@ -12,7 +12,7 @@ use bevy::{
         warn, BuildChildren, Commands, DespawnRecursiveExt, Entity, Handle, Mesh, Transform,
     },
 };
-use bevy_rapier3d::{na::Isometry3, prelude::Collider};
+use bevy_rapier3d::prelude::Collider;
 
 const EMPTY_SPAWNED_TILE: Option<SpawnedTile> = None;
 

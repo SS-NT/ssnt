@@ -228,8 +228,8 @@ fn update_transform(
             } else {
                 None
             },
-            linear_velocity: velocity.map(|v| v.linvel.into()),
-            angular_velocity: velocity.map(|v| v.angvel.into()),
+            linear_velocity: velocity.map(|v| v.linvel),
+            angular_velocity: velocity.map(|v| v.angvel),
         };
         networked.add_update(update.clone());
 
@@ -439,6 +439,7 @@ pub struct NetworkedTransform {
     /// How much to offset this transform from the accurate physics simulation.
     /// We reduce this value over time to smooth physics corrections.
     // TODO: Actually use this
+    #[allow(dead_code)]
     visual_position_error: Option<Vec3>,
     had_next: bool,
     /// If this has ever been applied to a transform.

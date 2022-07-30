@@ -1,3 +1,6 @@
+// TODO: Remove this once used again
+#![allow(dead_code)]
+
 use bevy::{
     math::UVec2,
     prelude::{Component, Entity, Query, RemovedComponents},
@@ -77,9 +80,9 @@ impl<'a, 'world, 'state> ContainerAccessor<'a, 'world, 'state> {
         for (&other_position, &entity) in self.container.items.iter() {
             let other_item = self.query.get(entity).unwrap();
 
-            let x_overlap = (position.x as i32 - other_position.x as i32).abs() as u32 * 2
+            let x_overlap = (position.x as i32 - other_position.x as i32).unsigned_abs() * 2
                 < item.size.x + other_item.0.size.x;
-            let y_overlap = (position.y as i32 - other_position.y as i32).abs() as u32 * 2
+            let y_overlap = (position.y as i32 - other_position.y as i32).unsigned_abs() * 2
                 < item.size.y + other_item.0.size.y;
 
             if x_overlap && y_overlap {

@@ -27,7 +27,7 @@ pub fn movement_system(
     camera_query: Query<&TopDownCamera, With<MainCamera>>,
     mut commands: Commands,
 ) {
-    for (entity, mut player, velocity, mut forces, mass_properties) in query.iter_mut() {
+    for (entity, mut player, velocity, forces, mass_properties) in query.iter_mut() {
         let axis_x = movement_axis(&keyboard_input, KeyCode::W, KeyCode::S);
         let axis_z = movement_axis(&keyboard_input, KeyCode::D, KeyCode::A);
 
@@ -65,7 +65,7 @@ pub fn movement_system(
         if one_tick < f32::EPSILON {
             one_tick = 1.0;
         }
-        let current_velocity = Vec2::from(velocity.linvel.xz());
+        let current_velocity = velocity.linvel.xz();
         let needed_acceleration: Vec2 = (player.target_velocity - current_velocity) / one_tick;
         let max_acceleration = player.max_acceleration_force;
         let allowed_acceleration = needed_acceleration.clamp_length_max(max_acceleration);
@@ -93,13 +93,13 @@ fn character_rotation_system(
         }
         target_direction = target_direction.normalize();
 
-        let current_rotation: Quat = transform.rotation.into();
+        let current_rotation = transform.rotation;
         let target_rotation = Quat::from_rotation_arc(
             Vec3::Z,
             Vec3::new(target_direction.x, 0.0, target_direction.y),
         );
         let final_rotation = current_rotation.lerp(target_rotation, time.delta_seconds() * 5.0);
-        transform.rotation = final_rotation.into();
+        transform.rotation = final_rotation;
     }
 }
 
@@ -137,8 +137,8 @@ fn handle_movement_message(
     for event in messages.iter() {
         if let Some(controlled) = controls.controlled_entity(event.connection) {
             if let Ok(mut transform) = query.get_mut(controlled) {
-                transform.translation = event.message.position.into();
-                transform.rotation = event.message.rotation.into();
+                transform.translation = event.message.position;
+                transform.rotation = event.message.rotation;
             }
         }
     }

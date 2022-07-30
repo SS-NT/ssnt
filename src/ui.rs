@@ -5,16 +5,6 @@ use bevy_egui::*;
 
 use maps::components::TileMap;
 
-#[derive(Default)]
-struct MapLoaderState {
-    pub maps: Vec<(String, PathBuf)>,
-}
-
-#[derive(Default)]
-struct UiState {
-    pub loader: MapLoaderState,
-}
-
 fn map_loader_system(
     mut egui_context: ResMut<EguiContext>,
     mut commands: Commands,
@@ -43,8 +33,6 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(EguiPlugin)
-            .insert_resource(UiState::default())
-            .add_system(map_loader_system);
+        app.add_plugin(EguiPlugin).add_system(map_loader_system);
     }
 }

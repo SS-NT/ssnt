@@ -22,7 +22,7 @@ use std::{
 
 use bevy::{
     prelude::{
-        error, info, warn, App, Commands, Component, EventReader, EventWriter, Local,
+        error, info, warn, App, Commands, EventReader, EventWriter, Local,
         ParallelSystemDescriptorCoercion, Plugin, Res, ResMut, State, SystemLabel,
     },
     utils::HashMap,
@@ -58,12 +58,11 @@ impl NetworkManager {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 enum ClientState {
     Initial,
     Joining(SocketAddr),
-    JoinFailed,
     Connected,
-    Disconnected,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -74,6 +73,7 @@ pub enum ClientEvent {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub enum ServerEvent {
     PlayerConnected(ConnectionId),
 }

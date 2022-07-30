@@ -31,7 +31,7 @@ use items::{
 };
 use maps::components::{TileMap, TileMapObserver};
 use maps::MapData;
-use networking::identity::{EntityCommandsExt as NetworkingEntityCommandsExt, NetworkIdentity};
+use networking::identity::EntityCommandsExt as NetworkingEntityCommandsExt;
 use networking::spawning::{ClientControlled, ClientControls, NetworkedEntityEvent, PrefabPath};
 use networking::transform::{NetworkTransform, NetworkedTransform};
 use networking::visibility::NetworkObserver;
@@ -234,14 +234,14 @@ fn spawn_player_joined(
 }
 
 fn handle_player_spawn(
-    query: Query<(&NetworkIdentity, &PrefabPath)>,
+    query: Query<&PrefabPath>,
     mut entity_events: EventReader<NetworkedEntityEvent>,
     mut commands: Commands,
-    mut server: ResMut<AssetServer>,
+    server: ResMut<AssetServer>,
 ) {
     for event in entity_events.iter() {
         if let NetworkedEntityEvent::Spawned(entity) = event {
-            let (identity, prefab) = query.get(*entity).unwrap();
+            let prefab = query.get(*entity).unwrap();
             if prefab.0 == "player" {
                 let player = create_player(&mut commands.entity(*entity));
                 let player_model = server.load("models/human.glb#Scene0");
@@ -275,6 +275,7 @@ fn load_map(mut commands: Commands, server: Res<AssetServer>) {
     });
 }
 
+#[allow(dead_code)]
 fn test_containers(mut commands: Commands, q: ContainerQuery) {
     let mut item = Item::new("Toolbox".into(), UVec2::new(2, 1));
     let item_entity = commands.spawn().id();
@@ -333,6 +334,7 @@ fn create_tilemap_from_converted(
     }
 }
 
+#[allow(dead_code)]
 fn print_containers(containers: Query<(&Container, Entity)>, container_query: ContainerQuery) {
     for (container, entity) in containers.iter() {
         println!("Container Entity: {}", entity.id());

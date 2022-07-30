@@ -19,7 +19,6 @@ cfg-if = "1.0.0"
 futures-lite = "1.4.0"
 log = "0.4.8"
 glam = "0.20.2"
-nalgebra = { version = "*", features = ["convert-glam020"] }
 serde = { version = "*", features = ["derive"] }
 clap = { version = "3.0.13", features = ["derive"] }
 

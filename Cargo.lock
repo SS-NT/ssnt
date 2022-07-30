@@ -3504,7 +3504,6 @@ dependencies = [
  "glam 0.20.2",
  "log",
  "maps",
- "nalgebra",
  "networking",
  "serde",
 ]

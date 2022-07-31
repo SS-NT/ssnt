@@ -1,6 +1,7 @@
 use bevy::{
     ecs::system::EntityCommands,
     input::Input,
+    math::{Mat4, Vec2, Vec3},
     pbr::PbrBundle,
     prelude::{
         info, shape, warn, App, Assets, Camera, Commands, Component, EventReader, GlobalTransform,
@@ -17,7 +18,6 @@ use bevy_rapier3d::{
     prelude::{Collider, RigidBody, Velocity},
     rapier::prelude::ColliderShape,
 };
-use glam::{Mat4, Vec2, Vec3};
 use networking::{
     identity::{EntityCommandsExt, NetworkIdentities, NetworkIdentity},
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
@@ -136,11 +136,10 @@ fn spawn_requesting(
         None => return,
     };
 
-    let (origin, direction) =
-        match ray_from_cursor(cursor_position, &windows, camera, camera_transform) {
-            Some(r) => r,
-            None => return,
-        };
+    let (origin, direction) = match ray_from_cursor(cursor_position, camera, camera_transform) {
+        Some(r) => r,
+        None => return,
+    };
 
     if let Some((_, toi)) =
         rapier_context.cast_ray(origin, direction, 100.0, true, Default::default())
@@ -259,43 +258,21 @@ impl Plugin for SpawningPlugin {
     }
 }
 
-// Taken from https://github.com/aevyrie/bevy_mod_raycast/blob/d9fe7f99b928d4ba6bf670235c5cccf2d04723c7/src/primitives.rs#L109
-fn ray_from_cursor(
+// Taken from https://github.com/aevyrie/bevy_mod_raycast/blob/51d9e2c99066ea769db27c0ae79d11b258fcef4f/src/primitives.rs#L192
+pub fn ray_from_cursor(
     cursor_pos_screen: Vec2,
-    windows: &Res<Windows>,
     camera: &Camera,
     camera_transform: &GlobalTransform,
 ) -> Option<(Vec3, Vec3)> {
     let view = camera_transform.compute_matrix();
-    let window_id = match camera.target {
-        bevy::render::camera::RenderTarget::Window(w) => w,
-        _ => return None,
-    };
-
-    let window = match windows.get(window_id) {
-        Some(window) => window,
-        None => {
-            return None;
-        }
-    };
-    let screen_size = Vec2::from([window.width() as f32, window.height() as f32]);
-    let projection = camera.projection_matrix;
-
-    // 2D Normalized device coordinate cursor position from (-1, -1) to (1, 1)
-    let cursor_ndc = (cursor_pos_screen / screen_size) * 2.0 - Vec2::from([1.0, 1.0]);
+    let screen_size = camera.logical_target_size()?;
+    let projection = camera.projection_matrix();
+    let far_ndc = projection.project_point3(Vec3::NEG_Z).z;
+    let near_ndc = projection.project_point3(Vec3::Z).z;
+    let cursor_ndc = (cursor_pos_screen / screen_size) * 2.0 - Vec2::ONE;
     let ndc_to_world: Mat4 = view * projection.inverse();
-    let world_to_ndc = projection * view;
-    let is_orthographic = projection.w_axis[3] == 1.0;
-
-    // Compute the cursor position at the near plane. The bevy camera looks at -Z.
-    let ndc_near = world_to_ndc.transform_point3(-Vec3::Z * camera.near).z;
-    let cursor_pos_near = ndc_to_world.transform_point3(cursor_ndc.extend(ndc_near));
-
-    // Compute the ray's direction depending on the projection used.
-    let ray_direction = match is_orthographic {
-        true => view.transform_vector3(-Vec3::Z), // All screenspace rays are parallel in ortho
-        false => cursor_pos_near - camera_transform.translation, // Direction from camera to cursor
-    };
-
-    Some((cursor_pos_near, ray_direction))
+    let near = ndc_to_world.project_point3(cursor_ndc.extend(near_ndc));
+    let far = ndc_to_world.project_point3(cursor_ndc.extend(far_ndc));
+    let ray_direction = far - near;
+    Some((near, ray_direction))
 }

@@ -2,9 +2,9 @@ use std::collections::VecDeque;
 
 use bevy::{
     app::ScheduleRunnerSettings,
-    core::Time,
     prelude::{
         warn, App, ParallelSystemDescriptorCoercion, Plugin, Res, ResMut, SystemLabel, SystemSet,
+        Time,
     },
     utils::HashMap,
 };

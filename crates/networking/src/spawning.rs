@@ -1,5 +1,5 @@
 use bevy::{
-    ecs::system::QuerySingleError,
+    ecs::query::QuerySingleError,
     prelude::{
         error, info, warn, App, Commands, Component, Entity, EventReader, EventWriter,
         ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SystemLabel, SystemSet, With,

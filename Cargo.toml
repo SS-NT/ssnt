@@ -12,15 +12,19 @@ members = ["crates/*"]
 byond = { path = "crates/byond" }
 maps = { path = "crates/maps" }
 networking = { path = "crates/networking" }
-bevy = { version = "0.7", features = ["bevy_gltf"] }
-bevy_egui = "0.14.0"
-bevy_rapier3d = { version = "0.15.0", features = ["simd-stable"] }
+bevy = { version = "0.8", features = ["bevy_gltf"] }
+bevy_egui = "0.15.0"
+bevy_rapier3d = { version = "0.16.0", features = ["simd-stable"] }
 cfg-if = "1.0.0"
 futures-lite = "1.4.0"
 log = "0.4.8"
 glam = "0.20.2"
 serde = { version = "*", features = ["derive"] }
 clap = { version = "3.0.13", features = ["derive"] }
+
+[patch.crates-io]
+# No Bevy 0.8 release yet
+bevy_renet = { path = "../renet/bevy_renet" }
 
 [profile.dev.package."*"]
 opt-level = 3

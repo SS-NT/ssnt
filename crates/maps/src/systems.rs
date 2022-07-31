@@ -360,9 +360,9 @@ pub fn tilemap_observer_system(
                     let position = MapData::position_from_chunk_index(tilemap.data.size, index);
                     let x_offset = (CHUNK_SIZE * position.x) as f32;
                     let y_offset = (CHUNK_SIZE * position.y) as f32;
-                    let offset = (tilemap_transform.local_x()
+                    let offset = (tilemap_transform.right()
                         * Vec3::new(x_offset, x_offset, x_offset)
-                        + tilemap_transform.local_z() * Vec3::new(y_offset, y_offset, y_offset))
+                        + tilemap_transform.back() * Vec3::new(y_offset, y_offset, y_offset))
                     .xz();
                     let (mut a, mut b, mut c, mut d) = chunk_corners(UVec2::ONE, tilemap_transform);
                     a += offset;

@@ -7,8 +7,8 @@ pub mod visibility;
 
 use bevy_renet::{
     renet::{
-        ConnectToken, RenetClient, RenetConnectionConfig, RenetError, RenetServer, ServerConfig,
-        NETCODE_KEY_BYTES,
+        ClientAuthentication, RenetClient, RenetConnectionConfig, RenetError, RenetServer,
+        ServerAuthentication, ServerConfig,
     },
     RenetClientPlugin, RenetServerPlugin,
 };
@@ -34,8 +34,8 @@ use spawning::SpawningPlugin;
 use transform::TransformPlugin;
 use visibility::VisibilityPlugin;
 
+/// A "unique" id for the protocol used by this application
 const PROTOCOL_ID: u64 = 859058192;
-const PRIVATE_KEY: &[u8; NETCODE_KEY_BYTES] = b"an insecure key used for now :((";
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum NetworkRole {
@@ -95,10 +95,17 @@ pub fn create_server(port: u16) -> RenetServer {
     let server_addr = SocketAddrV4::new("127.0.0.1".parse().unwrap(), port);
     let socket = UdpSocket::bind(server_addr).unwrap();
     let connection_config = RenetConnectionConfig {
-        channels_config: Channel::channels_config(),
+        // TODO: Split channels for server and client
+        send_channels_config: Channel::channels_config(),
+        receive_channels_config: Channel::channels_config(),
         ..Default::default()
     };
-    let server_config = ServerConfig::new(64, PROTOCOL_ID, server_addr.into(), *PRIVATE_KEY);
+    let server_config = ServerConfig::new(
+        64,
+        PROTOCOL_ID,
+        server_addr.into(),
+        ServerAuthentication::Unsecure,
+    );
     let current_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap();
@@ -117,32 +124,29 @@ fn handle_joining_server(
                     warn!("Client tried to join server while already joined or connected");
                 }
                 _ => {
-                    state.set(ClientState::Joining(*address)).unwrap();
+                    state.overwrite_set(ClientState::Joining(*address)).unwrap();
                     info!("Joining server {}", address);
 
                     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
                     let connection_config = RenetConnectionConfig {
-                        channels_config: messaging::Channel::channels_config(),
+                        // TODO: Split channels for server and client
+                        send_channels_config: Channel::channels_config(),
+                        receive_channels_config: Channel::channels_config(),
                         ..Default::default()
                     };
-                    // TODO: use actual authentication here
                     let current_time = SystemTime::now()
                         .duration_since(SystemTime::UNIX_EPOCH)
                         .unwrap();
                     let client_id = current_time.as_millis() as u64;
-                    let token = ConnectToken::generate(
-                        current_time,
-                        PROTOCOL_ID,
-                        300,
+                    // TODO: use authentication here
+                    let auth = ClientAuthentication::Unsecure {
+                        protocol_id: PROTOCOL_ID,
                         client_id,
-                        15,
-                        vec![*address],
-                        None,
-                        PRIVATE_KEY,
-                    )
-                    .unwrap();
+                        server_addr: *address,
+                        user_data: None,
+                    };
                     let client =
-                        RenetClient::new(current_time, socket, client_id, token, connection_config)
+                        RenetClient::new(current_time, socket, client_id, connection_config, auth)
                             .unwrap();
                     commands.insert_resource(client);
                 }

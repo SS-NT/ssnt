@@ -165,7 +165,7 @@ fn global_grid_update(
     mut query: Query<(Entity, &GlobalTransform, &mut GridPosition), Changed<GlobalTransform>>,
 ) {
     for (entity, transform, mut grid_position) in query.iter_mut() {
-        let new_cell = grid.cell_position(transform.translation.xz());
+        let new_cell = grid.cell_position(transform.translation().xz());
         if grid_position.position == Some(new_cell) {
             continue;
         }

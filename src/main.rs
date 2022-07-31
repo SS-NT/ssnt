@@ -169,7 +169,7 @@ fn setup_client(
     let temporary_camera_target = commands.spawn().insert(GlobalTransform::default()).id();
 
     commands
-        .spawn_bundle(PerspectiveCameraBundle {
+        .spawn_bundle(Camera3dBundle {
             transform: Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
             ..Default::default()
         })
@@ -233,6 +233,7 @@ fn spawn_player_joined(
     }
 }
 
+// TODO: replace with spawning scene
 fn handle_player_spawn(
     query: Query<&PrefabPath>,
     mut entity_events: EventReader<NetworkedEntityEvent>,
@@ -248,8 +249,9 @@ fn handle_player_spawn(
                 commands
                     .entity(player)
                     .insert(NetworkedTransform::default())
-                    .with_children(|parent| {
-                        parent.spawn_scene(player_model);
+                    .insert_bundle(SceneBundle {
+                        scene: player_model,
+                        ..Default::default()
                     });
             }
         }
@@ -290,18 +292,21 @@ fn test_containers(mut commands: Commands, q: ContainerQuery) {
     commands.entity(item_entity).insert(item);
 }
 
+#[derive(Component)]
+struct ConvertByondMap(Task<MapData>);
+
 fn convert_tgm_map(
     mut commands: Commands,
     map_resource: Option<ResMut<Map>>,
     tilemaps: Res<Assets<byond::tgm::TileMap>>,
-    thread_pool: Res<AsyncComputeTaskPool>,
 ) {
     if let Some(res) = map_resource {
         if let Some(map) = tilemaps.get(&res.handle) {
             let map_copy = byond::tgm::TileMap::clone(map);
+            let thread_pool = AsyncComputeTaskPool::get();
             let task =
                 thread_pool.spawn(async move { byond::tgm::conversion::to_map_data(&map_copy) });
-            let new_entity = commands.spawn().insert(task).id();
+            let new_entity = commands.spawn().insert(ConvertByondMap(task)).id();
             info!("Scheduled tgm map conversion (entity={:?})", new_entity);
             commands.remove_resource::<Map>();
         }
@@ -310,11 +315,11 @@ fn convert_tgm_map(
 
 fn create_tilemap_from_converted(
     mut commands: Commands,
-    mut map_tasks: Query<(Entity, &mut Task<MapData>)>,
+    mut map_tasks: Query<(Entity, &mut ConvertByondMap)>,
     mut players: Query<&mut Transform, With<Player>>,
 ) {
     for (entity, mut map_task) in map_tasks.iter_mut() {
-        if let Some(map_data) = future::block_on(future::poll_once(&mut *map_task)) {
+        if let Some(map_data) = future::block_on(future::poll_once(&mut map_task.0)) {
             for mut player in players.iter_mut() {
                 player.translation = Vec3::new(
                     map_data.spawn_position.x as f32,
@@ -325,7 +330,7 @@ fn create_tilemap_from_converted(
 
             commands
                 .entity(entity)
-                .remove::<Task<MapData>>()
+                .remove::<ConvertByondMap>()
                 .insert(TileMap::new(map_data))
                 .insert(Transform::default())
                 .insert(GlobalTransform::identity());

@@ -2,7 +2,7 @@ use crate::{
     camera::{MainCamera, TopDownCamera},
     Player,
 };
-use bevy::{core::FixedTimestep, math::Vec3Swizzles, prelude::*};
+use bevy::{math::Vec3Swizzles, prelude::*, time::FixedTimestep};
 use bevy_rapier3d::prelude::{ExternalForce, ReadMassProperties, Velocity};
 use networking::{
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},

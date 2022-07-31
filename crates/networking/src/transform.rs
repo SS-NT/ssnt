@@ -1,11 +1,10 @@
 use std::collections::VecDeque;
 
 use bevy::{
-    core::Time,
     math::{Quat, Vec3},
     prelude::{
         warn, App, Component, CoreStage, EventReader, Local, ParallelSystemDescriptorCoercion,
-        Plugin, Query, Res, ResMut, SystemLabel, SystemSet, Transform, With, Without,
+        Plugin, Query, Res, ResMut, SystemLabel, SystemSet, Time, Transform, With, Without,
     },
     transform::TransformSystem,
     utils::{hashbrown::hash_map::Entry, HashMap},

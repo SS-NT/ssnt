@@ -10,7 +10,7 @@ use bevy::{
 };
 use bevy_renet::{
     renet::{RenetClient, RenetServer},
-    run_if_client_conected,
+    run_if_client_connected,
 };
 use serde::{Deserialize, Serialize};
 
@@ -339,7 +339,7 @@ impl Plugin for TimePlugin {
                 .add_system(
                     receive_server_tick
                         .label(TimeSystem::Tick)
-                        .with_run_criteria(run_if_client_conected),
+                        .with_run_criteria(run_if_client_connected),
                 )
                 .add_system(
                     update_interpolated_tick

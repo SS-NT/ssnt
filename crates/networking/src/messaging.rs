@@ -12,7 +12,7 @@ use bevy_renet::{
     renet::{
         ChannelConfig, ReliableChannelConfig, RenetClient, RenetServer, UnreliableChannelConfig,
     },
-    run_if_client_conected,
+    run_if_client_connected,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -363,11 +363,11 @@ impl Plugin for MessagingPlugin {
             .unwrap()
             .is_client()
         {
-            app.add_system(send_outbound_messages_client.with_run_criteria(run_if_client_conected))
+            app.add_system(send_outbound_messages_client.with_run_criteria(run_if_client_connected))
                 .add_system(
                     read_channel_client
                         .label(MessagingSystem::ReadRaw)
-                        .with_run_criteria(run_if_client_conected),
+                        .with_run_criteria(run_if_client_connected),
                 );
         } else {
             app.add_system(send_outbound_messages_server)

@@ -12,7 +12,7 @@ use bevy::{
 use bevy_rapier3d::prelude::{RigidBody, Velocity};
 use bevy_renet::{
     renet::{RenetClient, RenetServer},
-    run_if_client_conected,
+    run_if_client_connected,
 };
 use serde::{Deserialize, Serialize};
 
@@ -703,7 +703,7 @@ impl Plugin for TransformPlugin {
                 .add_system(
                     handle_transform_messages
                         .label(ClientTransformSystem::ReceiveMessages)
-                        .with_run_criteria(run_if_client_conected),
+                        .with_run_criteria(run_if_client_connected),
                 )
                 .add_system_to_stage(
                     CoreStage::PostUpdate,

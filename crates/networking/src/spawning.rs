@@ -1,9 +1,12 @@
 use bevy::{
+    asset::AssetPathId,
     ecs::query::QuerySingleError,
     prelude::{
-        error, info, warn, App, Commands, Component, Entity, EventReader, EventWriter,
-        ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SystemLabel, SystemSet, With,
+        debug, error, info, warn, App, AssetServer, Commands, Component, DespawnRecursiveExt,
+        Entity, EventReader, EventWriter, Handle, ParallelSystemDescriptorCoercion, Plugin, Query,
+        RemovedComponents, Res, ResMut, SystemLabel, SystemSet, With,
     },
+    scene::{DynamicScene, DynamicSceneBundle},
     utils::{HashMap, HashSet},
 };
 use serde::{Deserialize, Serialize};
@@ -11,15 +14,26 @@ use serde::{Deserialize, Serialize};
 use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
-    visibility::NetworkVisibilities,
+    visibility::{NetworkVisibilities, VisibilitySystem},
     ConnectionId, NetworkManager, NetworkSystem,
 };
 
+/// A message that instructs the client to spawn a specific entity.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct SpawnEntity {
     pub network_id: NetworkIdentity,
-    // TODO: Replace with asset path hash?
-    pub name: String,
+    pub identifier: SpawnAssetIdentifier,
+}
+
+/// Tells a client what object to spawn.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+enum SpawnAssetIdentifier {
+    // TODO: Remove once obsoleted.
+    // We should always use unique ids instead of strings when networking.
+    Named(String),
+    AssetPath(AssetPathId),
+    /// Objects that are used as references and don't need an asset
+    Empty,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -50,18 +64,39 @@ pub enum NetworkedEntityEvent {
 }
 
 fn send_spawn_messages(
-    query: Query<(Entity, &NetworkIdentity, &PrefabPath)>,
+    query: Query<(
+        Entity,
+        &NetworkIdentity,
+        Option<&PrefabPath>,
+        Option<&Handle<DynamicScene>>,
+    )>,
     visibilities: Res<NetworkVisibilities>,
     mut sender: MessageSender,
     mut entity_events: EventWriter<ServerEntityEvent>,
 ) {
-    for (entity, identity, prefab) in query.iter() {
+    for (entity, identity, name, scene) in query.iter() {
         if let Some(visibility) = visibilities.visibility.get(identity) {
             let new_observers: HashSet<ConnectionId> =
                 visibility.new_observers().copied().collect();
             if !new_observers.is_empty() {
+                // Get the asset hash or the string name that identifies the object
+                let identifier = match (name, scene) {
+                    (None, None) => SpawnAssetIdentifier::Empty,
+                    (None, Some(scene)) => SpawnAssetIdentifier::AssetPath(match scene.id {
+                        bevy::asset::HandleId::Id(_, _) => {
+                            warn!(entity = ?entity, "Cannot spawn networked object with dynamic handle id. Handle must be created from a loaded asset.");
+                            continue;
+                        }
+                        bevy::asset::HandleId::AssetPathId(p) => p,
+                    }),
+                    (Some(name), None) => SpawnAssetIdentifier::Named(name.0.clone()),
+                    (Some(_), Some(_)) => {
+                        warn!("Entity has both an asset path id and a prefab path. Skipping.");
+                        continue;
+                    }
+                };
                 let message = SpawnEntity {
-                    name: prefab.0.clone(),
+                    identifier,
                     network_id: *identity,
                 };
                 sender.send(
@@ -92,11 +127,39 @@ fn send_spawn_messages(
     }
 }
 
+/// Sends despawn messages for entities that were deleted on the server.
+fn network_deleted_entities(
+    removed: RemovedComponents<NetworkIdentity>,
+    identities: Res<NetworkIdentities>,
+    visibilities: Res<NetworkVisibilities>,
+    mut sender: MessageSender,
+    mut entity_events: EventWriter<ServerEntityEvent>,
+) {
+    for entity in removed.iter() {
+        let identity = identities.get_identity(entity).unwrap();
+        if let Some(visibility) = visibilities.visibility.get(&identity) {
+            let observers: HashSet<ConnectionId> = visibility.all_observers().copied().collect();
+            if !observers.is_empty() {
+                entity_events.send_batch(
+                    observers
+                        .iter()
+                        .map(|c| ServerEntityEvent::Despawned((entity, *c))),
+                );
+                sender.send(
+                    &SpawnMessage::Despawn(identity),
+                    MessageReceivers::Set(observers),
+                );
+            }
+        }
+    }
+}
+
 fn receive_spawn(
     mut spawn_events: EventReader<MessageEvent<SpawnMessage>>,
     mut entity_events: EventWriter<NetworkedEntityEvent>,
     mut ids: ResMut<NetworkIdentities>,
     mut commands: Commands,
+    asset_server: ResMut<AssetServer>,
 ) {
     for event in spawn_events.iter() {
         match &event.message {
@@ -111,24 +174,32 @@ fn receive_spawn(
                     continue;
                 }
 
-                // TODO: Actually spawn entity from asset path
-                let entity = commands
-                    .spawn()
-                    .insert(spawn.network_id)
-                    .insert(PrefabPath(spawn.name))
-                    .id();
+                let mut builder = commands.spawn();
+                builder.insert(spawn.network_id);
 
+                match spawn.identifier {
+                    SpawnAssetIdentifier::Named(name) => {
+                        builder.insert(PrefabPath(name));
+                    }
+                    SpawnAssetIdentifier::AssetPath(id) => {
+                        builder.insert_bundle(DynamicSceneBundle {
+                            scene: asset_server.get_handle(id),
+                            ..Default::default()
+                        });
+                    }
+                    SpawnAssetIdentifier::Empty => {}
+                }
+                let entity = builder.insert(spawn.network_id).id();
                 ids.set_identity(entity, spawn.network_id);
                 entity_events.send(NetworkedEntityEvent::Spawned(entity));
 
-                info!("Received spawn message for {:?}", spawn.network_id);
+                debug!("Received spawn message for {:?}", spawn.network_id);
             }
             SpawnMessage::Despawn(id) => {
                 if let Some(entity) = ids.get_entity(*id) {
-                    // TODO: Uncomment once rapier doesn't f***ing panic
-                    // commands.entity(entity).despawn();
+                    commands.entity(entity).despawn_recursive();
                     ids.remove_entity(entity);
-                    info!("Received despawn message for {:?}", id);
+                    debug!("Received despawn message for {:?}", id);
                 } else {
                     warn!("Received despawn message for non-existent {:?}", id);
                 }
@@ -260,6 +331,9 @@ impl Plugin for SpawningPlugin {
                             send_spawn_messages
                                 .label(SpawningSystems::Spawn)
                                 .after(NetworkSystem::Visibility),
+                        )
+                        .with_system(
+                            network_deleted_entities.before(VisibilitySystem::UpdateVisibility),
                         )
                         .with_system(
                             send_control_updates

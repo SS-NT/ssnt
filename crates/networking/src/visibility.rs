@@ -1,9 +1,10 @@
 use bevy::{
     math::{IVec2, Vec2, Vec3Swizzles},
     prelude::{
-        App, Changed, Component, Entity, GlobalTransform, ParallelSystemDescriptorCoercion, Plugin,
-        Query, Res, ResMut, SystemLabel,
+        Added, App, Changed, Component, CoreStage, Entity, GlobalTransform, Or,
+        ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SystemLabel, UVec2,
     },
+    transform::TransformSystem,
     utils::{hashbrown::hash_map::Entry, HashMap, HashSet},
 };
 
@@ -96,6 +97,11 @@ impl NetworkVisibility {
             .map(|s| *s != ObserverState::Removed)
             == Some(true)
     }
+
+    /// Returns all observers. Includes observers that were just removed.
+    pub(crate) fn all_observers(&self) -> impl Iterator<Item = &ConnectionId> {
+        self.observers.iter().map(|(c, _)| c)
+    }
 }
 
 /// Stores a mapping between network identities and their observers
@@ -104,11 +110,12 @@ pub(crate) struct NetworkVisibilities {
     pub(crate) visibility: HashMap<NetworkIdentity, NetworkVisibility>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct SpatialCell {
     entities: HashSet<Entity>,
 }
 
+#[derive(Debug)]
 struct SpatialHash {
     cells: HashMap<IVec2, SpatialCell>,
     cell_size: u16,
@@ -128,57 +135,96 @@ impl SpatialHash {
         position.as_ivec2() / IVec2::new(self.cell_size.into(), self.cell_size.into())
     }
 
-    fn insert(&mut self, entity: Entity, position: IVec2, old_position: Option<IVec2>) {
-        // Remove from old cell
-        if let Some(old) = old_position {
-            if let Some(cell) = self.cells.get_mut(&old) {
-                cell.entities.remove(&entity);
+    fn insert(&mut self, entity: Entity, position: IVec2, aabb: GridAabb, current: &mut InGrid) {
+        let changed_position = current.position != Some(position);
+        let changed_aabb = current.aabb != aabb;
+
+        if !changed_position && !changed_aabb {
+            return;
+        }
+
+        // Remove from old cell(s)
+        if let Some(old) = current.position {
+            for position in self.relevant_positions(old + current.aabb.center, current.aabb.size) {
+                if let Some(cell) = self.cells.get_mut(&position) {
+                    cell.entities.remove(&entity);
+                };
             }
         }
 
-        // Insert into new cell
-        self.cells
-            .entry(position)
-            .or_default()
-            .entities
-            .insert(entity);
+        if changed_position {
+            current.position = Some(position);
+        }
+        if changed_aabb {
+            current.aabb = aabb;
+        }
+
+        // Insert into new cell(s)
+        for position in self.relevant_positions(position + aabb.center, aabb.size) {
+            let cell = self.cells.entry(position).or_default();
+            cell.entities.insert(entity);
+        }
     }
 
-    fn relevant_cells(&self, position: IVec2, range: u32) -> impl Iterator<Item = &SpatialCell> {
-        ((position.x - range as i32)..=(position.x + range as i32)).flat_map(move |x| {
-            ((position.y - range as i32)..=(position.y + range as i32))
-                .flat_map(move |y| self.cells.get(&(x, y).into()))
+    fn relevant_cells(&self, position: IVec2, size: UVec2) -> impl Iterator<Item = &SpatialCell> {
+        self.relevant_positions(position, size)
+            .flat_map(|pos| self.cells.get(&pos))
+    }
+
+    fn relevant_positions(&self, position: IVec2, size: UVec2) -> impl Iterator<Item = IVec2> {
+        ((position.x - size.x as i32)..=(position.x + size.x as i32)).flat_map(move |x| {
+            ((position.y - size.y as i32)..=(position.y + size.y as i32))
+                .map(move |y| IVec2::new(x, y))
         })
     }
 }
 
 type GlobalGrid = SpatialHash;
+/// The size of a side of a quadratic cell in the global grid
+pub const GLOBAL_GRID_CELL_SIZE: u16 = 10;
 
 #[derive(Component, Default)]
-pub(crate) struct GridPosition {
+pub(crate) struct InGrid {
     /// Where this entity is in the global grid
     position: Option<IVec2>,
+    aabb: GridAabb,
+}
+
+/// A component that sets the size and center of the object in the visibility grid.
+/// This is only required for objects that are massive (bigger than a chunk).
+#[derive(Component, Default, PartialEq, Eq, Clone, Copy)]
+pub struct GridAabb {
+    /// The size in the grid in half-extents
+    pub size: UVec2,
+    /// How to offset the entity position in the grid
+    pub center: IVec2,
 }
 
 fn global_grid_update(
     mut grid: ResMut<GlobalGrid>,
-    mut query: Query<(Entity, &GlobalTransform, &mut GridPosition), Changed<GlobalTransform>>,
+    mut query: Query<
+        (Entity, &GlobalTransform, &mut InGrid, Option<&GridAabb>),
+        Or<(Changed<GlobalTransform>, Added<InGrid>, Changed<GridAabb>)>,
+    >,
 ) {
-    for (entity, transform, mut grid_position) in query.iter_mut() {
+    for (entity, transform, mut in_grid, grid_aabb) in query.iter_mut() {
         let new_cell = grid.cell_position(transform.translation().xz());
-        if grid_position.position == Some(new_cell) {
-            continue;
-        }
 
-        grid.insert(entity, new_cell, grid_position.position);
-        grid_position.position = Some(new_cell);
+        grid.insert(
+            entity,
+            new_cell,
+            grid_aabb.copied().unwrap_or_default(),
+            &mut in_grid,
+        );
+        in_grid.position = Some(new_cell);
     }
 }
 
+// TODO: Remove deleted entities from grid
 fn grid_visibility(
     mut visibilities: ResMut<NetworkVisibilities>,
     grid: Res<GlobalGrid>,
-    observers: Query<(&NetworkObserver, &GridPosition)>,
+    observers: Query<(&NetworkObserver, &InGrid)>,
     identities: Query<&NetworkIdentity>,
 ) {
     for (observer, grid_position) in observers.iter() {
@@ -193,7 +239,8 @@ fn grid_visibility(
             vis.remove_observer(connection);
         }
 
-        for cell in grid.relevant_cells(position, observer.range) {
+        for cell in grid.relevant_cells(position, UVec2::new(observer.range, observer.range)) {
+            bevy::log::info!(position = ?UVec2::new(observer.range, observer.range), count=cell.entities.len(), "AAA");
             for entity in cell.entities.iter() {
                 if let Ok(identity) = identities.get(*entity) {
                     let visibility = visibilities.visibility.entry(*identity).or_default();
@@ -211,7 +258,7 @@ fn update_visibility(mut visibilities: ResMut<NetworkVisibilities>) {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
-enum VisibilitySystem {
+pub enum VisibilitySystem {
     UpdateGrid,
     UpdateVisibility,
 }
@@ -227,8 +274,16 @@ impl Plugin for VisibilityPlugin {
             .is_server()
         {
             app.init_resource::<NetworkVisibilities>()
-                .init_resource::<GlobalGrid>()
-                .add_system(global_grid_update.label(VisibilitySystem::UpdateGrid))
+                .insert_resource(GlobalGrid {
+                    cell_size: GLOBAL_GRID_CELL_SIZE,
+                    ..Default::default()
+                })
+                .add_system_to_stage(
+                    CoreStage::PostUpdate,
+                    global_grid_update
+                        .label(VisibilitySystem::UpdateGrid)
+                        .after(TransformSystem::TransformPropagate),
+                )
                 .add_system(update_visibility.label(VisibilitySystem::UpdateVisibility))
                 .add_system(
                     grid_visibility

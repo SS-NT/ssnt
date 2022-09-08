@@ -5,7 +5,7 @@ use bevy::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{visibility::GridPosition, NetworkManager};
+use crate::{visibility::InGrid, NetworkManager};
 
 /// A numeric id which matches on the server and clients
 #[derive(Component, Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,21 +67,22 @@ impl Command for NetworkCommand {
         let mut entity = world.entity_mut(self.entity);
         entity.insert(NetworkIdentity(id));
 
-        if !entity.contains::<GridPosition>() {
-            entity.insert(GridPosition::default());
+        if !entity.contains::<InGrid>() {
+            entity.insert(InGrid::default());
         }
     }
 }
 
 pub trait EntityCommandsExt {
-    fn networked(&mut self);
+    fn networked(&mut self) -> &mut Self;
 }
 
 impl EntityCommandsExt for EntityCommands<'_, '_, '_> {
     /// Adds a network identity to this entity
-    fn networked(&mut self) {
+    fn networked(&mut self) -> &mut Self {
         let entity = self.id();
         self.commands().add(NetworkCommand { entity });
+        self
     }
 }
 

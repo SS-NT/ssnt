@@ -6,5 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+networking = { path = "../networking" }
 bevy = "0.8"
 bevy_rapier3d = "0.16.0"
+serde = { version = "*", features = ["derive"] }
+enum-map = "2.4.1"

@@ -1,0 +1,54 @@
+[
+    (
+        entity: 0,
+        components: [
+            {
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": {
+                    "id": "models/tilemap/tables.glb#Mesh71/Primitive0"
+                }
+            },
+            {
+                "maps::adjacency::TilemapAdjacency": {
+                    "category": "table",
+                    "meshes": {
+                        "default": { "id": "models/tilemap/tables.glb#Mesh71/Primitive0" },
+                        "o": { "id": "models/tilemap/tables.glb#Mesh71/Primitive0" },
+                        "u": { "id": "models/tilemap/tables.glb#Mesh63/Primitive0" },
+                        "i": { "id": "models/tilemap/tables.glb#Mesh74/Primitive0" },
+                        "l": { "id": "models/tilemap/tables.glb#Mesh72/Primitive0" },
+                        "t": { "id": "models/tilemap/tables.glb#Mesh75/Primitive0" },
+                        "x": { "id": "models/tilemap/tables.glb#Mesh77/Primitive0" }
+                    }
+                }
+            },
+        ]
+    ),
+    (
+        entity: 1,
+        components: [
+            {
+                "bevy_hierarchy::components::parent::Parent": (0,)
+            },
+            {
+                "bevy_transform::components::transform::Transform": {
+                    "translation": {
+                        "x": 0.0,
+                        "y": 0.35,
+                        "z": 0.0,
+                    },
+                    "rotation": (0.0, 0.0, 0.0, 1.0),
+                    "scale": {
+                        "x": 1.0,
+                        "y": 1.0,
+                        "z": 1.0,
+                    }
+                }
+            },
+            {
+                "ssnt::physics::Collider": {
+                    "kind": Cuboid (hx: 0.45, hy: 0.35, hz: 0.45)
+                }
+            },
+        ]
+    )
+]

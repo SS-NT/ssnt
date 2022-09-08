@@ -1,0 +1,40 @@
+[
+    (
+        entity: 0,
+        components: [
+            {
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": {
+                    "id": "models/tilemap/floors.glb#Mesh2/Primitive0"
+                }
+            },
+        ]
+    ),
+    // (
+    //     entity: 1,
+    //     components: [
+    //         {
+    //             "bevy_hierarchy::components::parent::Parent": (0,)
+    //         },
+    //         {
+    //             "bevy_transform::components::transform::Transform": {
+    //                 "translation": {
+    //                     "x": 0.0,
+    //                     "y": -0.5,
+    //                     "z": 0.0,
+    //                 },
+    //                 "rotation": (0.0, 0.0, 0.0, 1.0),
+    //                 "scale": {
+    //                     "x": 1.0,
+    //                     "y": 1.0,
+    //                     "z": 1.0,
+    //                 }
+    //             }
+    //         },
+    //         {
+    //             "ssnt::physics::Collider": {
+    //                 "kind": Cuboid (hx: 0.5, hy: 0.5, hz: 0.5)
+    //             }
+    //         }
+    //     ]
+    // )
+]

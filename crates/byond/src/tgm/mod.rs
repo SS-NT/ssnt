@@ -74,8 +74,9 @@ impl TileMap {
     }
 
     pub fn size(&self) -> UVec2 {
-        let (biggest, smallest) = self.corners();
-        biggest - smallest
+        let (biggest, _) = self.corners();
+        // TODO: why off-by-one here?
+        biggest + UVec2::ONE
     }
 
     fn corners(&self) -> (UVec2, UVec2) {

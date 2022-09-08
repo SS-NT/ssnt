@@ -3,8 +3,9 @@ use std::collections::VecDeque;
 use bevy::{
     math::{Quat, Vec3},
     prelude::{
-        warn, App, Component, CoreStage, EventReader, Local, ParallelSystemDescriptorCoercion,
-        Plugin, Query, Res, ResMut, SystemLabel, SystemSet, Time, Transform, With, Without,
+        warn, App, Commands, Component, CoreStage, EventReader, Local,
+        ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SpatialBundle, SystemLabel,
+        SystemSet, Time, Transform, With, Without,
     },
     transform::TransformSystem,
     utils::{hashbrown::hash_map::Entry, HashMap},
@@ -194,18 +195,16 @@ fn update_transform(
 
         // Compare current values
         let last_update = networked.sent_updates.back();
-        let last_position = last_update.and_then(|u| u.position).unwrap_or(Vec3::ZERO);
-        let last_rotation = last_update
-            .and_then(|u| u.rotation)
-            .unwrap_or(Quat::IDENTITY);
+        let last_position = last_update.and_then(|u| u.position);
+        let last_rotation = last_update.and_then(|u| u.rotation);
 
         let new_position: Vec3 = transform.translation;
-        let update_position =
-            !new_position.abs_diff_eq(last_position, networked.position_threshold);
+        let update_position = last_position.is_none()
+            || !new_position.abs_diff_eq(last_position.unwrap(), networked.position_threshold);
 
         let new_rotation: Quat = transform.rotation;
-        let update_rotation =
-            !new_rotation.abs_diff_eq(last_rotation, networked.rotation_threshold);
+        let update_rotation = last_rotation.is_none()
+            || !new_rotation.abs_diff_eq(last_rotation.unwrap(), networked.rotation_threshold);
 
         // Exit early if nothing to send
         if !update_position && !update_rotation {
@@ -553,9 +552,13 @@ fn handle_transform_messages(
 /// Apply the buffered transform messages to the relevant entities
 fn apply_buffered_updates(
     mut buffer: ResMut<BufferedTransformUpdates>,
-    mut query: Query<(&mut NetworkedTransform, Option<&ClientControlled>)>,
+    mut query: Query<
+        (Option<&mut NetworkedTransform>, Option<&ClientControlled>),
+        With<NetworkIdentity>,
+    >,
     identities: Res<NetworkIdentities>,
     mut unique_updates: Local<HashMap<NetworkIdentity, TransformUpdate>>,
+    mut commands: Commands,
 ) {
     buffer.updates.retain(|update| {
         let entity = match identities.get_entity(update.identity) {
@@ -563,7 +566,7 @@ fn apply_buffered_updates(
             None => return true,
         };
 
-        let (mut networked, client_controlled) = match query.get_mut(entity) {
+        let (networked, client_controlled) = match query.get_mut(entity) {
             Ok(n) => n,
             Err(_) => {
                 return true;
@@ -572,7 +575,17 @@ fn apply_buffered_updates(
 
         // TODO: Remove `if` once movement is server authoritative
         if client_controlled.is_none() {
-            networked.buffered_updates.push_back(update.clone());
+            if let Some(mut networked) = networked {
+                networked.buffered_updates.push_back(update.clone());
+            } else {
+                // Add networked transform component if not present
+                let mut networked = NetworkedTransform::default();
+                networked.buffered_updates.push_back(update.clone());
+                commands
+                    .entity(entity)
+                    .insert_bundle(SpatialBundle::default())
+                    .insert(networked);
+            }
         }
 
         false

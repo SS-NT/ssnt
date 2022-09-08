@@ -5,7 +5,8 @@ mod camera;
 mod components;
 mod items;
 mod movement;
-mod ui;
+mod physics;
+mod scene;
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -16,7 +17,10 @@ use bevy::asset::AssetPlugin;
 use bevy::ecs::system::EntityCommands;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
+use bevy::scene::ScenePlugin;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
+use bevy_egui::EguiPlugin;
+use bevy_inspector_egui::WorldInspectorPlugin;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{
     Collider, ColliderMassProperties, Damping, LockedAxes, ReadMassProperties, RigidBody, Velocity,
@@ -29,8 +33,7 @@ use items::{
     containers::{Container, ContainerAccessor, ContainerQuery, ContainerWriter},
     Item,
 };
-use maps::components::{TileMap, TileMapObserver};
-use maps::MapData;
+use maps::TileMapData;
 use networking::identity::EntityCommandsExt as NetworkingEntityCommandsExt;
 use networking::spawning::{ClientControlled, ClientControls, NetworkedEntityEvent, PrefabPath};
 use networking::transform::{NetworkTransform, NetworkedTransform};
@@ -78,6 +81,8 @@ fn main() {
             .add_plugin(TransformPlugin)
             .add_plugin(AssetPlugin)
             .add_plugin(LogPlugin)
+            .add_plugin(ScenePlugin)
+            .add_plugin(HierarchyPlugin)
             .add_plugin(networking_plugin)
             .add_system(convert_tgm_map)
             .add_system(create_tilemap_from_converted)
@@ -93,7 +98,8 @@ fn main() {
             app.add_plugins(DefaultPlugins)
                 .add_plugin(networking_plugin)
                 .add_plugin(camera::CameraPlugin)
-                .add_plugin(ui::UiPlugin)
+                .add_plugin(EguiPlugin)
+                .add_plugin(WorldInspectorPlugin::new())
                 .insert_resource(ClearColor(Color::rgb(
                     44.0 / 255.0,
                     68.0 / 255.0,
@@ -105,15 +111,19 @@ fn main() {
         }
     };
     app.add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
+        .add_plugin(physics::PhysicsPlugin)
+        .add_plugin(scene::ScenePlugin)
         .add_plugin(movement::MovementPlugin)
         .add_plugin(maps::MapPlugin)
         .add_plugin(AdminPlugin)
         .insert_resource(args)
         .add_startup_system(setup_shared)
+        .register_type::<Player>()
         .run();
 }
 
-#[derive(Component)]
+#[derive(Component, Reflect)]
+#[reflect(Component)]
 pub struct Player {
     pub target_velocity: Vec2,
     pub acceleration: f32,
@@ -143,8 +153,8 @@ fn setup_shared(mut commands: Commands) {
     // Spawn ground plane
     commands
         .spawn()
-        .insert_bundle(TransformBundle::from(Transform::from_xyz(0.0, -1.0, 0.0)))
-        .insert(Collider::cuboid(100.0, 0.5, 100.0));
+        .insert_bundle(TransformBundle::from(Transform::from_xyz(0.0, -0.5, 0.0)))
+        .insert(Collider::cuboid(1000.0, 0.5, 1000.0));
 }
 
 fn setup_server(args: Res<Args>, mut commands: Commands) {
@@ -197,7 +207,9 @@ fn create_player(commands: &mut EntityCommands) -> Entity {
         ReadMassProperties::default(),
     );
     commands
-        .insert_bundle(TransformBundle::default())
+        .insert_bundle(TransformBundle::from_transform(
+            Transform::from_translation((0.0, 1.0, 0.0).into()),
+        ))
         .insert(Player::default())
         .insert_bundle(player_rigid_body)
         .insert_bundle(player_collider)
@@ -209,10 +221,9 @@ fn create_player_server(commands: &mut Commands, connection: ConnectionId) -> En
     commands
         .entity(player)
         .insert(NetworkObserver {
-            range: 3,
+            range: 1,
             connection,
         })
-        .insert(TileMapObserver::new(20.0))
         .insert(PrefabPath("player".into()))
         .insert(NetworkTransform::default())
         .networked();
@@ -242,17 +253,18 @@ fn handle_player_spawn(
 ) {
     for event in entity_events.iter() {
         if let NetworkedEntityEvent::Spawned(entity) = event {
-            let prefab = query.get(*entity).unwrap();
-            if prefab.0 == "player" {
-                let player = create_player(&mut commands.entity(*entity));
-                let player_model = server.load("models/human.glb#Scene0");
-                commands
-                    .entity(player)
-                    .insert(NetworkedTransform::default())
-                    .insert_bundle(SceneBundle {
-                        scene: player_model,
-                        ..Default::default()
-                    });
+            if let Ok(prefab) = query.get(*entity) {
+                if prefab.0 == "player" {
+                    let player = create_player(&mut commands.entity(*entity));
+                    let player_model = server.load("models/human.glb#Scene0");
+                    commands
+                        .entity(player)
+                        .insert(NetworkedTransform::default())
+                        .insert_bundle(SceneBundle {
+                            scene: player_model,
+                            ..Default::default()
+                        });
+                }
             }
         }
     }
@@ -270,7 +282,7 @@ fn set_camera_target(
 }
 
 fn load_map(mut commands: Commands, server: Res<AssetServer>) {
-    let handle = server.load("maps/DeltaStation2.dmm");
+    let handle = server.load("maps/BoxStation.dmm");
     commands.insert_resource(Map {
         handle,
         spawned: false,
@@ -293,7 +305,7 @@ fn test_containers(mut commands: Commands, q: ContainerQuery) {
 }
 
 #[derive(Component)]
-struct ConvertByondMap(Task<MapData>);
+struct ConvertByondMap(Task<TileMapData>);
 
 fn convert_tgm_map(
     mut commands: Commands,
@@ -323,7 +335,7 @@ fn create_tilemap_from_converted(
             for mut player in players.iter_mut() {
                 player.translation = Vec3::new(
                     map_data.spawn_position.x as f32,
-                    0.0,
+                    5.0,
                     map_data.spawn_position.y as f32,
                 );
             }
@@ -331,9 +343,9 @@ fn create_tilemap_from_converted(
             commands
                 .entity(entity)
                 .remove::<ConvertByondMap>()
-                .insert(TileMap::new(map_data))
-                .insert(Transform::default())
-                .insert(GlobalTransform::identity());
+                .insert(map_data)
+                .insert_bundle(SpatialBundle::default())
+                .networked();
             info!("Map conversion finished and applied (entity={:?})", entity);
         }
     }

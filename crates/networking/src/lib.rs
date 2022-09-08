@@ -1,3 +1,6 @@
+#![allow(clippy::type_complexity)]
+
+pub mod component;
 pub mod identity;
 pub mod messaging;
 pub mod spawning;
@@ -12,6 +15,7 @@ use bevy_renet::{
     },
     RenetClientPlugin, RenetServerPlugin,
 };
+use component::ComponentPlugin;
 use time::{ClientNetworkTime, ServerNetworkTime, TimePlugin};
 
 use std::{
@@ -273,6 +277,7 @@ impl Plugin for NetworkingPlugin {
             .add_plugin(IdentityPlugin)
             .add_plugin(VisibilityPlugin)
             .add_plugin(SpawningPlugin)
+            .add_plugin(ComponentPlugin)
             .add_plugin(TransformPlugin)
             .add_system(report_errors);
 

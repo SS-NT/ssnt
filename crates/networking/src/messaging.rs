@@ -219,6 +219,8 @@ impl Channel {
             ChannelConfig::Reliable(ReliableChannelConfig {
                 channel_id: Self::Default.id(),
                 message_resend_time: Duration::ZERO,
+                message_send_queue_size: 2048,
+                message_receive_queue_size: 2048,
                 ..Default::default()
             }),
             ChannelConfig::Unreliable(UnreliableChannelConfig {
@@ -345,8 +347,9 @@ fn send_outbound_messages_client(
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
-enum MessagingSystem {
+pub(crate) enum MessagingSystem {
     ReadRaw,
+    SendOutbound,
 }
 
 pub(crate) struct MessagingPlugin;
@@ -363,14 +366,16 @@ impl Plugin for MessagingPlugin {
             .unwrap()
             .is_client()
         {
-            app.add_system(send_outbound_messages_client.with_run_criteria(run_if_client_connected))
-                .add_system(
-                    read_channel_client
-                        .label(MessagingSystem::ReadRaw)
-                        .with_run_criteria(run_if_client_connected),
-                );
+            app.add_system(
+                send_outbound_messages_client.with_run_criteria(run_if_client_connected),
+            )
+            .add_system(
+                read_channel_client
+                    .label(MessagingSystem::ReadRaw)
+                    .with_run_criteria(run_if_client_connected),
+            );
         } else {
-            app.add_system(send_outbound_messages_server)
+            app.add_system(send_outbound_messages_server.label(MessagingSystem::SendOutbound))
                 .add_system(read_channel_server.label(MessagingSystem::ReadRaw));
         }
     }

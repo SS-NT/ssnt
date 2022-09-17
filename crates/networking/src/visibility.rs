@@ -240,7 +240,6 @@ fn grid_visibility(
         }
 
         for cell in grid.relevant_cells(position, UVec2::new(observer.range, observer.range)) {
-            bevy::log::info!(position = ?UVec2::new(observer.range, observer.range), count=cell.entities.len(), "AAA");
             for entity in cell.entities.iter() {
                 if let Ok(identity) = identities.get(*entity) {
                     let visibility = visibilities.visibility.entry(*identity).or_default();

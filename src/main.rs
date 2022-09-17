@@ -328,18 +328,9 @@ fn convert_tgm_map(
 fn create_tilemap_from_converted(
     mut commands: Commands,
     mut map_tasks: Query<(Entity, &mut ConvertByondMap)>,
-    mut players: Query<&mut Transform, With<Player>>,
 ) {
     for (entity, mut map_task) in map_tasks.iter_mut() {
         if let Some(map_data) = future::block_on(future::poll_once(&mut map_task.0)) {
-            for mut player in players.iter_mut() {
-                player.translation = Vec3::new(
-                    map_data.spawn_position.x as f32,
-                    5.0,
-                    map_data.spawn_position.y as f32,
-                );
-            }
-
             commands
                 .entity(entity)
                 .remove::<ConvertByondMap>()

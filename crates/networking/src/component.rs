@@ -20,6 +20,7 @@ use crate::{
     messaging::{
         AppExt as MessagingAppExt, MessageEvent, MessageReceivers, MessageSender, MessagingSystem,
     },
+    spawning::SpawningSystems,
     visibility::NetworkVisibilities,
     ConnectionId, NetworkManager, NetworkSystem,
 };
@@ -453,17 +454,19 @@ impl AppExt for App {
             self.add_system(
                 send_networked_component_to_new::<S, C>
                     .before(MessagingSystem::SendOutbound)
-                    .after(NetworkSystem::Visibility),
+                    .after(NetworkSystem::Visibility)
+                    .after(SpawningSystems::Spawn),
             );
         } else {
             self.init_resource::<BufferedNetworkedComponents<C>>()
                 .add_system(
-                    receive_networked_component::<C>.before(NetworkSystem::ReadNetworkMessages), // .after(bevy::scene::scene_spawner)
-                                                                                                 // .before(SpawningSystems::Spawn),
+                    receive_networked_component::<C>
+                        .before(NetworkSystem::ReadNetworkMessages)
+                        .label(ComponentSystem::Apply),
                 )
                 .add_system_to_stage(
                     PostSceneSpawnerStage,
-                    apply_networked_component_to_scene::<C>,
+                    apply_networked_component_to_scene::<C>.label(ComponentSystem::Apply),
                 );
         }
         self
@@ -475,6 +478,11 @@ impl AppExt for App {
 // TODO: Replace this with a scene spawning modification?
 #[derive(Debug, Hash, PartialEq, Eq, Clone, StageLabel)]
 pub struct PostSceneSpawnerStage;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
+pub enum ComponentSystem {
+    Apply,
+}
 
 pub(crate) struct ComponentPlugin;
 

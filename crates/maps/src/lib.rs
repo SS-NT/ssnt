@@ -9,7 +9,7 @@ use bevy::{
 };
 use enum_map::EnumMap;
 use networking::{
-    component::AppExt,
+    component::{AppExt, ComponentSystem},
     identity::EntityCommandsExt,
     transform::NetworkTransform,
     visibility::{GridAabb, VisibilitySystem, GLOBAL_GRID_CELL_SIZE},
@@ -407,9 +407,10 @@ impl networking::component::NetworkedFromServer for TileEntityClient {
         >::deserialize(&mut deserializer)
         .expect("Error deserializing networked component");
         if let Some(tilemap_update) = tilemap_update {
+            let identity = tilemap_update.0.into_owned();
             let entity = param
-                .get_entity(tilemap_update.0.into_owned())
-                .expect("Tilemap root network id should exist");
+                .get_entity(identity)
+                .unwrap_or_else(|| panic!("Tilemap root network id ({:?}) should exist", identity));
             self.tilemap.set(entity);
         }
 
@@ -712,11 +713,16 @@ impl Plugin for MapPlugin {
             .is_client()
         {
             app.add_system(client_initialize_tile_objects)
-                .add_system(client_update_tile_entities)
-                .add_system(client_update_adjacencies);
+                .add_system_to_stage(
+                    CoreStage::PostUpdate,
+                    client_update_tile_entities.after(ComponentSystem::Apply),
+                )
+                .add_system(client_update_adjacencies.after(client_update_tile_entities));
         } else {
-            app.add_system(spawn_from_data)
-                .add_system(update_grid_aabb.before(VisibilitySystem::UpdateGrid));
+            app.add_system(spawn_from_data).add_system_to_stage(
+                CoreStage::PostUpdate,
+                update_grid_aabb.before(VisibilitySystem::UpdateGrid),
+            );
         }
     }
 }

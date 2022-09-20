@@ -219,8 +219,8 @@ impl Channel {
             ChannelConfig::Reliable(ReliableChannelConfig {
                 channel_id: Self::Default.id(),
                 message_resend_time: Duration::ZERO,
-                message_send_queue_size: 2048,
-                message_receive_queue_size: 2048,
+                message_send_queue_size: 4096,
+                message_receive_queue_size: 4096,
                 ..Default::default()
             }),
             ChannelConfig::Unreliable(UnreliableChannelConfig {

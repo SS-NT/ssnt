@@ -2,9 +2,10 @@ use bevy::{
     asset::AssetPathId,
     ecs::query::QuerySingleError,
     prelude::{
-        debug, error, info, warn, App, AssetServer, Commands, Component, DespawnRecursiveExt,
-        Entity, EventReader, EventWriter, Handle, ParallelSystemDescriptorCoercion, Plugin, Query,
-        RemovedComponents, Res, ResMut, SystemLabel, SystemSet, With,
+        debug, error, info, warn, App, AssetServer, Commands, Component, CoreStage,
+        DespawnRecursiveExt, Entity, EventReader, EventWriter, Handle,
+        ParallelSystemDescriptorCoercion, Plugin, Query, RemovedComponents, Res, ResMut,
+        SystemLabel, SystemSet, With,
     },
     scene::{DynamicScene, DynamicSceneBundle},
     utils::{HashMap, HashSet},
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
-    visibility::{NetworkVisibilities, VisibilitySystem},
+    visibility::NetworkVisibilities,
     ConnectionId, NetworkManager, NetworkSystem,
 };
 
@@ -333,14 +334,12 @@ impl Plugin for SpawningPlugin {
                                 .after(NetworkSystem::Visibility),
                         )
                         .with_system(
-                            network_deleted_entities.before(VisibilitySystem::UpdateVisibility),
-                        )
-                        .with_system(
                             send_control_updates
                                 .label(SpawningSystems::ClientControl)
                                 .after(SpawningSystems::Spawn),
                         ),
-                );
+                )
+                .add_system_to_stage(CoreStage::PostUpdate, network_deleted_entities);
         } else {
             app.add_event::<NetworkedEntityEvent>().add_system_set(
                 SystemSet::new()

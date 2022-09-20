@@ -20,7 +20,7 @@ use time::{ClientNetworkTime, ServerNetworkTime, TimePlugin};
 
 use std::{
     fmt::Display,
-    net::{SocketAddr, SocketAddrV4, UdpSocket},
+    net::{IpAddr, SocketAddr, UdpSocket},
     time::SystemTime,
 };
 
@@ -94,10 +94,8 @@ struct ServerInfo {
     tick_duration_seconds: f32,
 }
 
-pub fn create_server(port: u16) -> RenetServer {
-    // TODO: Allow listen ip to be specified
-    let server_addr = SocketAddrV4::new("127.0.0.1".parse().unwrap(), port);
-    let socket = UdpSocket::bind(server_addr).unwrap();
+pub fn create_server(listen_address: SocketAddr, public_address: Option<IpAddr>) -> RenetServer {
+    let socket = UdpSocket::bind(listen_address).unwrap();
     let connection_config = RenetConnectionConfig {
         // TODO: Split channels for server and client
         send_channels_config: Channel::channels_config(),
@@ -107,7 +105,9 @@ pub fn create_server(port: u16) -> RenetServer {
     let server_config = ServerConfig::new(
         64,
         PROTOCOL_ID,
-        server_addr.into(),
+        public_address
+            .map(|p| SocketAddr::from((p, 0u16)))
+            .unwrap_or(listen_address),
         ServerAuthentication::Unsecure,
     );
     let current_time = SystemTime::now()

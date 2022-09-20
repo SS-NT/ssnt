@@ -8,7 +8,7 @@ mod movement;
 mod physics;
 mod scene;
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 
 use admin::AdminPlugin;
@@ -53,9 +53,12 @@ struct Args {
 enum ArgCommands {
     /// host a server
     Host {
-        /// port to listen on
-        #[clap(default_value_t = 33998u16)]
-        port: u16,
+        #[clap(default_value_t = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 33998u16)))]
+        bind_address: SocketAddr,
+        /// overrides the public address of the server.
+        /// set this when hosting behind NAT (ex. a home router)
+        #[clap(long)]
+        public_address: Option<IpAddr>,
     },
     /// join a game
     Join { address: SocketAddr },
@@ -144,6 +147,7 @@ impl Default for Player {
     }
 }
 
+#[derive(Clone)]
 pub struct Map {
     pub handle: Handle<byond::tgm::TileMap>,
     pub spawned: bool,
@@ -158,11 +162,15 @@ fn setup_shared(mut commands: Commands) {
 }
 
 fn setup_server(args: Res<Args>, mut commands: Commands) {
-    let port = match args.command {
-        ArgCommands::Host { port } => port,
+    match args.command {
+        ArgCommands::Host {
+            bind_address,
+            public_address,
+        } => {
+            commands.insert_resource(networking::create_server(bind_address, public_address));
+        }
         _ => panic!("Missing commandline argument"),
     };
-    commands.insert_resource(networking::create_server(port));
 }
 
 fn setup_client(

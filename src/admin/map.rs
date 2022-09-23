@@ -9,6 +9,8 @@ use networking::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::GameState;
+
 #[derive(Serialize, Deserialize, Clone)]
 struct ChangeMapMessage {
     name: String,
@@ -65,7 +67,9 @@ impl Plugin for MapManagementPlugin {
         {
             app.add_system(map_loader_system);
         } else {
-            app.add_system(client_map_selection_ui);
+            app.add_system_set(
+                SystemSet::on_update(GameState::Game).with_system(client_map_selection_ui),
+            );
         }
     }
 }

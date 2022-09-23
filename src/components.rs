@@ -1,9 +1,6 @@
 use bevy::{
-    ecs::{
-        component::Component,
-        system::{Command, EntityCommands},
-    },
-    prelude::{Entity, World},
+    ecs::system::{Command, EntityCommands},
+    prelude::*,
 };
 
 #[derive(Component)]
@@ -85,5 +82,12 @@ impl<'w, 's, 'a> EntityCommandsExt for EntityCommands<'w, 's, 'a> {
         let id = self.id();
         self.commands().add(DisableComponent::<T>::new(id));
         self
+    }
+}
+
+/// Despawns all entities that have a specific component
+pub fn despawn_with<T: Component>(to_despawn: Query<Entity, With<T>>, mut commands: Commands) {
+    for entity in &to_despawn {
+        commands.entity(entity).despawn_recursive();
     }
 }

@@ -6,7 +6,7 @@ use bevy::{
     prelude::{
         info, shape, warn, App, Assets, Camera, Commands, Component, EventReader, GlobalTransform,
         Handle, Mesh, MouseButton, ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut,
-        Transform, With,
+        SystemSet, Transform, With,
     },
     transform::TransformBundle,
     utils::HashMap,
@@ -27,7 +27,7 @@ use networking::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::camera::MainCamera;
+use crate::{camera::MainCamera, GameState};
 
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
 enum Spawnable {
@@ -251,7 +251,10 @@ impl Plugin for SpawningPlugin {
                 .add_system(send_spawned_type.after(SpawningSystems::Spawn));
         } else {
             app.init_resource::<SpawnerUiState>()
-                .add_system(spawning_ui.label("admin spawn ui"))
+                .add_system_set(
+                    SystemSet::on_update(GameState::Game)
+                        .with_system(spawning_ui.label("admin spawn ui")),
+                )
                 .add_system(spawn_requesting.after("admin spawn ui"))
                 .add_system(receive_spawned_type.after(SpawningSystems::Spawn));
         }

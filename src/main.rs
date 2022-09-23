@@ -7,6 +7,7 @@ mod items;
 mod movement;
 mod physics;
 mod scene;
+mod ui;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
@@ -20,7 +21,7 @@ use bevy::prelude::*;
 use bevy::scene::ScenePlugin;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy_egui::EguiPlugin;
-use bevy_inspector_egui::WorldInspectorPlugin;
+use bevy_inspector_egui::{WorldInspectorParams, WorldInspectorPlugin};
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::{
     Collider, ColliderMassProperties, Damping, LockedAxes, ReadMassProperties, RigidBody, Velocity,
@@ -46,7 +47,7 @@ const SERVER_TPS: u32 = 60;
 #[derive(Parser)]
 struct Args {
     #[clap(subcommand)]
-    command: ArgCommands,
+    command: Option<ArgCommands>,
 }
 
 #[derive(Subcommand)]
@@ -67,8 +68,8 @@ enum ArgCommands {
 fn main() {
     let args = Args::parse();
     let role = match args.command {
-        ArgCommands::Host { .. } => NetworkRole::Server,
-        ArgCommands::Join { .. } => NetworkRole::Client,
+        Some(ArgCommands::Host { .. }) => NetworkRole::Server,
+        Some(ArgCommands::Join { .. }) | None => NetworkRole::Client,
     };
     let networking_plugin = NetworkingPlugin { role };
 
@@ -102,7 +103,12 @@ fn main() {
                 .add_plugin(networking_plugin)
                 .add_plugin(camera::CameraPlugin)
                 .add_plugin(EguiPlugin)
+                .insert_resource(WorldInspectorParams {
+                    enabled: false,
+                    ..Default::default()
+                })
                 .add_plugin(WorldInspectorPlugin::new())
+                .add_plugin(ui::UiPlugin)
                 .insert_resource(ClearColor(Color::rgb(
                     44.0 / 255.0,
                     68.0 / 255.0,
@@ -110,7 +116,8 @@ fn main() {
                 )))
                 .add_startup_system(setup_client)
                 .add_system_to_stage(CoreStage::PostUpdate, handle_player_spawn)
-                .add_system(set_camera_target);
+                .add_system(set_camera_target)
+                .add_state(GameState::Splash);
         }
     };
     app.add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
@@ -123,6 +130,14 @@ fn main() {
         .add_startup_system(setup_shared)
         .register_type::<Player>()
         .run();
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash)]
+enum GameState {
+    Splash,
+    MainMenu,
+    Joining,
+    Game,
 }
 
 #[derive(Component, Reflect)]
@@ -162,8 +177,8 @@ fn setup_shared(mut commands: Commands) {
 }
 
 fn setup_server(args: Res<Args>, mut commands: Commands) {
-    match args.command {
-        ArgCommands::Host {
+    match args.command.as_ref().unwrap() {
+        &ArgCommands::Host {
             bind_address,
             public_address,
         } => {
@@ -177,6 +192,7 @@ fn setup_client(
     mut commands: Commands,
     args: Res<Args>,
     mut client_events: EventWriter<ClientEvent>,
+    mut state: ResMut<State<GameState>>,
 ) {
     // TODO: Replace with on-station lights
     commands.insert_resource(AmbientLight {
@@ -194,7 +210,8 @@ fn setup_client(
         .insert(TopDownCamera::new(temporary_camera_target))
         .insert(camera::MainCamera);
 
-    if let ArgCommands::Join { address } = args.command {
+    if let Some(ArgCommands::Join { address }) = args.command {
+        state.overwrite_set(GameState::MainMenu).unwrap();
         client_events.send(ClientEvent::Join(address));
     }
 }

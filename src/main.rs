@@ -4,8 +4,10 @@ mod admin;
 mod camera;
 mod components;
 mod items;
+mod job;
 mod movement;
 mod physics;
+mod round;
 mod scene;
 mod ui;
 
@@ -36,10 +38,9 @@ use items::{
 };
 use maps::TileMapData;
 use networking::identity::EntityCommandsExt as NetworkingEntityCommandsExt;
-use networking::spawning::{ClientControlled, ClientControls, NetworkedEntityEvent, PrefabPath};
-use networking::transform::{NetworkTransform, NetworkedTransform};
-use networking::visibility::NetworkObserver;
-use networking::{ClientEvent, ConnectionId, NetworkRole, NetworkingPlugin, ServerEvent};
+use networking::spawning::{ClientControlled, NetworkedEntityEvent, PrefabPath};
+use networking::transform::NetworkedTransform;
+use networking::{ClientEvent, NetworkRole, NetworkingPlugin};
 
 /// How many ticks the server runs per second
 const SERVER_TPS: u32 = 60;
@@ -94,9 +95,7 @@ fn main() {
             .add_asset::<Mesh>() // TODO: remove once no longer needed by rapier
             .add_asset::<Scene>() // TODO: remove once no longer needed by rapier
             .add_asset_loader(TgmLoader)
-            .add_startup_system(load_map)
-            .add_startup_system(setup_server)
-            .add_system(spawn_player_joined);
+            .add_startup_system(setup_server);
         }
         NetworkRole::Client => {
             app.add_plugins(DefaultPlugins)
@@ -126,6 +125,8 @@ fn main() {
         .add_plugin(movement::MovementPlugin)
         .add_plugin(maps::MapPlugin)
         .add_plugin(AdminPlugin)
+        .add_plugin(round::RoundPlugin)
+        .add_plugin(job::JobPlugin)
         .insert_resource(args)
         .add_startup_system(setup_shared)
         .register_type::<Player>()
@@ -241,34 +242,6 @@ fn create_player(commands: &mut EntityCommands) -> Entity {
         .id()
 }
 
-fn create_player_server(commands: &mut Commands, connection: ConnectionId) -> Entity {
-    let player = create_player(&mut commands.spawn());
-    commands
-        .entity(player)
-        .insert(NetworkObserver {
-            range: 1,
-            connection,
-        })
-        .insert(PrefabPath("player".into()))
-        .insert(NetworkTransform::default())
-        .networked();
-    player
-}
-
-fn spawn_player_joined(
-    mut server_events: EventReader<ServerEvent>,
-    mut controls: ResMut<ClientControls>,
-    mut commands: Commands,
-) {
-    for event in server_events.iter() {
-        if let ServerEvent::PlayerConnected(id) = event {
-            let player = create_player_server(&mut commands, *id);
-            controls.give_control(*id, player);
-            info!("Created a player object for new client");
-        }
-    }
-}
-
 // TODO: replace with spawning scene
 fn handle_player_spawn(
     query: Query<&PrefabPath>,
@@ -304,14 +277,6 @@ fn set_camera_target(
             camera.target = entity;
         }
     }
-}
-
-fn load_map(mut commands: Commands, server: Res<AssetServer>) {
-    let handle = server.load("maps/BoxStation.dmm");
-    commands.insert_resource(Map {
-        handle,
-        spawned: false,
-    });
 }
 
 #[allow(dead_code)]

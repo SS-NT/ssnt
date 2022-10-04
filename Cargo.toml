@@ -16,6 +16,7 @@ bevy = { version = "0.8", features = ["bevy_gltf"] }
 bevy_egui = "0.15.0"
 bevy-inspector-egui = "0.12.1"
 bevy_rapier3d = { version = "0.16.0", features = ["simd-stable", "debug-render"] }
+bevy_common_assets = { version = "0.3.0", features = ["ron"] }
 cfg-if = "1.0.0"
 futures-lite = "1.4.0"
 log = "0.4.8"

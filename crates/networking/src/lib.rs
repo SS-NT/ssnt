@@ -3,10 +3,14 @@
 pub mod component;
 pub mod identity;
 pub mod messaging;
+pub mod resource;
 pub mod spawning;
 pub mod time;
 pub mod transform;
+pub mod variable;
 pub mod visibility;
+
+pub use networking_derive::Networked;
 
 use bevy_renet::{
     renet::{
@@ -16,6 +20,7 @@ use bevy_renet::{
     RenetClientPlugin, RenetServerPlugin,
 };
 use component::ComponentPlugin;
+use resource::ResourcePlugin;
 use time::{ClientNetworkTime, ServerNetworkTime, TimePlugin};
 
 use std::{
@@ -41,7 +46,7 @@ use visibility::VisibilityPlugin;
 /// A "unique" id for the protocol used by this application
 const PROTOCOL_ID: u64 = 859058192;
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum NetworkRole {
     Server,
     Client,
@@ -86,6 +91,7 @@ pub enum ServerEvent {
 struct ClientHello {
     token: Vec<u8>,
     version: String,
+    username: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -185,6 +191,7 @@ fn client_send_hello(
         &ClientHello {
             token: Vec::new(),
             version: "TODO".into(),
+            username: "John Doe".into(),
         },
         MessageReceivers::Server,
     );
@@ -214,16 +221,27 @@ impl Display for ConnectionId {
     }
 }
 
-struct Player {}
+pub struct Player {
+    pub username: String,
+}
 
 #[derive(Default)]
-struct Players {
+pub struct Players {
     players: HashMap<ConnectionId, Player>,
 }
 
 impl Players {
-    fn add(&mut self, connection: ConnectionId) {
-        self.players.insert(connection, Player {});
+    fn add(&mut self, connection: ConnectionId, message: &ClientHello) {
+        self.players.insert(
+            connection,
+            Player {
+                username: message.username.clone(),
+            },
+        );
+    }
+
+    pub fn players(&self) -> &HashMap<ConnectionId, Player> {
+        &self.players
     }
 }
 
@@ -241,7 +259,7 @@ fn server_handle_connect(
             tick_duration_seconds: network_time.tick_in_seconds() as f32,
         };
         sender.send(&server_info, MessageReceivers::Single(event.connection));
-        players.add(event.connection);
+        players.add(event.connection, &event.message);
         server_events.send(ServerEvent::PlayerConnected(event.connection));
     }
 }
@@ -250,6 +268,10 @@ fn report_errors(mut events: EventReader<RenetError>) {
     for error in events.iter() {
         error!(?error, "Network error");
     }
+}
+
+pub fn is_server(app: &App) -> bool {
+    app.world.resource::<NetworkManager>().is_server()
 }
 
 pub struct NetworkingPlugin {
@@ -278,6 +300,7 @@ impl Plugin for NetworkingPlugin {
             .add_plugin(VisibilityPlugin)
             .add_plugin(SpawningPlugin)
             .add_plugin(ComponentPlugin)
+            .add_plugin(ResourcePlugin)
             .add_plugin(TransformPlugin)
             .add_system(report_errors);
 

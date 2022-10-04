@@ -56,6 +56,8 @@ pub enum ServerEntityEvent {
     Despawned((Entity, ConnectionId)),
 }
 
+const DESPAWN_MESSAGE_PRIORITY: i16 = -10;
+
 /// Events related to networked entities on the client
 pub enum NetworkedEntityEvent {
     /// A networked entity has been spawned
@@ -72,6 +74,7 @@ fn send_spawn_messages(
         Option<&Handle<DynamicScene>>,
     )>,
     visibilities: Res<NetworkVisibilities>,
+    controlled: Res<ClientControls>,
     mut sender: MessageSender,
     mut entity_events: EventWriter<ServerEntityEvent>,
 ) {
@@ -100,9 +103,17 @@ fn send_spawn_messages(
                     identifier,
                     network_id: *identity,
                 };
-                sender.send(
+
+                // Increase priority if object is owned by a player
+                let priority = if controlled.entities.contains(&entity) {
+                    60
+                } else {
+                    50
+                };
+                sender.send_with_priority(
                     &SpawnMessage::Spawn(message),
                     MessageReceivers::Set(new_observers.clone()),
+                    priority,
                 );
                 entity_events.send_batch(
                     new_observers
@@ -114,9 +125,10 @@ fn send_spawn_messages(
             let removed_observers: HashSet<ConnectionId> =
                 visibility.removed_observers().copied().collect();
             if !removed_observers.is_empty() {
-                sender.send(
+                sender.send_with_priority(
                     &SpawnMessage::Despawn(*identity),
                     MessageReceivers::Set(removed_observers.clone()),
+                    DESPAWN_MESSAGE_PRIORITY,
                 );
                 entity_events.send_batch(
                     removed_observers
@@ -146,9 +158,10 @@ fn network_deleted_entities(
                         .iter()
                         .map(|c| ServerEntityEvent::Despawned((entity, *c))),
                 );
-                sender.send(
+                sender.send_with_priority(
                     &SpawnMessage::Despawn(identity),
                     MessageReceivers::Set(observers),
+                    DESPAWN_MESSAGE_PRIORITY,
                 );
             }
         }
@@ -212,22 +225,28 @@ fn receive_spawn(
 /// Tracks which connected client controls which entity
 #[derive(Default)]
 pub struct ClientControls {
-    entities: HashMap<ConnectionId, Entity>,
+    mapping: HashMap<ConnectionId, Entity>,
+    entities: HashSet<Entity>,
     changed: HashSet<ConnectionId>,
 }
 
 impl ClientControls {
     pub fn give_control(&mut self, connection: ConnectionId, entity: Entity) {
-        self.entities.insert(connection, entity);
+        if let Some(entity) = self.mapping.remove(&connection) {
+            self.entities.remove(&entity);
+        }
+
+        self.mapping.insert(connection, entity);
+        self.entities.insert(entity);
         self.changed.insert(connection);
     }
 
     pub fn does_control(&self, connection: ConnectionId, entity: Entity) -> bool {
-        self.entities.get(&connection) == Some(&entity)
+        self.mapping.get(&connection) == Some(&entity)
     }
 
     pub fn controlled_entity(&self, connection: ConnectionId) -> Option<Entity> {
-        self.entities.get(&connection).copied()
+        self.mapping.get(&connection).copied()
     }
 }
 
@@ -244,7 +263,7 @@ fn send_control_updates(
     let controls = &mut *controls;
 
     controls.changed.retain(|connection| {
-        let new_entity = controls.entities.get(connection).copied();
+        let new_entity = controls.mapping.get(connection).copied();
         let newly_controlled = new_entity.and_then(|e| identities.get_identity(e));
 
         // Keep change if no network identity available yet
@@ -255,7 +274,7 @@ fn send_control_updates(
         let update = ControlUpdate {
             controlled_entity: newly_controlled,
         };
-        sender.send(&update, MessageReceivers::Single(*connection));
+        sender.send_with_priority(&update, MessageReceivers::Single(*connection), 55);
         false
     });
 }

@@ -1,0 +1,5 @@
+(
+    id: "medical_doctor",
+    name: "Medical Doctor",
+    description: "Heals crewmembers. May break the hippocratic oath from time to time."
+)

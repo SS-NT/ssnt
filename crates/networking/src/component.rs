@@ -1,17 +1,10 @@
-use std::{
-    borrow::Cow,
-    clone::Clone,
-    marker::PhantomData,
-    num::NonZeroU32,
-    ops::{Deref, DerefMut},
-};
+use std::{clone::Clone, marker::PhantomData, ops::Deref};
 
 use bevy::{
-    ecs::system::{SystemParam, SystemParamFetch},
+    ecs::system::SystemParam,
     prelude::*,
-    reflect::TypeUuid,
     scene::{InstanceId, SceneInstance},
-    utils::{HashSet, Uuid},
+    utils::HashSet,
 };
 use serde::{Deserialize, Serialize};
 
@@ -21,152 +14,10 @@ use crate::{
         AppExt as MessagingAppExt, MessageEvent, MessageReceivers, MessageSender, MessagingSystem,
     },
     spawning::SpawningSystems,
+    variable::*,
     visibility::NetworkVisibilities,
-    ConnectionId, NetworkManager, NetworkSystem,
+    NetworkManager, NetworkSystem,
 };
-
-pub use bytes::{Buf, BufMut, Bytes, BytesMut};
-// TODO: Replace with handy method
-pub use bincode::options as serializer_options;
-pub use bincode::Deserializer as ComponentDeserializer;
-pub use bincode::Serializer as ComponentSerializer;
-
-/// A trait implemented by any component that should be networked to clients.
-pub trait NetworkedToClient: Component {
-    type Param: SystemParam;
-
-    /// Does this component serialize differently depending on who the receiver is?
-    fn receiver_matters() -> bool;
-
-    /// Serialize this component to send it over the network.
-    /// Returns `None` if it should not be sent to the given receiver.
-    /// # Arguments
-    ///
-    /// * `since_tick` - The tick to diff from. Is None if the full state should be serialized.
-    ///
-    fn serialize<'w, 's>(
-        &mut self,
-        param: &<<Self::Param as SystemParam>::Fetch as SystemParamFetch<'w, 's>>::Item,
-        receiver: Option<ConnectionId>,
-        since_tick: Option<NonZeroU32>,
-    ) -> Option<Bytes>;
-
-    // TODO: Add is_changed so we can efficiently use change detection for updates
-}
-
-/// A trait implemented by any component that receives network updates from the server.
-pub trait NetworkedFromServer: Component + TypeUuid {
-    type Param: SystemParam;
-
-    fn deserialize<'w, 's>(
-        &mut self,
-        param: &<<Self::Param as SystemParam>::Fetch as SystemParamFetch<'w, 's>>::Item,
-        data: &[u8],
-    );
-
-    /// The initial value used if the component is not already present.
-    /// Returns `None` if the component should not be added automatically.
-    fn default_if_missing() -> Option<Box<Self>>;
-}
-
-/// A variable that is networked to clients.
-#[derive(Default)]
-pub struct NetworkVar<T> {
-    value: T,
-    /// The value before the last change to `value`.
-    /// Used to diff the most recent change.
-    last_value: Option<T>,
-    change_state: ChangeState,
-}
-
-impl<T> NetworkVar<T> {
-    /// Has the value changed since the given tick?
-    pub fn has_changed_since(&self, tick: u32) -> bool {
-        match self.change_state {
-            ChangeState::Dirty => true,
-            ChangeState::Clean { last_changed_tick } => last_changed_tick > tick,
-        }
-    }
-}
-
-impl<T> From<T> for NetworkVar<T> {
-    fn from(value: T) -> Self {
-        Self {
-            value,
-            last_value: None,
-            change_state: ChangeState::Dirty,
-        }
-    }
-}
-
-impl<T> Deref for NetworkVar<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
-}
-
-impl<T> DerefMut for NetworkVar<T>
-where
-    T: Clone,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.last_value = Some(self.value.clone());
-        &mut self.value
-    }
-}
-
-#[derive(Default)]
-enum ChangeState {
-    /// Changed this tick.
-    #[default]
-    Dirty,
-    /// Changed in the past.
-    Clean { last_changed_tick: u32 },
-}
-
-/// A variable that is received from the server by the client. Counterpart to [`NetworkVar`].
-pub struct ServerVar<T> {
-    // This is an Option because the component is inserted into the world before we can set the value from the server.
-    // We ignore this in the public api, as no code should be able to access it by accident between creation and initialization.
-    // In short: oh god this is terrible.
-    value: Option<T>,
-}
-
-impl<T> ServerVar<T> {
-    pub fn set(&mut self, value: T) {
-        self.value = Some(value);
-    }
-
-    pub fn get(&self) -> Option<&T> {
-        self.value.as_ref()
-    }
-}
-
-impl<T> Default for ServerVar<T> {
-    fn default() -> Self {
-        Self {
-            value: Default::default(),
-        }
-    }
-}
-
-const UNINITIALIZED_ACCESS_ERROR: &str = "Server variable was accessed before being initialized";
-
-impl<T> Deref for ServerVar<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.value.as_ref().expect(UNINITIALIZED_ACCESS_ERROR)
-    }
-}
-
-impl<T> DerefMut for ServerVar<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.value.as_mut().expect(UNINITIALIZED_ACCESS_ERROR)
-    }
-}
 
 /// A message that contains data for a component.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -179,82 +30,28 @@ struct NetworkedComponentMessage {
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct ComponentNetworkId(u16);
 
-impl ComponentNetworkId {
-    const fn max() -> usize {
-        u16::MAX as usize
+impl From<ComponentNetworkId> for u16 {
+    fn from(id: ComponentNetworkId) -> Self {
+        id.0
     }
 }
 
-/// Maps component uuids to a smaller data type to save network bandwith.
-#[derive(Default)]
-struct NetworkedComponentRegistry {
-    components: Vec<Uuid>,
-}
-
-impl NetworkedComponentRegistry {
-    fn register<T: NetworkedFromServer>(&mut self) -> bool {
-        if self.components.len() >= ComponentNetworkId::max() {
-            panic!("Too many different network components registered.");
-        }
-
-        let uuid = T::TYPE_UUID;
-        // Components must be sorted by UUID so the index is always the same
-        if let Err(pos) = self.components.binary_search(&uuid) {
-            self.components.insert(pos, uuid);
-            return true;
-        }
-        false
-    }
-
-    fn get_id(&self, uuid: &Uuid) -> Option<ComponentNetworkId> {
-        self.components
-            .binary_search(uuid)
-            .ok()
-            .map(|i| ComponentNetworkId(i as u16))
-    }
-
-    fn get_uuid(&self, id: ComponentNetworkId) -> Option<&Uuid> {
-        self.components.get(id.0 as usize)
+impl From<u16> for ComponentNetworkId {
+    fn from(id: u16) -> Self {
+        Self(id)
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct ValueUpdate<'a, T: Clone>(pub Cow<'a, T>);
+type NetworkedComponentRegistry = NetworkRegistry<ComponentNetworkId>;
 
-impl<'a, T: Clone> From<&'a T> for ValueUpdate<'a, T> {
-    fn from(v: &'a T) -> Self {
-        ValueUpdate(Cow::Borrowed(v))
-    }
-}
-
-impl<T: std::clone::Clone> From<T> for ValueUpdate<'static, T> {
-    fn from(v: T) -> Self {
-        ValueUpdate(Cow::Owned(v))
-    }
-}
-
-trait Diffable {
-    type Diff;
-
-    fn diff(&self, from: &Self) -> Self::Diff;
-    fn apply(&mut self, diff: &Self::Diff);
-}
-
-// TODO: Actually implement this lmao nice try
-#[derive(Serialize, Deserialize)]
-enum DiffableValueUpdate<'a, T: Clone + Diffable> {
-    Full(Cow<'a, T>),
-    Delta { from_tick: u32, diff: T::Diff },
-}
-
-fn send_networked_component_to_new<S: NetworkedToClient, C: NetworkedFromServer>(
-    mut components: Query<(&NetworkIdentity, &mut S)>,
+fn send_networked_component_to_new<S: NetworkedToClient + Component, C: NetworkedFromServer>(
+    mut components: Query<(&NetworkIdentity, &S)>,
     visibilities: Res<NetworkVisibilities>,
     registry: Res<NetworkedComponentRegistry>,
     mut sender: MessageSender,
     param: bevy::ecs::system::StaticSystemParam<S::Param>,
 ) {
-    for (identity, mut component) in components.iter_mut() {
+    for (identity, component) in components.iter_mut() {
         let visibility = match visibilities.visibility.get(identity) {
             Some(v) => v,
             None => continue,
@@ -270,14 +67,16 @@ fn send_networked_component_to_new<S: NetworkedToClient, C: NetworkedFromServer>
                     Some(d) => d,
                     None => continue,
                 };
+                let priority = component.priority();
 
-                sender.send(
+                sender.send_with_priority(
                     &NetworkedComponentMessage {
                         identity: *identity,
                         component_id,
                         data,
                     },
                     MessageReceivers::Single(*connection),
+                    priority,
                 );
             }
         } else {
@@ -286,13 +85,14 @@ fn send_networked_component_to_new<S: NetworkedToClient, C: NetworkedFromServer>
                 let data = component
                     .serialize(&*param, None, None)
                     .expect("Serializing without a specific receiver should always return data");
-                sender.send(
+                sender.send_with_priority(
                     &NetworkedComponentMessage {
                         identity: *identity,
                         component_id,
                         data,
                     },
                     MessageReceivers::Set(new_observers),
+                    component.priority(),
                 );
             }
         }
@@ -315,7 +115,7 @@ impl<C> Default for BufferedNetworkedComponents<C> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn receive_networked_component<C: NetworkedFromServer>(
+fn receive_networked_component<C: NetworkedFromServer + Component>(
     mut events: EventReader<MessageEvent<NetworkedComponentMessage>>,
     mut components: Query<&mut C>,
     scene_instances: Query<&SceneInstance>,
@@ -365,7 +165,7 @@ fn receive_networked_component<C: NetworkedFromServer>(
 }
 
 // TODO: DRY up a bit
-fn apply_networked_component_to_scene<C: NetworkedFromServer>(
+fn apply_networked_component_to_scene<C: NetworkedFromServer + Component>(
     mut buffer: ResMut<BufferedNetworkedComponents<C>>,
     mut components: Query<&mut C>,
     scene_spawner: Res<SceneSpawner>,
@@ -405,7 +205,7 @@ fn apply_networked_component_to_scene<C: NetworkedFromServer>(
     });
 }
 
-fn apply_component_update<C: NetworkedFromServer>(
+fn apply_component_update<C: NetworkedFromServer + Component>(
     entity: Entity,
     message: &NetworkedComponentMessage,
     components: &mut Query<&mut C>,
@@ -413,12 +213,12 @@ fn apply_component_update<C: NetworkedFromServer>(
     commands: &mut Commands,
 ) {
     match components.get_mut(entity) {
-        Ok(mut c) => c.deserialize(&*param, &message.data),
+        Ok(mut c) => c.deserialize(param, &message.data),
         Err(_) => {
             // Apply data to default component value if possible
             if let Some(mut default) = C::default_if_missing() {
-                default.deserialize(&*param, &message.data);
-                commands.entity(entity).insert(*default);
+                default.deserialize(param, &message.data);
+                commands.entity(entity).insert(default);
             } else {
                 warn!(
                     ?entity,
@@ -428,13 +228,14 @@ fn apply_component_update<C: NetworkedFromServer>(
             }
         }
     };
+    bevy::log::trace!(component=std::any::type_name::<C>(), entity = ?entity, "Applied networked component data");
 }
 
 pub trait AppExt {
     fn add_networked_component<S, C>(&mut self) -> &mut App
     where
-        S: NetworkedToClient,
-        C: NetworkedFromServer;
+        S: NetworkedToClient + Component,
+        C: NetworkedFromServer + Component;
 }
 
 impl AppExt for App {
@@ -442,8 +243,8 @@ impl AppExt for App {
     /// Changes are synced from the server component (`S`) to the client component (`C`).
     fn add_networked_component<S, C>(&mut self) -> &mut App
     where
-        S: NetworkedToClient,
-        C: NetworkedFromServer,
+        S: NetworkedToClient + Component,
+        C: NetworkedFromServer + Component,
     {
         self.init_resource::<NetworkedComponentRegistry>();
         let mut registry = self.world.resource_mut::<NetworkedComponentRegistry>();
@@ -501,69 +302,3 @@ impl Plugin for ComponentPlugin {
         }
     }
 }
-
-/* #[derive(Component)]
-struct ExampleComponent {
-    health: NetworkVar<f32>,
-    inventory: NetworkVar<Vec<NetworkIdentity>>,
-    other_var: bool,
-}
-
-impl NetworkedToClient for ExampleComponent {
-    type Param = ();
-
-    fn receiver_matters() -> bool {
-        false
-    }
-
-    fn serialize(
-        &mut self,
-        _: Self::Param,
-        _: Option<ConnectionId>,
-        since_tick: Option<NonZeroU32>,
-    ) -> Option<Bytes> {
-        // TODO: Reserve smart amount
-        let mut writer = BytesMut::with_capacity(2).writer();
-        let mut serializer = bincode::Serializer::new(&mut writer, bincode::options());
-
-        let health_changed = since_tick
-            .map(|t| self.health.has_changed_since(t.into()))
-            .unwrap_or(true);
-        health_changed
-            .then(|| ValueUpdate::from(&self.health.value))
-            .serialize(&mut serializer)
-            .unwrap();
-
-        let inventory_changed = since_tick
-            .map(|t| self.inventory.has_changed_since(t.into()))
-            .unwrap_or(true);
-        // TODO: Diff
-        inventory_changed
-            .then(|| ValueUpdate::from(&self.inventory.value))
-            .serialize(&mut serializer)
-            .unwrap();
-
-        Some(writer.into_inner().into())
-    }
-}
-
-#[derive(Component, TypeUuid)]
-#[uuid = "02de843e-5491-4989-9991-60055d333a4b"]
-struct ExampleComponentClient {
-    health: ServerVar<f32>,
-}
-
-impl NetworkedFromServer for ExampleComponentClient {
-    type Param = ();
-    fn deserialize(&mut self, _: Self::Param, data: &[u8]) {
-        let mut deserializer =
-            bincode::Deserializer::with_reader(data.reader(), bincode::options());
-        let health_update = Option::<ValueUpdate<f32>>::deserialize(&mut deserializer)
-            .expect("Error deserializing networked component");
-        if let Some(health_update) = health_update {
-            self.health.set(health_update.0.into_owned());
-        }
-        // TODO: Debug assert that we've consumed all data
-    }
-}
- */

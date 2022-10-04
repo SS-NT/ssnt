@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{messaging::Channel, ConnectionId, NetworkManager, Players};
 
-pub(crate) struct ServerNetworkTime {
+/// Timing data of the server.
+pub struct ServerNetworkTime {
     /// How many seconds a server tick lasts
     server_tick_seconds: f64,
     /// The current server tick

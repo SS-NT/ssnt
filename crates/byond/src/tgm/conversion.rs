@@ -1,4 +1,4 @@
-use bevy::{asset::AssetPathId, math::UVec2};
+use bevy::{asset::AssetPathId, math::UVec2, utils::HashMap};
 
 use super::{Tile, TileMap};
 use maps::{TileData, TileLayer, TileMapData};
@@ -8,6 +8,7 @@ pub fn to_map_data(tilemap: &TileMap) -> TileMapData {
 
     let mut temporary_tiles = Vec::new();
     temporary_tiles.resize_with(size.x as usize * size.y as usize, Default::default);
+    let mut job_spawns = HashMap::<String, Vec<UVec2>>::default();
 
     // Loop through all positions and convert the tile format
     for (position, &definition_index) in tilemap.tiles.iter() {
@@ -16,25 +17,23 @@ pub fn to_map_data(tilemap: &TileMap) -> TileMapData {
         // TODO: Cache this conversion (indexed by definition id)
         let tile_data = tile_to_data(definition);
         *temporary_tiles.get_mut(index as usize).unwrap() = Some(tile_data);
-    }
 
-    // Find arrivals to spawn players there
-    let spawn_definiton = tilemap.definitions.iter().enumerate().find(|(_, tile)| {
-        tile.components.iter().any(|c| {
-            c.path == "/obj/docking_port/stationary"
-                && c.variable("id").map(|v| &v.value)
-                    == Some(&super::Value::Literal("arrivals_stationary".to_string()))
-        })
-    });
-
-    let spawn_position = spawn_definiton.map(|(spawn_index, _)| {
-        let (&spawn_position, _) = tilemap
-            .tiles
+        // Find job spawn on tile
+        for object in definition
+            .components
             .iter()
-            .find(|(_, index)| **index == spawn_index)
-            .unwrap();
-        UVec2::new(spawn_position.x, spawn_position.z)
-    });
+            .filter(|c| c.path.starts_with("/obj/effect/landmark/start/"))
+        {
+            let job_name = object.path.rsplit_once('/').unwrap().1;
+            if job_name.is_empty() {
+                continue;
+            }
+            job_spawns
+                .entry_ref(job_name)
+                .or_default()
+                .push(UVec2::new(position.x, position.z));
+        }
+    }
 
     TileMapData {
         size,
@@ -42,7 +41,7 @@ pub fn to_map_data(tilemap: &TileMap) -> TileMapData {
             .into_iter()
             .map(|t| t.unwrap_or_default())
             .collect(),
-        spawn_position: spawn_position.unwrap_or(UVec2::ZERO),
+        job_spawn_positions: job_spawns,
     }
 }
 

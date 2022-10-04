@@ -3,8 +3,8 @@ use std::{any::TypeId, time::Duration};
 use bevy::{
     ecs::system::SystemParam,
     prelude::{
-        warn, App, EventReader, EventWriter, ParallelSystemDescriptorCoercion, Plugin, Res, ResMut,
-        SystemLabel,
+        warn, App, EventReader, EventWriter, Local, ParallelSystemDescriptorCoercion, Plugin, Res,
+        ResMut, SystemLabel,
     },
     utils::{HashMap, HashSet},
 };
@@ -14,6 +14,7 @@ use bevy_renet::{
     },
     run_if_client_connected,
 };
+use bytes::Bytes;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{ConnectionId, NetworkManager, NetworkSystem, Players};
@@ -46,7 +47,7 @@ enum MessageKind {
 struct IncomingMessage {
     connection: ConnectionId,
     type_id: u16,
-    content: Vec<u8>,
+    content: Bytes,
 }
 
 /// Specifies to which peers a message should be sent
@@ -64,9 +65,10 @@ pub enum MessageReceivers {
 /// A message that will be sent to a single or multiple peers
 pub struct OutboundMessage {
     type_id: u16,
-    content: Vec<u8>,
+    content: Bytes,
     receivers: MessageReceivers,
     kind: MessageKind,
+    priority: i16,
 }
 
 /// The actual data being serialized over the network
@@ -76,14 +78,14 @@ struct NetworkMessage {
     type_id: u16,
     // TODO: Use serde_bytes for optimization
     /// The serialized content of the message
-    content: Vec<u8>,
+    content: Bytes,
 }
 
-impl From<&OutboundMessage> for NetworkMessage {
-    fn from(outbound: &OutboundMessage) -> Self {
+impl From<OutboundMessage> for NetworkMessage {
+    fn from(outbound: OutboundMessage) -> Self {
         Self {
             type_id: outbound.type_id,
-            content: outbound.content.clone(),
+            content: outbound.content,
         }
     }
 }
@@ -96,6 +98,11 @@ struct UnreliableNetworkMessage(pub NetworkMessage);
 pub struct MessageEvent<T> {
     pub message: T,
     pub connection: ConnectionId,
+}
+
+// This should be private, but the SystemParam implementation prevents this.
+pub struct InternalSenderRes {
+    sender: flume::Sender<OutboundMessage>,
 }
 
 pub trait AppExt {
@@ -151,8 +158,8 @@ impl AppExt for App {
 
 #[derive(SystemParam)]
 pub struct MessageSender<'w, 's> {
-    // TODO: Use queue in resource instead, so we can consume the message and avoid a clone
-    outbound_messages: EventWriter<'w, 's, OutboundMessage>,
+    sender_res: Res<'w, InternalSenderRes>,
+    message_sender: Local<'s, Option<flume::Sender<OutboundMessage>>>,
     types: Res<'w, MessageTypes>,
 }
 
@@ -161,7 +168,14 @@ impl<'w, 's> MessageSender<'w, 's> {
     where
         T: 'static + Serialize + Send + Sync,
     {
-        self.send_internal(message, receivers, MessageKind::Reliable);
+        self.send_internal(message, receivers, MessageKind::Reliable, 0);
+    }
+
+    pub fn send_with_priority<T>(&mut self, message: &T, receivers: MessageReceivers, priority: i16)
+    where
+        T: 'static + Serialize + Send + Sync,
+    {
+        self.send_internal(message, receivers, MessageKind::Reliable, priority);
     }
 
     pub fn send_to_server<T>(&mut self, message: &T)
@@ -175,11 +189,16 @@ impl<'w, 's> MessageSender<'w, 's> {
     where
         T: 'static + Serialize + Send + Sync,
     {
-        self.send_internal(message, receivers, MessageKind::Unreliable);
+        self.send_internal(message, receivers, MessageKind::Unreliable, 0);
     }
 
-    fn send_internal<T>(&mut self, message: &T, receivers: MessageReceivers, kind: MessageKind)
-    where
+    fn send_internal<T>(
+        &mut self,
+        message: &T,
+        receivers: MessageReceivers,
+        kind: MessageKind,
+        priority: i16,
+    ) where
         T: 'static + Serialize + Send + Sync,
     {
         let type_id = self
@@ -189,11 +208,19 @@ impl<'w, 's> MessageSender<'w, 's> {
             .expect("Tried to send unregistered message type");
         let event = OutboundMessage {
             type_id: *type_id,
-            content: bincode::serialize(message).expect("Unable to serialize message"),
+            content: bincode::serialize(message)
+                .expect("Unable to serialize message")
+                .into(),
             receivers,
             kind,
+            priority,
         };
-        self.outbound_messages.send(event);
+        self.get_sender().send(event).unwrap();
+    }
+
+    fn get_sender(&mut self) -> &mut flume::Sender<OutboundMessage> {
+        self.message_sender
+            .get_or_insert_with(|| self.sender_res.sender.clone())
     }
 }
 
@@ -219,8 +246,8 @@ impl Channel {
             ChannelConfig::Reliable(ReliableChannelConfig {
                 channel_id: Self::Default.id(),
                 message_resend_time: Duration::ZERO,
-                message_send_queue_size: 4096,
-                message_receive_queue_size: 4096,
+                message_send_queue_size: 8192,
+                message_receive_queue_size: 8192,
                 ..Default::default()
             }),
             ChannelConfig::Unreliable(UnreliableChannelConfig {
@@ -282,47 +309,54 @@ fn read_channel_client(mut events: EventWriter<IncomingMessage>, mut client: Res
     }
 }
 
-// NOTE: This message sending method is inefficient, as it needs to clone for every receiver.
-//       It should be made more efficient if the networking crate is updated or is switched for something else.
 fn send_outbound_messages_server(
-    mut messages: EventReader<OutboundMessage>,
+    receiver: &flume::Receiver<OutboundMessage>,
     mut server: ResMut<RenetServer>,
     players: Res<Players>,
+    mut message_buffer: Local<Vec<OutboundMessage>>,
 ) {
-    for outbound in messages.iter() {
-        match &outbound.receivers {
+    // Read messages from outbound channel
+    message_buffer.extend(receiver.try_iter());
+    // Sort current messages by priority
+    message_buffer.sort_unstable_by(|a, b| b.priority.cmp(&a.priority));
+
+    for outbound in message_buffer.drain(..) {
+        let message = NetworkMessage {
+            type_id: outbound.type_id,
+            content: outbound.content,
+        };
+        match outbound.receivers {
             MessageReceivers::AllPlayers => {
                 send_message_to(
                     &mut server,
-                    outbound,
+                    message,
+                    outbound.kind,
                     players.players.iter().map(|(id, _)| id).copied(),
                 );
             }
             MessageReceivers::Set(connections) => {
-                send_message_to(&mut server, outbound, connections.iter().copied());
+                send_message_to(&mut server, message, outbound.kind, connections.into_iter());
             }
             MessageReceivers::Server => {
                 panic!("Trying to send to server from server");
             }
             MessageReceivers::Single(id) => {
-                send_message_to(&mut server, outbound, std::iter::once(*id));
+                send_message_to(&mut server, message, outbound.kind, std::iter::once(id));
             }
         }
     }
+
+    message_buffer.clear();
 }
 
 fn send_message_to(
     server: &mut RenetServer,
-    outbound: &OutboundMessage,
+    message: NetworkMessage,
+    kind: MessageKind,
     receivers: impl Iterator<Item = ConnectionId>,
 ) {
-    let message = NetworkMessage {
-        type_id: outbound.type_id,
-        content: outbound.content.clone(),
-    };
-
-    let serialized = bincode::serialize(&message).unwrap();
-    let channel = match outbound.kind {
+    let serialized: Bytes = bincode::serialize(&message).unwrap().into();
+    let channel = match kind {
         MessageKind::Reliable => Channel::Default,
         MessageKind::Unreliable => Channel::DefaultUnreliable,
     };
@@ -332,10 +366,10 @@ fn send_message_to(
 }
 
 fn send_outbound_messages_client(
-    mut messages: EventReader<OutboundMessage>,
+    receiver: &flume::Receiver<OutboundMessage>,
     mut client: ResMut<RenetClient>,
 ) {
-    for outbound in messages.iter() {
+    for outbound in receiver.try_iter() {
         let channel = match outbound.kind {
             MessageKind::Reliable => Channel::Default,
             MessageKind::Unreliable => Channel::DefaultUnreliable,
@@ -356,9 +390,11 @@ pub(crate) struct MessagingPlugin;
 
 impl Plugin for MessagingPlugin {
     fn build(&self, app: &mut App) {
+        let (tx, rx) = flume::unbounded();
+
         app.init_resource::<MessageTypes>()
-            .add_event::<IncomingMessage>()
-            .add_event::<OutboundMessage>();
+            .insert_resource(InternalSenderRes { sender: tx })
+            .add_event::<IncomingMessage>();
 
         if app
             .world
@@ -366,16 +402,22 @@ impl Plugin for MessagingPlugin {
             .unwrap()
             .is_client()
         {
-            app.add_system(
-                send_outbound_messages_client.with_run_criteria(run_if_client_connected),
-            )
-            .add_system(
-                read_channel_client
-                    .label(MessagingSystem::ReadRaw)
-                    .with_run_criteria(run_if_client_connected),
-            );
+            let outbound = move |client: ResMut<RenetClient>| {
+                send_outbound_messages_client(&rx, client);
+            };
+            app.add_system(outbound.with_run_criteria(run_if_client_connected))
+                .add_system(
+                    read_channel_client
+                        .label(MessagingSystem::ReadRaw)
+                        .with_run_criteria(run_if_client_connected),
+                );
         } else {
-            app.add_system(send_outbound_messages_server.label(MessagingSystem::SendOutbound))
+            let outbound = move |server: ResMut<RenetServer>,
+                                 players: Res<Players>,
+                                 buffer: Local<Vec<OutboundMessage>>| {
+                send_outbound_messages_server(&rx, server, players, buffer);
+            };
+            app.add_system(outbound.label(MessagingSystem::SendOutbound))
                 .add_system(read_channel_server.label(MessagingSystem::ReadRaw));
         }
     }

@@ -144,10 +144,29 @@ fn handle_movement_message(
     }
 }
 
+fn handle_force_position_client(
+    mut query: Query<&mut Transform, With<ClientControlled>>,
+    mut messages: EventReader<MessageEvent<ForcePositionMessage>>,
+) {
+    if let Ok(mut transform) = query.get_single_mut() {
+        if let Some(event) = messages.iter().last() {
+            transform.translation = event.message.position;
+            transform.rotation = event.message.rotation;
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct MovementMessage {
     position: Vec3,
     rotation: Quat,
+}
+
+// TODO: Remove once movement is server authoritative
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ForcePositionMessage {
+    pub position: Vec3,
+    pub rotation: Quat,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
@@ -159,7 +178,8 @@ pub struct MovementPlugin;
 
 impl Plugin for MovementPlugin {
     fn build(&self, app: &mut App) {
-        app.add_network_message::<MovementMessage>();
+        app.add_network_message::<MovementMessage>()
+            .add_network_message::<ForcePositionMessage>();
 
         if app
             .world
@@ -173,7 +193,8 @@ impl Plugin for MovementPlugin {
                         .after(MovementSystem::Update)
                         .with_run_criteria(FixedTimestep::step(0.1)),
                 )
-                .add_system_to_stage(CoreStage::PostUpdate, character_rotation_system);
+                .add_system_to_stage(CoreStage::PostUpdate, character_rotation_system)
+                .add_system(handle_force_position_client);
         } else {
             app.add_system(handle_movement_message);
         }

@@ -1,0 +1,5 @@
+(
+    id: "security_officer",
+    name: "Security Officer",
+    description: "Keeps the order on the station. This includes beating the clown."
+)

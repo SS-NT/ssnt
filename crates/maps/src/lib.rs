@@ -26,7 +26,7 @@ pub struct TileMap {
     // Size in chunks
     size: UVec2,
     chunks: Vec<Option<Box<Chunk>>>,
-    pub spawn_position: UVec2,
+    pub job_spawn_positions: HashMap<String, Vec<UVec2>>,
 }
 
 impl TileMap {
@@ -36,7 +36,7 @@ impl TileMap {
         Self {
             size,
             chunks,
-            spawn_position: UVec2::ZERO,
+            job_spawn_positions: Default::default(),
         }
     }
 
@@ -148,7 +148,7 @@ impl TileMap {
 }
 
 // TODO: Do with proc macro
-impl networking::component::NetworkedToClient for TileMap {
+impl networking::variable::NetworkedToClient for TileMap {
     type Param = ();
 
     fn receiver_matters() -> bool {
@@ -156,17 +156,25 @@ impl networking::component::NetworkedToClient for TileMap {
     }
 
     fn serialize(
-        &mut self,
+        &self,
         _: &(),
         _: Option<networking::ConnectionId>,
         since_tick: Option<std::num::NonZeroU32>,
-    ) -> Option<networking::component::Bytes> {
+    ) -> Option<networking::variable::Bytes> {
         // Only serialize once per client
         if since_tick.is_some() {
             None
         } else {
-            Some(networking::component::Bytes::new())
+            Some(networking::variable::Bytes::new())
         }
+    }
+
+    fn update_state(&mut self, _: u32) -> bool {
+        false
+    }
+
+    fn priority(&self) -> i16 {
+        10
     }
 }
 
@@ -223,7 +231,7 @@ pub fn tile_neighbours(position: UVec2) -> impl Iterator<Item = (Direction, UVec
         .map(|(dir, p)| (dir, p.as_uvec2()))
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     North = 0,
     East,
@@ -276,7 +284,7 @@ pub struct TileMapData {
     /// Size in tiles
     pub size: UVec2,
     pub tiles: Vec<TileData>,
-    pub spawn_position: UVec2,
+    pub job_spawn_positions: HashMap<String, Vec<UVec2>>,
 }
 
 impl TileMapData {
@@ -316,13 +324,13 @@ impl TileReference {
 /// Attached to an entity that is a part of a tile.
 #[derive(Component)]
 struct TileEntity {
-    tilemap: networking::component::NetworkVar<Entity>,
-    position: networking::component::NetworkVar<UVec2>,
-    layer: networking::component::NetworkVar<TileLayer>,
+    tilemap: networking::variable::NetworkVar<Entity>,
+    position: networking::variable::NetworkVar<UVec2>,
+    layer: networking::variable::NetworkVar<TileLayer>,
 }
 
 // TODO: Do with proc macro
-impl networking::component::NetworkedToClient for TileEntity {
+impl networking::variable::NetworkedToClient for TileEntity {
     type Param = Res<'static, networking::identity::NetworkIdentities>;
 
     fn receiver_matters() -> bool {
@@ -330,18 +338,18 @@ impl networking::component::NetworkedToClient for TileEntity {
     }
 
     fn serialize(
-        &mut self,
+        &self,
         param: &bevy::prelude::Res<'_, networking::identity::NetworkIdentities>,
         _: Option<networking::ConnectionId>,
         since_tick: Option<std::num::NonZeroU32>,
-    ) -> Option<networking::component::Bytes> {
+    ) -> Option<networking::variable::Bytes> {
         let mut writer =
-            networking::component::BufMut::writer(networking::component::BytesMut::with_capacity(
-                std::mem::size_of::<Option<networking::component::ValueUpdate<Entity>>>(),
+            networking::variable::BufMut::writer(networking::variable::BytesMut::with_capacity(
+                std::mem::size_of::<Option<networking::variable::ValueUpdate<Entity>>>(),
             ));
-        let mut serializer = networking::component::ComponentSerializer::new(
+        let mut serializer = networking::variable::StandardSerializer::new(
             &mut writer,
-            networking::component::serializer_options(),
+            networking::variable::serializer_options(),
         );
 
         let tilemap_changed = since_tick
@@ -352,7 +360,7 @@ impl networking::component::NetworkedToClient for TileEntity {
                 let identity = param
                     .get_identity(*self.tilemap)
                     .expect("Tilemap entity must have network identity");
-                networking::component::ValueUpdate::from(identity)
+                networking::variable::ValueUpdate::from(identity)
             }),
             &mut serializer,
         )
@@ -362,7 +370,7 @@ impl networking::component::NetworkedToClient for TileEntity {
             .map(|t| self.position.has_changed_since(t.into()))
             .unwrap_or(true);
         serde::Serialize::serialize(
-            &position_changed.then(|| networking::component::ValueUpdate::from(*self.position)),
+            &position_changed.then(|| networking::variable::ValueUpdate::from(*self.position)),
             &mut serializer,
         )
         .unwrap();
@@ -371,26 +379,32 @@ impl networking::component::NetworkedToClient for TileEntity {
             .map(|t| self.layer.has_changed_since(t.into()))
             .unwrap_or(true);
         serde::Serialize::serialize(
-            &layer_changed.then(|| networking::component::ValueUpdate::from(*self.layer)),
+            &layer_changed.then(|| networking::variable::ValueUpdate::from(*self.layer)),
             &mut serializer,
         )
         .unwrap();
 
         Some(writer.into_inner().into())
     }
+
+    fn update_state(&mut self, tick: u32) -> bool {
+        self.tilemap.update_state(tick)
+            | self.position.update_state(tick)
+            | self.layer.update_state(tick)
+    }
 }
 
 #[derive(Default, Component, TypeUuid)]
 #[uuid = "02de843e-5491-4989-9991-60055d333a4b"]
 struct TileEntityClient {
-    tilemap: networking::component::ServerVar<Entity>,
-    position: networking::component::ServerVar<UVec2>,
+    tilemap: networking::variable::ServerVar<Entity>,
+    position: networking::variable::ServerVar<UVec2>,
     old_position: Option<UVec2>,
-    layer: networking::component::ServerVar<TileLayer>,
+    layer: networking::variable::ServerVar<TileLayer>,
 }
 
 // TODO: Do with proc macro
-impl networking::component::NetworkedFromServer for TileEntityClient {
+impl networking::variable::NetworkedFromServer for TileEntityClient {
     type Param = Res<'static, networking::identity::NetworkIdentities>;
 
     fn deserialize<'w, 's>(
@@ -398,12 +412,12 @@ impl networking::component::NetworkedFromServer for TileEntityClient {
         param: &<<Self::Param as bevy::ecs::system::SystemParam>::Fetch as bevy::ecs::system::SystemParamFetch<'w, 's>>::Item,
         data: &[u8],
     ) {
-        let mut deserializer = networking::component::ComponentDeserializer::with_reader(
-            networking::component::Buf::reader(data),
-            networking::component::serializer_options(),
+        let mut deserializer = networking::variable::StandardDeserializer::with_reader(
+            networking::variable::Buf::reader(data),
+            networking::variable::serializer_options(),
         );
         let tilemap_update = Option::<
-            networking::component::ValueUpdate<networking::identity::NetworkIdentity>,
+            networking::variable::ValueUpdate<networking::identity::NetworkIdentity>,
         >::deserialize(&mut deserializer)
         .expect("Error deserializing networked component");
         if let Some(tilemap_update) = tilemap_update {
@@ -415,7 +429,7 @@ impl networking::component::NetworkedFromServer for TileEntityClient {
         }
 
         let position_update =
-            Option::<networking::component::ValueUpdate<UVec2>>::deserialize(&mut deserializer)
+            Option::<networking::variable::ValueUpdate<UVec2>>::deserialize(&mut deserializer)
                 .expect("Error deserializing networked component");
         if let Some(position_update) = position_update {
             self.old_position = self.position.get().cloned();
@@ -423,7 +437,7 @@ impl networking::component::NetworkedFromServer for TileEntityClient {
         }
 
         let layer_update =
-            Option::<networking::component::ValueUpdate<TileLayer>>::deserialize(&mut deserializer)
+            Option::<networking::variable::ValueUpdate<TileLayer>>::deserialize(&mut deserializer)
                 .expect("Error deserializing networked component");
         if let Some(layer_update) = layer_update {
             self.layer.set(layer_update.0.into_owned());
@@ -431,8 +445,8 @@ impl networking::component::NetworkedFromServer for TileEntityClient {
         // TODO: Debug assert that we've consumed all data
     }
 
-    fn default_if_missing() -> Option<Box<Self>> {
-        Some(Box::new(Default::default()))
+    fn default_if_missing() -> Option<Self> {
+        Some(Default::default())
     }
 }
 
@@ -444,6 +458,8 @@ fn spawn_from_data(
 ) {
     for (map_entity, data) in query.iter() {
         let mut map = TileMap::new(data.size_in_chunks());
+        map.job_spawn_positions = data.job_spawn_positions.clone();
+
         for (data_index, tile_data) in data.tiles.iter().enumerate() {
             let y = data_index as u32 / data.size.x;
             let x = data_index as u32 - y * data.size.x;
@@ -558,15 +574,15 @@ struct TileMapClient {
 }
 
 // TODO: Do with proc macro
-impl networking::component::NetworkedFromServer for TileMapClient {
+impl networking::variable::NetworkedFromServer for TileMapClient {
     type Param = ();
 
     fn deserialize<'w, 's>(&mut self, _: &(), _: &[u8]) {
         // No data
     }
 
-    fn default_if_missing() -> Option<Box<Self>> {
-        Some(Box::new(Default::default()))
+    fn default_if_missing() -> Option<Self> {
+        Some(Default::default())
     }
 }
 
@@ -586,7 +602,9 @@ fn client_update_tile_entities(
                 )));
 
             // Update position in index
-            let mut tilemap = tilemaps.get_mut(*tile_entity.tilemap).unwrap();
+            let mut tilemap = tilemaps
+                .get_mut(*tile_entity.tilemap)
+                .expect("Tilemap component must exist");
             tilemap.tiles.entry(tile_position).or_default().layers[*tile_entity.layer] =
                 Some(entity);
             tilemap

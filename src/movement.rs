@@ -7,7 +7,7 @@ use bevy_rapier3d::prelude::{ExternalForce, ReadMassProperties, Velocity};
 use networking::{
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     spawning::{ClientControlled, ClientControls},
-    NetworkManager,
+    NetworkManager, Players,
 };
 use serde::{Deserialize, Serialize};
 
@@ -132,10 +132,16 @@ fn send_movement_update(
 fn handle_movement_message(
     mut query: Query<&mut Transform>,
     controls: Res<ClientControls>,
+    players: Res<Players>,
     mut messages: EventReader<MessageEvent<MovementMessage>>,
 ) {
     for event in messages.iter() {
-        if let Some(controlled) = controls.controlled_entity(event.connection) {
+        let player = match players.get(event.connection) {
+            Some(p) => p,
+            None => continue,
+        };
+
+        if let Some(controlled) = controls.controlled_entity(player.id) {
             if let Ok(mut transform) = query.get_mut(controlled) {
                 transform.translation = event.message.position;
                 transform.rotation = event.message.rotation;

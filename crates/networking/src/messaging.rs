@@ -3,8 +3,8 @@ use std::{any::TypeId, time::Duration};
 use bevy::{
     ecs::system::SystemParam,
     prelude::{
-        warn, App, EventReader, EventWriter, Local, ParallelSystemDescriptorCoercion, Plugin, Res,
-        ResMut, SystemLabel,
+        trace, warn, App, EventReader, EventWriter, Local, ParallelSystemDescriptorCoercion,
+        Plugin, Res, ResMut, SystemLabel,
     },
     utils::{HashMap, HashSet},
 };
@@ -33,6 +33,7 @@ impl MessageTypes {
         self.last_type = type_id;
 
         self.types.insert(TypeId::of::<T>(), type_id);
+        trace!(type_id = ?TypeId::of::<T>(), message_id = type_id, "Registered message type {}", std::any::type_name::<T>());
 
         type_id
     }

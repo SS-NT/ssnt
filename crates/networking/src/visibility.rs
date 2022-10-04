@@ -5,16 +5,16 @@ use bevy::{
         ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SystemLabel, UVec2,
     },
     transform::TransformSystem,
-    utils::{hashbrown::hash_map::Entry, HashMap, HashSet},
+    utils::{HashMap, HashSet, Uuid},
 };
 
-use crate::{identity::NetworkIdentity, ConnectionId, NetworkManager, NetworkSystem};
+use crate::{identity::NetworkIdentity, ConnectionId, NetworkManager, NetworkSystem, Players};
 
-/// Allows connections to observer networked objects in range
+/// Allows players to observe networked objects in range
 #[derive(Component)]
 pub struct NetworkObserver {
     pub range: u32,
-    pub connection: ConnectionId,
+    pub player_id: Uuid,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,18 +45,13 @@ impl NetworkVisibility {
             .or_insert(ObserverState::Added);
     }
 
-    fn remove_observer(&mut self, connection: ConnectionId) {
-        if let Entry::Occupied(mut o) = self.observers.entry(connection) {
-            match o.get() {
-                ObserverState::Added => {
-                    o.remove_entry();
-                }
-                ObserverState::Observing => {
-                    *o.get_mut() = ObserverState::Removed;
-                }
-                ObserverState::Removed => {}
-            }
-        };
+    /// Marks all observer states as removed.
+    /// Panics if called between visibility modification and update.
+    fn assume_removed(&mut self) {
+        for (_, state) in self.observers.iter_mut() {
+            debug_assert!(*state != ObserverState::Added);
+            *state = ObserverState::Removed;
+        }
     }
 
     fn update(&mut self) {
@@ -223,21 +218,26 @@ fn global_grid_update(
 // TODO: Remove deleted entities from grid
 fn grid_visibility(
     mut visibilities: ResMut<NetworkVisibilities>,
+    players: Res<Players>,
     grid: Res<GlobalGrid>,
     observers: Query<(&NetworkObserver, &InGrid)>,
     identities: Query<&NetworkIdentity>,
 ) {
+    // Act like all observers have stopped observing (nothing visible by default)
+    for (_, vis) in visibilities.visibility.iter_mut() {
+        vis.assume_removed();
+    }
+
     for (observer, grid_position) in observers.iter() {
         let position = match grid_position.position {
             Some(p) => p,
             None => continue,
         };
 
-        let connection = observer.connection;
-
-        for (_, vis) in visibilities.visibility.iter_mut() {
-            vis.remove_observer(connection);
-        }
+        let connection = match players.get_connection(&observer.player_id) {
+            Some(c) => c,
+            None => continue,
+        };
 
         for cell in grid.relevant_cells(position, UVec2::new(observer.range, observer.range)) {
             for entity in cell.entities.iter() {

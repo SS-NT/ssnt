@@ -30,11 +30,12 @@ use std::{
 };
 
 use bevy::{
+    app::AppExit,
     prelude::{
         error, info, warn, App, Commands, EventReader, EventWriter, Local,
         ParallelSystemDescriptorCoercion, Plugin, Res, ResMut, State, SystemLabel,
     },
-    utils::HashMap,
+    utils::{HashMap, Uuid},
 };
 use identity::IdentityPlugin;
 use messaging::{AppExt, Channel, MessageEvent, MessageReceivers, MessageSender, MessagingPlugin};
@@ -85,13 +86,16 @@ pub enum ClientEvent {
 #[non_exhaustive]
 pub enum ServerEvent {
     PlayerConnected(ConnectionId),
+    PlayerDisconnected(ConnectionId),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct ClientHello {
     token: Vec<u8>,
     version: String,
+    // TODO: Put these into the token
     username: String,
+    id: Uuid,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -192,6 +196,7 @@ fn client_send_hello(
             token: Vec::new(),
             version: "TODO".into(),
             username: "John Doe".into(),
+            id: Uuid::new_v4(),
         },
         MessageReceivers::Server,
     );
@@ -222,12 +227,14 @@ impl Display for ConnectionId {
 }
 
 pub struct Player {
+    pub id: Uuid,
     pub username: String,
 }
 
 #[derive(Default)]
 pub struct Players {
     players: HashMap<ConnectionId, Player>,
+    user_ids: HashMap<Uuid, ConnectionId>,
 }
 
 impl Players {
@@ -235,13 +242,32 @@ impl Players {
         self.players.insert(
             connection,
             Player {
+                id: message.id,
                 username: message.username.clone(),
             },
         );
+        self.user_ids.insert(message.id, connection);
+    }
+
+    fn remove(&mut self, connection: ConnectionId) -> Option<Player> {
+        if let Some(player) = self.players.remove(&connection) {
+            self.user_ids.remove(&player.id);
+            Some(player)
+        } else {
+            None
+        }
     }
 
     pub fn players(&self) -> &HashMap<ConnectionId, Player> {
         &self.players
+    }
+
+    pub fn get_connection(&self, k: &Uuid) -> Option<ConnectionId> {
+        self.user_ids.get(k).copied()
+    }
+
+    pub fn get(&self, connection: ConnectionId) -> Option<&Player> {
+        self.players.get(&connection)
     }
 }
 
@@ -254,19 +280,52 @@ fn server_handle_connect(
 ) {
     for event in hello_messages.iter() {
         // TODO: Auth
-        info!("New client connected!");
         let server_info = ServerInfo {
             tick_duration_seconds: network_time.tick_in_seconds() as f32,
         };
         sender.send(&server_info, MessageReceivers::Single(event.connection));
         players.add(event.connection, &event.message);
         server_events.send(ServerEvent::PlayerConnected(event.connection));
+
+        let uuid = event.message.id.to_string();
+        info!(connection = ?event.connection, id = uuid.as_str(), "New client connected");
+    }
+}
+
+fn server_handle_disconnect(
+    mut renet_events: EventReader<bevy_renet::renet::ServerEvent>,
+    mut players: ResMut<Players>,
+    mut server_events: EventWriter<ServerEvent>,
+) {
+    for event in renet_events.iter() {
+        if let bevy_renet::renet::ServerEvent::ClientDisconnected(id) = event {
+            let connection = ConnectionId(*id);
+            if let Some(player) = players.remove(connection) {
+                let uuid = player.id.to_string();
+                info!(connection = ?connection, id = uuid.as_str(), "Player disconnected");
+                server_events.send(ServerEvent::PlayerDisconnected(connection));
+            }
+        }
     }
 }
 
 fn report_errors(mut events: EventReader<RenetError>) {
     for error in events.iter() {
         error!(?error, "Network error");
+    }
+}
+
+fn client_disconnect_on_exit(
+    mut events: EventReader<AppExit>,
+    client: Option<ResMut<RenetClient>>,
+) {
+    if events.iter().last().is_some() {
+        if let Some(mut client) = client {
+            if client.is_connected() {
+                bevy::log::info!("Disconnected");
+                client.disconnect();
+            }
+        }
     }
 }
 
@@ -309,11 +368,13 @@ impl Plugin for NetworkingPlugin {
                 .add_event::<ClientEvent>()
                 .add_system(handle_joining_server)
                 .add_system(client_joined_server.after(NetworkSystem::ReadNetworkMessages))
-                .add_system(client_send_hello);
+                .add_system(client_send_hello)
+                .add_system(client_disconnect_on_exit);
         } else {
             app.add_event::<ServerEvent>()
                 .init_resource::<Players>()
-                .add_system(server_handle_connect.after(NetworkSystem::ReadNetworkMessages));
+                .add_system(server_handle_connect.after(NetworkSystem::ReadNetworkMessages))
+                .add_system(server_handle_disconnect);
         }
     }
 }

@@ -10,7 +10,7 @@ use networking::{
     transform::NetworkTransform,
     variable::{NetworkVar, ServerVar},
     visibility::NetworkObserver,
-    Networked,
+    ConnectionId, Networked, Player, Players,
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +24,7 @@ pub struct RoundPlugin;
 impl Plugin for RoundPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         app.add_network_message::<StartRoundRequest>()
+            .add_network_message::<RequestJoin>()
             .add_networked_resource::<RoundData, RoundDataClient>();
         if is_server(app) {
             app.add_state(RoundState::Loading)
@@ -40,6 +41,9 @@ impl Plugin for RoundPlugin {
                     SystemSet::on_enter(RoundState::Running)
                         .with_system(spawn_players_roundstart)
                         .with_system(start_round_timer),
+                )
+                .add_system_set(
+                    SystemSet::on_update(RoundState::Running).with_system(spawn_player_latejoin),
                 )
                 .add_system(update_round_data);
         }
@@ -118,9 +122,50 @@ fn start_round_timer(mut round_data: ResMut<RoundData>, server_time: Res<ServerN
     *round_data.start = Some(server_time.current_tick());
 }
 
+fn spawn_player(
+    connection: ConnectionId,
+    player: &Player,
+    main_map: &TileMap,
+    job: &JobDefinition,
+    commands: &mut Commands,
+    controls: &mut ClientControls,
+    sender: &mut MessageSender,
+) {
+    let player_entity = crate::create_player(&mut commands.spawn());
+    // Get spawn position for job
+    let spawn_tile = main_map
+        .job_spawn_positions
+        .get(&job.id)
+        .map(|p| *p.first().unwrap()) // TODO: Use random selection
+        .unwrap_or_default();
+    let spawn_position = Vec3::new(spawn_tile.x as f32, 1.0, spawn_tile.y as f32);
+    // Insert server-only components
+    commands
+        .entity(player_entity)
+        .insert(NetworkObserver {
+            range: 1,
+            player_id: player.id,
+        })
+        .insert(PrefabPath("player".into()))
+        .insert(NetworkTransform::default())
+        .insert(Transform::from_translation(spawn_position))
+        .networked();
+
+    controls.give_control(player.id, player_entity);
+    // Force client to accept new position (unless they cheat lol)
+    sender.send(
+        &ForcePositionMessage {
+            position: spawn_position,
+            rotation: Quat::IDENTITY,
+        },
+        MessageReceivers::Single(connection),
+    );
+}
+
 fn spawn_players_roundstart(
     selected_jobs: Res<SelectedJobs>,
     job_data: Res<Assets<JobDefinition>>,
+    players: Res<Players>,
     maps: Query<&TileMap>,
     mut controls: ResMut<ClientControls>,
     mut commands: Commands,
@@ -129,34 +174,57 @@ fn spawn_players_roundstart(
     // TODO: Support multiple maps
     let main_map = maps.single();
     for (connection, job) in selected_jobs.selected(&job_data) {
-        let player = crate::create_player(&mut commands.spawn());
-        // Get spawn position for job
-        let spawn_tile = main_map
-            .job_spawn_positions
-            .get(&job.id)
-            .map(|p| *p.first().unwrap()) // TODO: Use random selection
-            .unwrap_or_default();
-        let spawn_position = Vec3::new(spawn_tile.x as f32, 1.0, spawn_tile.y as f32);
-        // Insert server-only components
-        commands
-            .entity(player)
-            .insert(NetworkObserver {
-                range: 1,
-                connection,
-            })
-            .insert(PrefabPath("player".into()))
-            .insert(NetworkTransform::default())
-            .insert(Transform::from_translation(spawn_position))
-            .networked();
+        let player = match players.get(connection) {
+            Some(p) => p,
+            None => continue,
+        };
 
-        controls.give_control(connection, player);
-        // Force client to accept new position (unless they cheat lol)
-        sender.send(
-            &ForcePositionMessage {
-                position: spawn_position,
-                rotation: Quat::IDENTITY,
-            },
-            MessageReceivers::Single(connection),
+        spawn_player(
+            connection,
+            player,
+            main_map,
+            job,
+            &mut commands,
+            controls.as_mut(),
+            &mut sender,
+        );
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RequestJoin;
+
+fn spawn_player_latejoin(
+    mut messages: EventReader<MessageEvent<RequestJoin>>,
+    selected_jobs: Res<SelectedJobs>,
+    job_data: Res<Assets<JobDefinition>>,
+    players: Res<Players>,
+    maps: Query<&TileMap>,
+    mut controls: ResMut<ClientControls>,
+    mut commands: Commands,
+    mut sender: MessageSender,
+) {
+    // TODO: Support multiple maps
+    let main_map = maps.single();
+    for event in messages.iter() {
+        let player = match players.get(event.connection) {
+            Some(p) => p,
+            None => continue,
+        };
+
+        let job = match selected_jobs.get(event.connection, &job_data) {
+            Some(j) => j,
+            None => continue,
+        };
+
+        spawn_player(
+            event.connection,
+            player,
+            main_map,
+            job,
+            &mut commands,
+            controls.as_mut(),
+            &mut sender,
         );
     }
 }

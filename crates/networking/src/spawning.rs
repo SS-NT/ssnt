@@ -8,7 +8,7 @@ use bevy::{
         SystemLabel, SystemSet, With,
     },
     scene::{DynamicScene, DynamicSceneBundle},
-    utils::{HashMap, HashSet},
+    utils::{HashMap, HashSet, Uuid},
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +16,7 @@ use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     visibility::NetworkVisibilities,
-    ConnectionId, NetworkManager, NetworkSystem,
+    ConnectionId, NetworkManager, NetworkSystem, Players, ServerEvent,
 };
 
 /// A message that instructs the client to spawn a specific entity.
@@ -75,6 +75,7 @@ fn send_spawn_messages(
     )>,
     visibilities: Res<NetworkVisibilities>,
     controlled: Res<ClientControls>,
+    players: Res<Players>,
     mut sender: MessageSender,
     mut entity_events: EventWriter<ServerEntityEvent>,
 ) {
@@ -122,9 +123,14 @@ fn send_spawn_messages(
                 );
             }
 
-            let removed_observers: HashSet<ConnectionId> =
-                visibility.removed_observers().copied().collect();
+            let connected_players = players.players();
+            let removed_observers: HashSet<ConnectionId> = visibility
+                .removed_observers()
+                .copied()
+                .filter(|c| connected_players.contains_key(c))
+                .collect();
             if !removed_observers.is_empty() {
+                // Send despawn message
                 sender.send_with_priority(
                     &SpawnMessage::Despawn(*identity),
                     MessageReceivers::Set(removed_observers.clone()),
@@ -225,28 +231,28 @@ fn receive_spawn(
 /// Tracks which connected client controls which entity
 #[derive(Default)]
 pub struct ClientControls {
-    mapping: HashMap<ConnectionId, Entity>,
+    mapping: HashMap<Uuid, Entity>,
     entities: HashSet<Entity>,
-    changed: HashSet<ConnectionId>,
+    changed: HashSet<Uuid>,
 }
 
 impl ClientControls {
-    pub fn give_control(&mut self, connection: ConnectionId, entity: Entity) {
-        if let Some(entity) = self.mapping.remove(&connection) {
+    pub fn give_control(&mut self, id: Uuid, entity: Entity) {
+        if let Some(entity) = self.mapping.remove(&id) {
             self.entities.remove(&entity);
         }
 
-        self.mapping.insert(connection, entity);
+        self.mapping.insert(id, entity);
         self.entities.insert(entity);
-        self.changed.insert(connection);
+        self.changed.insert(id);
     }
 
-    pub fn does_control(&self, connection: ConnectionId, entity: Entity) -> bool {
-        self.mapping.get(&connection) == Some(&entity)
+    pub fn does_control(&self, id: Uuid, entity: Entity) -> bool {
+        self.mapping.get(&id) == Some(&entity)
     }
 
-    pub fn controlled_entity(&self, connection: ConnectionId) -> Option<Entity> {
-        self.mapping.get(&connection).copied()
+    pub fn controlled_entity(&self, id: Uuid) -> Option<Entity> {
+        self.mapping.get(&id).copied()
     }
 }
 
@@ -258,12 +264,13 @@ struct ControlUpdate {
 fn send_control_updates(
     mut controls: ResMut<ClientControls>,
     identities: Res<NetworkIdentities>,
+    players: Res<Players>,
     mut sender: MessageSender,
 ) {
     let controls = &mut *controls;
 
-    controls.changed.retain(|connection| {
-        let new_entity = controls.mapping.get(connection).copied();
+    controls.changed.retain(|id| {
+        let new_entity = controls.mapping.get(id).copied();
         let newly_controlled = new_entity.and_then(|e| identities.get_identity(e));
 
         // Keep change if no network identity available yet
@@ -274,9 +281,36 @@ fn send_control_updates(
         let update = ControlUpdate {
             controlled_entity: newly_controlled,
         };
-        sender.send_with_priority(&update, MessageReceivers::Single(*connection), 55);
+        if let Some(connection) = players.get_connection(id) {
+            sender.send_with_priority(&update, MessageReceivers::Single(connection), 55);
+        }
         false
     });
+}
+
+/// Sends the controlled entities to joined player that already had control of an entity (rejoin).
+fn send_control_updates_to_rejoined(
+    mut events: EventReader<ServerEvent>,
+    mut controls: ResMut<ClientControls>,
+    identities: Res<NetworkIdentities>,
+    players: Res<Players>,
+    mut sender: MessageSender,
+) {
+    let controls = &mut *controls;
+
+    for connection in events.iter().filter_map(|e| match e {
+        ServerEvent::PlayerConnected(c) => Some(c),
+        _ => None,
+    }) {
+        let player = players.get(*connection).unwrap();
+        if let Some(controlled) = controls.controlled_entity(player.id) {
+            let identity = identities.get_identity(controlled).unwrap();
+            let update = ControlUpdate {
+                controlled_entity: Some(identity),
+            };
+            sender.send_with_priority(&update, MessageReceivers::Single(*connection), 55);
+        }
+    }
 }
 
 fn receive_control_updates(
@@ -354,6 +388,11 @@ impl Plugin for SpawningPlugin {
                         )
                         .with_system(
                             send_control_updates
+                                .label(SpawningSystems::ClientControl)
+                                .after(SpawningSystems::Spawn),
+                        )
+                        .with_system(
+                            send_control_updates_to_rejoined
                                 .label(SpawningSystems::ClientControl)
                                 .after(SpawningSystems::Spawn),
                         ),

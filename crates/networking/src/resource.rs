@@ -49,8 +49,9 @@ fn send_networked_resource_to_new<
     let resource_id = registry
         .get_id(&C::TYPE_UUID)
         .expect("Networked resource incorrectly registered");
-    let new_players = events.iter().map(|e| match e {
-        ServerEvent::PlayerConnected(c) => c,
+    let new_players = events.iter().filter_map(|e| match e {
+        ServerEvent::PlayerConnected(c) => Some(c),
+        _ => None,
     });
     if S::receiver_matters() {
         // Serialize resource for every receiver

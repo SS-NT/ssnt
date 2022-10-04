@@ -1,6 +1,6 @@
 use crate::{
     job::{JobDefinition, SelectJobMessage},
-    round::{RoundDataClient, RoundState, StartRoundRequest},
+    round::{RequestJoin, RoundDataClient, RoundState, StartRoundRequest},
     GameState,
 };
 use bevy::{asset::HandleId, prelude::*};
@@ -34,29 +34,38 @@ fn ui(
     egui::Window::new("Lobby")
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(egui_context.ctx_mut(), |ui| {
-            if ui.button("Start round").clicked() {
-                sender.send_to_server(&StartRoundRequest);
-            }
-
             if let Some(data) = round_data {
                 ui.label(format!("Round state: {:?}", data.state()));
 
-                if matches!(data.state(), RoundState::Running) {
-                    ui.label(format!("Round started tick: {}", data.start().unwrap()));
+                match data.state() {
+                    RoundState::Ready => {
+                        if ui.button("Start round").clicked() {
+                            sender.send_to_server(&StartRoundRequest);
+                        }
+                    }
+                    RoundState::Running => {
+                        ui.label(format!("Round started tick: {}", data.start().unwrap()));
+                        if ui.button("Join").clicked() {
+                            sender.send_to_server(&RequestJoin);
+                        }
+                    }
+                    _ => {}
                 }
+            } else {
+                ui.label("Loading...");
             }
         });
 }
 
 fn job_ui(
     mut egui_context: ResMut<EguiContext>,
-    round_data: Option<Res<RoundDataClient>>,
+    client_controlled: Query<(), With<ClientControlled>>,
     jobs: Res<Assets<JobDefinition>>,
     mut sender: MessageSender,
     mut selected_job: Local<Option<HandleId>>,
 ) {
     // Only show lobby UI if not controlling any entity
-    if round_data.map(|d| *d.state() == RoundState::Ready) != Some(true) {
+    if !client_controlled.is_empty() {
         return;
     }
 

@@ -7,7 +7,7 @@ use bevy_rapier3d::prelude::{ExternalForce, ReadMassProperties, Velocity};
 use networking::{
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     spawning::{ClientControlled, ClientControls},
-    NetworkManager, Players,
+    NetworkManager, Players, ServerEvent,
 };
 use serde::{Deserialize, Serialize};
 
@@ -150,14 +150,50 @@ fn handle_movement_message(
     }
 }
 
+// HACK: forces the client to be at a position
+// This is extremely ugly as we keep the player there for some time, to ensure it doesn't get overriden by any network messages.
+// The code needs to die.
 fn handle_force_position_client(
     mut query: Query<&mut Transform, With<ClientControlled>>,
     mut messages: EventReader<MessageEvent<ForcePositionMessage>>,
+    time: Res<Time>,
+    mut current: Local<Option<(f64, ForcePositionMessage)>>,
 ) {
+    if let Some(event) = messages.iter().last() {
+        *current = Some((time.seconds_since_startup(), event.message.clone()));
+    }
+
     if let Ok(mut transform) = query.get_single_mut() {
-        if let Some(event) = messages.iter().last() {
-            transform.translation = event.message.position;
-            transform.rotation = event.message.rotation;
+        if let Some((start, message)) = current.as_ref() {
+            if *start + 0.5 > time.seconds_since_startup() {
+                transform.translation = message.position;
+                transform.rotation = message.rotation;
+            }
+        }
+    }
+}
+
+fn force_position_on_rejoin(
+    mut server_events: EventReader<ServerEvent>,
+    controlled: Res<ClientControls>,
+    players: Res<Players>,
+    transforms: Query<&Transform>,
+    mut sender: MessageSender,
+) {
+    for event in server_events.iter() {
+        if let ServerEvent::PlayerConnected(connection) = event {
+            let player = players.get(*connection).unwrap();
+            if let Some(entity) = controlled.controlled_entity(player.id) {
+                if let Ok(transform) = transforms.get(entity) {
+                    sender.send(
+                        &ForcePositionMessage {
+                            position: transform.translation,
+                            rotation: transform.rotation,
+                        },
+                        MessageReceivers::Single(*connection),
+                    );
+                }
+            }
         }
     }
 }
@@ -202,7 +238,8 @@ impl Plugin for MovementPlugin {
                 .add_system_to_stage(CoreStage::PostUpdate, character_rotation_system)
                 .add_system(handle_force_position_client);
         } else {
-            app.add_system(handle_movement_message);
+            app.add_system(handle_movement_message)
+                .add_system(force_position_on_rejoin);
         }
     }
 }

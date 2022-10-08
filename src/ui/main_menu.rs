@@ -16,11 +16,16 @@ impl Plugin for MainMenuPlugin {
     }
 }
 
+struct DisconnectReason {
+    reason: String,
+}
+
 fn ui(
     mut egui_context: ResMut<EguiContext>,
     mut ip: Local<String>,
     mut name: Local<String>,
     mut client_events: EventWriter<ClientEvent>,
+    disconnect: Option<Res<DisconnectReason>>,
     mut commands: Commands,
 ) {
     egui::Area::new("main buttons")
@@ -30,7 +35,9 @@ fn ui(
                 // TODO: Actually use name
                 let name_field = TextEdit::singleline(&mut *name).hint_text("Name");
                 if name_field.show(ui).response.changed() {
-                    commands.insert_resource(UserData { username: name.clone() });
+                    commands.insert_resource(UserData {
+                        username: name.clone(),
+                    });
                 }
 
                 let ip_field = TextEdit::singleline(&mut *ip).hint_text("Server IP");
@@ -42,8 +49,14 @@ fn ui(
                     }
                 }
             });
+
             if !ip.is_empty() && SocketAddr::from_str(ip.as_ref()).is_err() {
                 ui.colored_label(egui::Color32::DARK_RED, "Invalid address");
+            }
+
+            if let Some(disconnect) = disconnect {
+                ui.label("Connection failed");
+                ui.colored_label(egui::Color32::RED, &disconnect.reason);
             }
         });
 }
@@ -51,12 +64,21 @@ fn ui(
 fn react_to_client_change(
     mut events: EventReader<ClientEvent>,
     mut game_state: ResMut<State<GameState>>,
+    mut commands: Commands,
 ) {
     for event in events.iter() {
         match event {
-            ClientEvent::Join(_) => game_state.overwrite_set(GameState::Joining),
+            ClientEvent::Join(_) => {
+                commands.remove_resource::<DisconnectReason>();
+                game_state.overwrite_set(GameState::Joining)
+            }
             ClientEvent::Joined => game_state.overwrite_set(GameState::Game),
-            ClientEvent::JoinFailed => game_state.overwrite_set(GameState::MainMenu), // TODO: show error
+            ClientEvent::JoinFailed(reason) => {
+                commands.insert_resource(DisconnectReason {
+                    reason: reason.clone(),
+                });
+                game_state.overwrite_set(GameState::MainMenu)
+            }
         }
         .unwrap();
     }

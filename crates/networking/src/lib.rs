@@ -81,7 +81,7 @@ enum ClientState {
 pub enum ClientEvent {
     Join(SocketAddr),
     Joined,
-    JoinFailed,
+    JoinFailed(String),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -229,6 +229,26 @@ fn client_joined_server(
         network_time.server_tick_seconds = Some(tick_duration);
         info!("Joined server tick={}", tick_duration);
     }
+}
+
+fn client_handle_join_error(
+    mut events: EventReader<RenetError>,
+    mut client_events: EventWriter<ClientEvent>,
+    mut state: ResMut<State<ClientState>>,
+    mut commands: Commands,
+) {
+    if !matches!(state.current(), ClientState::Joining(_)) {
+        return;
+    }
+
+    let err = match events.iter().last() {
+        Some(err) => err,
+        None => return,
+    };
+    // For now we return to the menu on any network error while joining
+    state.set(ClientState::Initial).unwrap();
+    client_events.send(ClientEvent::JoinFailed(err.to_string()));
+    commands.remove_resource::<RenetClient>();
 }
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -383,6 +403,7 @@ impl Plugin for NetworkingPlugin {
                 .add_system(handle_joining_server)
                 .add_system(client_joined_server.after(NetworkSystem::ReadNetworkMessages))
                 .add_system(client_send_hello)
+                .add_system(client_handle_join_error)
                 .add_system(client_disconnect_on_exit);
         } else {
             app.add_event::<ServerEvent>()

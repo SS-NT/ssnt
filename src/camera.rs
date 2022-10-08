@@ -63,9 +63,9 @@ pub fn top_down_camera_update_system(
             bevy::math::EulerRot::XYZ,
             0.0,
             camera.current_angle,
-            45.0 * 0.017453,
+            35.0 * 0.017453,
         );
-        let offset = offset_rotation.mul_vec3(Vec3::new(0.0, 15.0, 0.0));
+        let offset = offset_rotation.mul_vec3(Vec3::new(0.0, 12.0, 0.0));
         transform.translation = target_transform.translation + offset;
         transform.look_at(target_transform.translation, Vec3::Y);
     }

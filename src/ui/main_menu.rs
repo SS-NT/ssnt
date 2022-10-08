@@ -3,7 +3,7 @@ use std::{net::SocketAddr, str::FromStr};
 use bevy::prelude::*;
 use bevy_egui::EguiContext;
 use bevy_inspector_egui::egui::{self, TextEdit};
-use networking::ClientEvent;
+use networking::{ClientEvent, UserData};
 
 use crate::GameState;
 
@@ -21,6 +21,7 @@ fn ui(
     mut ip: Local<String>,
     mut name: Local<String>,
     mut client_events: EventWriter<ClientEvent>,
+    mut commands: Commands,
 ) {
     egui::Area::new("main buttons")
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -28,7 +29,9 @@ fn ui(
             ui.horizontal(|ui| {
                 // TODO: Actually use name
                 let name_field = TextEdit::singleline(&mut *name).hint_text("Name");
-                name_field.show(ui);
+                if name_field.show(ui).response.changed() {
+                    commands.insert_resource(UserData { username: name.clone() });
+                }
 
                 let ip_field = TextEdit::singleline(&mut *ip).hint_text("Server IP");
                 ip_field.show(ui);

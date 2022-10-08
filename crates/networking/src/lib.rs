@@ -24,7 +24,9 @@ use resource::ResourcePlugin;
 use time::{ClientNetworkTime, ServerNetworkTime, TimePlugin};
 
 use std::{
+    collections::hash_map::DefaultHasher,
     fmt::Display,
+    hash::{Hash, Hasher},
     net::{IpAddr, SocketAddr, UdpSocket},
     time::SystemTime,
 };
@@ -87,6 +89,10 @@ pub enum ClientEvent {
 pub enum ServerEvent {
     PlayerConnected(ConnectionId),
     PlayerDisconnected(ConnectionId),
+}
+
+pub struct UserData {
+    pub username: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -171,6 +177,7 @@ fn handle_joining_server(
 
 fn client_send_hello(
     client: Option<Res<RenetClient>>,
+    data: Option<Res<UserData>>,
     mut sender: MessageSender,
     mut last_state: Local<bool>,
 ) {
@@ -191,15 +198,22 @@ fn client_send_hello(
     }
 
     info!("Connected to server");
-    sender.send(
-        &ClientHello {
-            token: Vec::new(),
-            version: "TODO".into(),
-            username: "John Doe".into(),
-            id: Uuid::new_v4(),
-        },
-        MessageReceivers::Server,
-    );
+    let username = data
+        .map(|d| d.username.clone())
+        .unwrap_or_else(|| "Beep".to_string());
+
+    // TODO: Replace with actual user id
+    let mut hasher = DefaultHasher::default();
+    username.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    sender.send_to_server(&ClientHello {
+        token: Vec::new(),
+        version: "TODO".into(),
+        username,
+        // 128 bits, trust me bro
+        id: Uuid::from_u64_pair(hash, hash),
+    });
 }
 
 fn client_joined_server(

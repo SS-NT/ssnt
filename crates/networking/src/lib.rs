@@ -122,7 +122,7 @@ pub fn create_server(listen_address: SocketAddr, public_address: Option<IpAddr>)
         64,
         PROTOCOL_ID,
         public_address
-            .map(|p| SocketAddr::from((p, 0u16)))
+            .map(|p| SocketAddr::from((p, listen_address.port())))
             .unwrap_or(listen_address),
         ServerAuthentication::Unsecure,
     );

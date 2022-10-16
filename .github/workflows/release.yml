@@ -43,7 +43,7 @@ jobs:
           args: --release
       - uses: actions/upload-artifact@v3
         with:
-          name: binary-${{ matrix.name }}
+          name: build-${{ matrix.name }}
           path: ${{ matrix.binary-path }}
           if-no-files-found: error
 

@@ -194,6 +194,7 @@ fn spawn_players_roundstart(
 #[derive(Serialize, Deserialize)]
 pub struct RequestJoin;
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_player_latejoin(
     mut messages: EventReader<MessageEvent<RequestJoin>>,
     selected_jobs: Res<SelectedJobs>,
@@ -205,7 +206,11 @@ fn spawn_player_latejoin(
     mut sender: MessageSender,
 ) {
     // TODO: Support multiple maps
-    let main_map = maps.single();
+    let main_map = match maps.get_single() {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+
     for event in messages.iter() {
         let player = match players.get(event.connection) {
             Some(p) => p,

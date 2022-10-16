@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  release:
+    types: [created]
+
+env:
+  CARGO_TERM_COLOR: always
+  ITCH_USERNAME: alainx277
+  ITCH_GAME_ID: ssnt
+
+jobs:
+  build:
+    name: Build
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            name: linux
+            binary-path: target/release/ssnt
+          - os: windows-latest
+            name: windows
+            binary-path: target/release/ssnt.exe
+      fail-fast: true
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Install native system dependencies
+        run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev
+        if: runner.os == 'linux'
+      - name: Run cargo build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+      - uses: actions/upload-artifact@v3
+        with:
+          name: binary-${{ matrix.name }}
+          path: ${{ matrix.binary-path }}
+          if-no-files-found: error
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [linux, windows]
+      fail-fast: true
+    needs: [build]
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: build-${{ matrix.platform }}
+      - name: Create release directory
+        run: |
+          mkdir release
+          cp -r ./assets ./release/assets
+          cp ssnt* ./release/ssnt
+      - uses: actions/upload-artifact@v3
+        with:
+          name: release-${{ matrix.platform }}
+          path: ./release/*
+          if-no-files-found: error
+
+  release-github:
+    name: Add build to GitHub release
+    runs-on: ubuntu-latest
+    needs: [package]
+    strategy:
+      matrix:
+        platform: [linux, windows]
+        include:
+          - platform: linux
+            archive-command: tar zcvf ssnt.tar
+            output-path: ssnt.tar
+          - platform: windows
+            archive-command: zip -r ssnt.zip
+            output-path: ssnt.zip
+      fail-fast: true
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: release-${{ matrix.platform }}
+          path: release
+      - name: Creating archive
+        run: ${{ matrix.archive-command }} ./release/*
+      - name: Attach packaged build to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ matrix.output-path }}
+
+  release-itch:
+    name: Push to Itch.io
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [linux, windows]
+      fail-fast: true
+    needs: [package]
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: release-${{ matrix.platform }}
+          path: release
+      - uses: KikimoraGames/itch-publish@v0.0.3
+        with:
+          butlerApiKey: ${{ secrets.BUTLER_API_KEY }}
+          gameData: ./release
+          itchUsername: ${{ env.ITCH_USERNAME }}
+          itchGameId: ${{ env.ITCH_GAME_ID }}
+          buildChannel: ${{ matrix.platform }}
+          buildNumber: ${{ github.ref_name }}

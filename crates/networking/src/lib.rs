@@ -147,7 +147,7 @@ fn handle_joining_server(
                     state.overwrite_set(ClientState::Joining(*address)).unwrap();
                     info!("Joining server {}", address);
 
-                    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+                    let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
                     let connection_config = RenetConnectionConfig {
                         // TODO: Split channels for server and client
                         send_channels_config: Channel::channels_config(),

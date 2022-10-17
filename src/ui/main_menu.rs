@@ -73,7 +73,7 @@ fn react_to_client_change(
                 game_state.overwrite_set(GameState::Joining)
             }
             ClientEvent::Joined => game_state.overwrite_set(GameState::Game),
-            ClientEvent::JoinFailed(reason) => {
+            ClientEvent::JoinFailed(reason) | ClientEvent::Disconnected(reason) => {
                 commands.insert_resource(DisconnectReason {
                     reason: reason.clone(),
                 });

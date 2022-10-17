@@ -14,8 +14,8 @@ pub use networking_derive::Networked;
 
 use bevy_renet::{
     renet::{
-        ClientAuthentication, RenetClient, RenetConnectionConfig, RenetError, RenetServer,
-        ServerAuthentication, ServerConfig,
+        ClientAuthentication, NetcodeError, RechannelError, RenetClient, RenetConnectionConfig,
+        RenetError, RenetServer, ServerAuthentication, ServerConfig,
     },
     RenetClientPlugin, RenetServerPlugin,
 };
@@ -82,6 +82,7 @@ pub enum ClientEvent {
     Join(SocketAddr),
     Joined,
     JoinFailed(String),
+    Disconnected(String),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -251,6 +252,30 @@ fn client_handle_join_error(
     commands.remove_resource::<RenetClient>();
 }
 
+fn client_handle_disconnect(
+    mut events: EventReader<RenetError>,
+    mut client_events: EventWriter<ClientEvent>,
+    mut state: ResMut<State<ClientState>>,
+    mut commands: Commands,
+) {
+    if !matches!(state.current(), ClientState::Connected) {
+        return;
+    }
+
+    let reason = match events.iter().last() {
+        Some(RenetError::Netcode(NetcodeError::Disconnected(reason))) => reason.to_string(),
+        Some(RenetError::Rechannel(RechannelError::ClientDisconnected(reason))) => {
+            reason.to_string()
+        }
+        Some(RenetError::IO(err)) => err.to_string(),
+        _ => return,
+    };
+
+    state.set(ClientState::Initial).unwrap();
+    client_events.send(ClientEvent::Disconnected(reason));
+    commands.remove_resource::<RenetClient>();
+}
+
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct ConnectionId(u64);
 
@@ -404,6 +429,7 @@ impl Plugin for NetworkingPlugin {
                 .add_system(client_joined_server.after(NetworkSystem::ReadNetworkMessages))
                 .add_system(client_send_hello)
                 .add_system(client_handle_join_error)
+                .add_system(client_handle_disconnect)
                 .add_system(client_disconnect_on_exit);
         } else {
             app.add_event::<ServerEvent>()

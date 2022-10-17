@@ -116,6 +116,7 @@ fn main() {
                 .add_startup_system(setup_client)
                 .add_system_to_stage(CoreStage::PostUpdate, handle_player_spawn)
                 .add_system(set_camera_target)
+                .add_system(clean_entities_on_disconnect)
                 .add_state(GameState::Splash);
         }
     };
@@ -140,6 +141,11 @@ enum GameState {
     Joining,
     Game,
 }
+
+/// A component that prevents an entity from being deleted when joining or leaving a server.
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+struct KeepOnServerChange;
 
 #[derive(Component, Reflect)]
 #[reflect(Component)]
@@ -174,7 +180,8 @@ fn setup_shared(mut commands: Commands) {
     commands
         .spawn()
         .insert_bundle(TransformBundle::from(Transform::from_xyz(0.0, -0.5, 0.0)))
-        .insert(Collider::cuboid(1000.0, 0.5, 1000.0));
+        .insert(Collider::cuboid(1000.0, 0.5, 1000.0))
+        .insert(KeepOnServerChange);
 }
 
 fn setup_server(args: Res<Args>, mut commands: Commands) {
@@ -209,11 +216,31 @@ fn setup_client(
             ..Default::default()
         })
         .insert(TopDownCamera::new(temporary_camera_target))
-        .insert(camera::MainCamera);
+        .insert(camera::MainCamera)
+        .insert(KeepOnServerChange);
 
     if let Some(ArgCommands::Join { address }) = args.command {
         state.overwrite_set(GameState::MainMenu).unwrap();
         client_events.send(ClientEvent::Join(address));
+    }
+}
+
+/// Delete all entities when leaving a server, except entities with [`KeepOnServerChange`].
+fn clean_entities_on_disconnect(
+    mut events: EventReader<ClientEvent>,
+    to_delete: Query<Entity, (Without<Parent>, Without<KeepOnServerChange>)>,
+    mut commands: Commands,
+) {
+    let has_disconnected = events
+        .iter()
+        .any(|e| matches!(e, ClientEvent::Disconnected(_)));
+    if !has_disconnected {
+        return;
+    }
+
+    // TODO: Optimize deletion?
+    for entity in to_delete.iter() {
+        commands.entity(entity).despawn_recursive();
     }
 }
 

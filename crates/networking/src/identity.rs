@@ -1,6 +1,6 @@
 use bevy::{
     ecs::system::{Command, EntityCommands},
-    prelude::{error, App, Component, Entity, Plugin},
+    prelude::{error, App, Component, CoreStage, Entity, Plugin, RemovedComponents, ResMut},
     utils::HashMap,
 };
 use serde::{Deserialize, Serialize};
@@ -90,6 +90,20 @@ pub(crate) struct IdentityPlugin;
 
 impl Plugin for IdentityPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<NetworkIdentities>();
+        app.init_resource::<NetworkIdentities>()
+            .add_system_to_stage(
+                // TODO: Run this directly before trackers are cleared. Blocked on Bevy ECS changes.
+                CoreStage::PostUpdate,
+                unregister_deleted_entities,
+            );
+    }
+}
+
+fn unregister_deleted_entities(
+    removed: RemovedComponents<NetworkIdentity>,
+    mut identities: ResMut<NetworkIdentities>,
+) {
+    for entity in removed.iter() {
+        identities.remove_entity(entity);
     }
 }

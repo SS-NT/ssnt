@@ -7,7 +7,7 @@ use nom::{
     bytes::complete::{escaped, tag},
     character::complete::{multispace0, none_of, one_of},
     combinator::{opt, recognize},
-    error::{context, ContextError, ParseError, VerboseError},
+    error::{context, ContextError, ParseError, VerboseError, VerboseErrorKind},
     multi::{fold_many1, many1, separated_list0, separated_list1},
     number::complete::float,
     sequence::{delimited, pair, preceded, tuple},
@@ -30,19 +30,19 @@ fn chunk_definition(input: &str) -> IResult<&str, (UVec3, &str)> {
         "chunk",
         assignment(list(number), delimited(tag("{"), string, tag("}"))),
     )(input)
-    .map(|(input, (floats, name))| {
-        (
-            input,
-            (
-                UVec3::new(
-                    // TODO: don't crash if there's not 3 coords -_-
-                    *floats.get(0).unwrap() as u32,
-                    *floats.get(1).unwrap() as u32,
-                    *floats.get(2).unwrap() as u32,
-                ),
-                name,
-            ),
-        )
+    .and_then(|(remaining, (floats, name))| {
+        let (x, y, z) = match &floats[..] {
+            &[x, y, z] => (x, y, z),
+            _ => {
+                return Err(nom::Err::Failure(VerboseError {
+                    errors: vec![(
+                        input,
+                        VerboseErrorKind::Context("Chunk must have three coordinates"),
+                    )],
+                }))
+            }
+        };
+        Ok((remaining, (UVec3::new(x as u32, y as u32, z as u32), name)))
     })
 }
 

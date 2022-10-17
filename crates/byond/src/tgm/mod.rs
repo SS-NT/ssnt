@@ -124,10 +124,6 @@ impl Object {
             variables,
         }
     }
-
-    fn variable(&self, name: &str) -> Option<&Variable> {
-        self.variables.iter().find(|v| v.name == name)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

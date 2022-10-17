@@ -153,12 +153,13 @@ fn spawn_player(
 
     controls.give_control(player.id, player_entity);
     // Force client to accept new position (unless they cheat lol)
-    sender.send(
+    sender.send_with_priority(
         &ForcePositionMessage {
             position: spawn_position,
             rotation: Quat::IDENTITY,
         },
         MessageReceivers::Single(connection),
+        10,
     );
 }
 

@@ -115,7 +115,8 @@ fn movement_axis(input: &Res<Input<KeyCode>>, plus: KeyCode, minus: KeyCode) -> 
 }
 
 fn send_movement_update(
-    query: Query<&Transform, With<ClientControlled>>,
+    // Require client control and already having a position from the server
+    query: Query<&Transform, (With<ClientControlled>, With<ForcePositionReceived>)>,
     mut sender: MessageSender,
 ) {
     for transform in query.iter() {
@@ -151,24 +152,22 @@ fn handle_movement_message(
 }
 
 // HACK: forces the client to be at a position
-// This is extremely ugly as we keep the player there for some time, to ensure it doesn't get overriden by any network messages.
 // The code needs to die.
 fn handle_force_position_client(
-    mut query: Query<&mut Transform, With<ClientControlled>>,
+    mut query: Query<(Entity, &mut Transform), With<ClientControlled>>,
     mut messages: EventReader<MessageEvent<ForcePositionMessage>>,
-    time: Res<Time>,
-    mut current: Local<Option<(f64, ForcePositionMessage)>>,
+    mut current: Local<Option<ForcePositionMessage>>,
+    mut commands: Commands,
 ) {
     if let Some(event) = messages.iter().last() {
-        *current = Some((time.seconds_since_startup(), event.message.clone()));
+        *current = Some(event.message.clone());
     }
 
-    if let Ok(mut transform) = query.get_single_mut() {
-        if let Some((start, message)) = current.as_ref() {
-            if *start + 0.5 > time.seconds_since_startup() {
-                transform.translation = message.position;
-                transform.rotation = message.rotation;
-            }
+    if let Ok((entity, mut transform)) = query.get_single_mut() {
+        if let Some(message) = current.take() {
+            transform.translation = message.position;
+            transform.rotation = message.rotation;
+            commands.entity(entity).insert(ForcePositionReceived);
         }
     }
 }
@@ -210,6 +209,10 @@ pub struct ForcePositionMessage {
     pub position: Vec3,
     pub rotation: Quat,
 }
+
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+struct ForcePositionReceived;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
 pub enum MovementSystem {

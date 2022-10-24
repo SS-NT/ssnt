@@ -1,4 +1,5 @@
 use std::{
+    any::TypeId,
     borrow::Cow,
     marker::PhantomData,
     num::NonZeroU32,
@@ -35,7 +36,7 @@ pub trait NetworkedToClient {
     ///
     fn serialize<'w, 's>(
         &self,
-        param: &<<Self::Param as SystemParam>::Fetch as SystemParamFetch<'w, 's>>::Item,
+        param: &mut <<Self::Param as SystemParam>::Fetch as SystemParamFetch<'w, 's>>::Item,
         receiver: Option<ConnectionId>,
         since_tick: Option<NonZeroU32>,
     ) -> Option<Bytes>;
@@ -48,6 +49,13 @@ pub trait NetworkedToClient {
     fn priority(&self) -> i16 {
         0i16
     }
+
+    /// The type id of the struct this syncs to.
+    fn client_type_id() -> TypeId;
+
+    /// A checksum of the data that will be serialized.
+    /// Used to check if two types' networked fields are compatible
+    fn data_signature() -> u64;
 }
 
 /// A trait implemented by any component that receives network updates from the server.
@@ -56,13 +64,38 @@ pub trait NetworkedFromServer: TypeUuid + Sized {
 
     fn deserialize<'w, 's>(
         &mut self,
-        param: &<<Self::Param as SystemParam>::Fetch as SystemParamFetch<'w, 's>>::Item,
+        param: &mut <<Self::Param as SystemParam>::Fetch as SystemParamFetch<'w, 's>>::Item,
         data: &[u8],
     );
 
     /// The initial value used if the component is not already present.
     /// Returns `None` if the component should not be added automatically.
     fn default_if_missing() -> Option<Self>;
+
+    /// The type id of the struct this is synced from.
+    fn server_type_id() -> TypeId;
+
+    /// A checksum of the data that will be deserialized.
+    /// Used to check if two types' networked fields are compatible
+    fn data_signature() -> u64;
+}
+
+/// Checks if networked types are compatible.
+/// Ideally this would generate a compiler error. I haven't found a way to implement that.
+pub(crate) fn assert_compatible<
+    S: NetworkedToClient + 'static,
+    C: NetworkedFromServer + 'static,
+>() {
+    assert_eq!(S::client_type_id(), std::any::TypeId::of::<C>(), "Registered server type {} is incompatible with client type {}. Check the \"client = TYPE\" attribute", std::any::type_name::<S>(), std::any::type_name::<C>());
+    assert_eq!(C::server_type_id(), std::any::TypeId::of::<S>(), "Registered client type {} is incompatible with server type {}. Check the \"server = TYPE\" attribute", std::any::type_name::<C>(), std::any::type_name::<S>());
+
+    assert_eq!(
+        S::data_signature(),
+        C::data_signature(),
+        "Server type {} and client type {} have mismatched networked fields",
+        std::any::type_name::<S>(),
+        std::any::type_name::<C>()
+    );
 }
 
 /// A variable that is networked to clients.
@@ -179,15 +212,15 @@ impl<T> DerefMut for ServerVar<T> {
 #[derive(Serialize, Deserialize)]
 pub struct ValueUpdate<'a, T: Clone>(pub Cow<'a, T>);
 
-impl<'a, T: Clone> From<&'a T> for ValueUpdate<'a, T> {
-    fn from(v: &'a T) -> Self {
-        ValueUpdate(Cow::Borrowed(v))
+impl<'a, T: Clone> ValueUpdate<'a, T> {
+    pub fn owned(value: T) -> Self {
+        Self(Cow::Owned(value))
     }
 }
 
-impl<T: std::clone::Clone> From<T> for ValueUpdate<'static, T> {
-    fn from(v: T) -> Self {
-        ValueUpdate(Cow::Owned(v))
+impl<'a, T: Clone> From<&'a T> for ValueUpdate<'a, T> {
+    fn from(v: &'a T) -> Self {
+        ValueUpdate(Cow::Borrowed(v))
     }
 }
 

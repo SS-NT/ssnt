@@ -1,4 +1,5 @@
 use adjacency::{AdjacencyInformation, TilemapAdjacency};
+use arrayvec::ArrayVec;
 use bevy::{
     asset::AssetPathId,
     math::{IVec2, UVec2},
@@ -7,21 +8,23 @@ use bevy::{
     scene::{InstanceId, SceneInstance},
     utils::{HashMap, HashSet},
 };
-use enum_map::EnumMap;
 use networking::{
     component::{AppExt, ComponentSystem},
-    identity::EntityCommandsExt,
+    identity::{EntityCommandsExt, NetworkIdentities, NetworkIdentity},
     transform::NetworkTransform,
+    variable::{NetworkVar, ServerVar},
     visibility::{GridAabb, VisibilitySystem, GLOBAL_GRID_CELL_SIZE},
-    NetworkManager,
+    NetworkManager, Networked,
 };
 use serde::{Deserialize, Serialize};
 
 pub use enum_map::enum_map;
 
 mod adjacency;
+pub use adjacency::Surrounded;
 
-#[derive(Component)]
+#[derive(Component, Networked)]
+#[networked(client = "TileMapClient", priority = 10)]
 pub struct TileMap {
     // Size in chunks
     size: UVec2,
@@ -147,37 +150,6 @@ impl TileMap {
     }
 }
 
-// TODO: Do with proc macro
-impl networking::variable::NetworkedToClient for TileMap {
-    type Param = ();
-
-    fn receiver_matters() -> bool {
-        false
-    }
-
-    fn serialize(
-        &self,
-        _: &(),
-        _: Option<networking::ConnectionId>,
-        since_tick: Option<std::num::NonZeroU32>,
-    ) -> Option<networking::variable::Bytes> {
-        // Only serialize once per client
-        if since_tick.is_some() {
-            None
-        } else {
-            Some(networking::variable::Bytes::new())
-        }
-    }
-
-    fn update_state(&mut self, _: u32) -> bool {
-        false
-    }
-
-    fn priority(&self) -> i16 {
-        10
-    }
-}
-
 pub const CHUNK_SIZE: u32 = 16;
 const CHUNK_LENGTH: usize = (CHUNK_SIZE * CHUNK_SIZE) as usize;
 
@@ -239,6 +211,12 @@ pub enum Direction {
     West,
 }
 
+impl Direction {
+    fn rotate_around(self, axis: Vec3) -> Quat {
+        Quat::from_axis_angle(axis, std::f32::consts::FRAC_PI_2 * (self as u8 as f32))
+    }
+}
+
 pub const DIRECTIONS: [Direction; 4] = [
     Direction::North,
     Direction::South,
@@ -271,11 +249,46 @@ impl From<Direction> for IVec2 {
     }
 }
 
-#[derive(enum_map::Enum, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+impl TryFrom<usize> for Direction {
+    type Error = ();
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::North),
+            1 => Ok(Self::East),
+            2 => Ok(Self::South),
+            3 => Ok(Self::West),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TileLayer {
     Turf,
     Furniture,
+    HighMount,
+}
+
+impl TileLayer {
+    fn default_offset(&self) -> Vec3 {
+        match self {
+            TileLayer::Furniture | TileLayer::Turf => Vec3::ZERO,
+            TileLayer::HighMount => Vec3::new(0.0, 2.0, 0.0),
+        }
+    }
+}
+
+/// Uniquely references a tile entity in a [`TileMap`].
+///
+/// ## Remarks
+/// This path is no longer valid if the [tilemap's](TileMap) dimensions change, as it contains an index inside the map.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+struct TileEntityPath {
+    position: UVec2,
+    layer: TileLayer,
+    index_in_layer: Option<u8>,
 }
 
 /// Data which can be used to spawn a [`TileMap`]
@@ -295,19 +308,52 @@ impl TileMapData {
     }
 }
 
+#[derive(Debug)]
+enum TileLayerData<T> {
+    Single(Option<T>),
+    Directional([Option<T>; DIRECTIONS.len()]),
+}
+
+impl<T> From<Option<T>> for TileLayerData<T> {
+    fn from(v: Option<T>) -> Self {
+        Self::Single(v)
+    }
+}
+
+impl<T> From<[Option<T>; DIRECTIONS.len()]> for TileLayerData<T> {
+    fn from(v: [Option<T>; DIRECTIONS.len()]) -> Self {
+        Self::Directional(v)
+    }
+}
+
+/// The makeup of a tile that can be spawned into the world.
 #[derive(Default)]
 pub struct TileData {
-    /// A reference to the turf asset
-    //pub turf: Option<AssetPathId>,
-    /// A reference to the furniture asset
-    //pub furniture: Option<AssetPathId>,
-    pub layers: EnumMap<TileLayer, Option<AssetPathId>>,
+    pub turf: Option<AssetPathId>,
+    pub furniture: Option<AssetPathId>,
+    pub high_mounts: [Option<AssetPathId>; 4],
+}
+
+impl TileData {
+    fn layers(&self) -> impl Iterator<Item = (TileLayer, TileLayerData<AssetPathId>)> {
+        [
+            (TileLayer::Turf, TileLayerData::Single(self.turf)),
+            (TileLayer::Furniture, TileLayerData::Single(self.furniture)),
+            (
+                TileLayer::HighMount,
+                TileLayerData::Directional(self.high_mounts),
+            ),
+        ]
+        .into_iter()
+    }
 }
 
 /// Points to the entities making up a tile at runtime
 #[derive(Default, Clone, Copy)]
 pub struct TileReference {
-    pub layers: EnumMap<TileLayer, Option<Entity>>,
+    pub turf: Option<Entity>,
+    pub furniture: Option<Entity>,
+    pub high_mounts: [Option<Entity>; 4],
 }
 
 impl TileReference {
@@ -319,134 +365,83 @@ impl TileReference {
         };
         UVec2::new(x, y)
     }
+
+    fn get(&self, layer: TileLayer) -> TileLayerData<Entity> {
+        match layer {
+            TileLayer::Turf => self.turf.into(),
+            TileLayer::Furniture => self.furniture.into(),
+            TileLayer::HighMount => self.high_mounts.into(),
+        }
+    }
+
+    fn set(&mut self, layer: TileLayer, data: TileLayerData<Entity>) {
+        match (layer, data) {
+            (TileLayer::Turf, TileLayerData::Single(v)) => self.turf = v,
+            (TileLayer::Furniture, TileLayerData::Single(v)) => self.furniture = v,
+            (TileLayer::HighMount, TileLayerData::Directional(v)) => self.high_mounts = v,
+            (layer, data) => panic!(
+                "Invalid combination of layer '{:?}' and data format '{:?}'",
+                layer, data
+            ),
+        }
+    }
+
+    fn set_index(&mut self, layer: TileLayer, index: usize, value: Option<Entity>) {
+        match layer {
+            TileLayer::Turf | TileLayer::Furniture => panic!(
+                "Can't set index on tile layer '{:?}' with single slot",
+                layer
+            ),
+            TileLayer::HighMount => {
+                self.high_mounts[index] = value;
+            }
+        }
+    }
 }
 
+// TODO: Also implement default serializations for some types (like Entity)
 /// Attached to an entity that is a part of a tile.
-#[derive(Component)]
+#[derive(Component, Networked)]
+#[networked(client = "TileEntityClient")]
 struct TileEntity {
-    tilemap: networking::variable::NetworkVar<Entity>,
-    position: networking::variable::NetworkVar<UVec2>,
-    layer: networking::variable::NetworkVar<TileLayer>,
+    #[networked(
+        with = "Self::network_tilemap(Res<'static, NetworkIdentities>) -> NetworkIdentity"
+    )]
+    tilemap: NetworkVar<Entity>,
+    path: NetworkVar<TileEntityPath>,
 }
 
-// TODO: Do with proc macro
-impl networking::variable::NetworkedToClient for TileEntity {
-    type Param = Res<'static, networking::identity::NetworkIdentities>;
-
-    fn receiver_matters() -> bool {
-        false
-    }
-
-    fn serialize(
-        &self,
-        param: &bevy::prelude::Res<'_, networking::identity::NetworkIdentities>,
-        _: Option<networking::ConnectionId>,
-        since_tick: Option<std::num::NonZeroU32>,
-    ) -> Option<networking::variable::Bytes> {
-        let mut writer =
-            networking::variable::BufMut::writer(networking::variable::BytesMut::with_capacity(
-                std::mem::size_of::<Option<networking::variable::ValueUpdate<Entity>>>(),
-            ));
-        let mut serializer = networking::variable::StandardSerializer::new(
-            &mut writer,
-            networking::variable::serializer_options(),
-        );
-
-        let tilemap_changed = since_tick
-            .map(|t| self.tilemap.has_changed_since(t.into()))
-            .unwrap_or(true);
-        serde::Serialize::serialize(
-            &tilemap_changed.then(|| {
-                let identity = param
-                    .get_identity(*self.tilemap)
-                    .expect("Tilemap entity must have network identity");
-                networking::variable::ValueUpdate::from(identity)
-            }),
-            &mut serializer,
-        )
-        .unwrap();
-
-        let position_changed = since_tick
-            .map(|t| self.position.has_changed_since(t.into()))
-            .unwrap_or(true);
-        serde::Serialize::serialize(
-            &position_changed.then(|| networking::variable::ValueUpdate::from(*self.position)),
-            &mut serializer,
-        )
-        .unwrap();
-
-        let layer_changed = since_tick
-            .map(|t| self.layer.has_changed_since(t.into()))
-            .unwrap_or(true);
-        serde::Serialize::serialize(
-            &layer_changed.then(|| networking::variable::ValueUpdate::from(*self.layer)),
-            &mut serializer,
-        )
-        .unwrap();
-
-        Some(writer.into_inner().into())
-    }
-
-    fn update_state(&mut self, tick: u32) -> bool {
-        self.tilemap.update_state(tick)
-            | self.position.update_state(tick)
-            | self.layer.update_state(tick)
+impl TileEntity {
+    fn network_tilemap(entity: &Entity, param: Res<NetworkIdentities>) -> NetworkIdentity {
+        param
+            .get_identity(*entity)
+            .expect("Tilemap entity must have network identity")
     }
 }
 
-#[derive(Default, Component, TypeUuid)]
+#[derive(Default, Component, TypeUuid, Networked)]
 #[uuid = "02de843e-5491-4989-9991-60055d333a4b"]
+#[networked(server = "TileEntity")]
 struct TileEntityClient {
-    tilemap: networking::variable::ServerVar<Entity>,
-    position: networking::variable::ServerVar<UVec2>,
-    old_position: Option<UVec2>,
-    layer: networking::variable::ServerVar<TileLayer>,
+    #[networked(
+        with = "NetworkIdentity -> Self::network_tilemap(Res<'static, NetworkIdentities>)"
+    )]
+    tilemap: ServerVar<Entity>,
+
+    #[networked(updated = "Self::on_path_update")]
+    path: ServerVar<TileEntityPath>,
+    old_path: Option<TileEntityPath>,
 }
 
-// TODO: Do with proc macro
-impl networking::variable::NetworkedFromServer for TileEntityClient {
-    type Param = Res<'static, networking::identity::NetworkIdentities>;
-
-    fn deserialize<'w, 's>(
-        &mut self,
-        param: &<<Self::Param as bevy::ecs::system::SystemParam>::Fetch as bevy::ecs::system::SystemParamFetch<'w, 's>>::Item,
-        data: &[u8],
-    ) {
-        let mut deserializer = networking::variable::StandardDeserializer::with_reader(
-            networking::variable::Buf::reader(data),
-            networking::variable::serializer_options(),
-        );
-        let tilemap_update = Option::<
-            networking::variable::ValueUpdate<networking::identity::NetworkIdentity>,
-        >::deserialize(&mut deserializer)
-        .expect("Error deserializing networked component");
-        if let Some(tilemap_update) = tilemap_update {
-            let identity = tilemap_update.0.into_owned();
-            let entity = param
-                .get_entity(identity)
-                .unwrap_or_else(|| panic!("Tilemap root network id ({:?}) should exist", identity));
-            self.tilemap.set(entity);
-        }
-
-        let position_update =
-            Option::<networking::variable::ValueUpdate<UVec2>>::deserialize(&mut deserializer)
-                .expect("Error deserializing networked component");
-        if let Some(position_update) = position_update {
-            self.old_position = self.position.get().cloned();
-            self.position.set(position_update.0.into_owned());
-        }
-
-        let layer_update =
-            Option::<networking::variable::ValueUpdate<TileLayer>>::deserialize(&mut deserializer)
-                .expect("Error deserializing networked component");
-        if let Some(layer_update) = layer_update {
-            self.layer.set(layer_update.0.into_owned());
-        }
-        // TODO: Debug assert that we've consumed all data
+impl TileEntityClient {
+    fn network_tilemap(identity: NetworkIdentity, param: Res<NetworkIdentities>) -> Entity {
+        param
+            .get_entity(identity)
+            .unwrap_or_else(|| panic!("Tilemap root network id ({:?}) should exist", identity))
     }
 
-    fn default_if_missing() -> Option<Self> {
-        Some(Default::default())
+    fn on_path_update(&mut self, _: &TileEntityPath) {
+        self.old_path = self.path.get().cloned();
     }
 }
 
@@ -467,30 +462,55 @@ fn spawn_from_data(
             let mut tile_ref = TileReference::default();
 
             // Spawn tile entities for each layer
-            for (layer, asset_path) in tile_data
-                .layers
-                .iter()
-                .filter_map(|(l, o)| o.map(|path| (l, path)))
-            {
-                let scene = server.get_handle(asset_path);
-                let entity = commands.entity(map_entity).add_children(|builder| {
-                    builder
-                        .spawn_bundle(DynamicSceneBundle {
-                            scene,
-                            transform: Transform::from_translation(
-                                (x as f32, 0.0, y as f32).into(),
-                            ),
-                            ..Default::default()
+            for (layer, layer_data) in tile_data.layers() {
+                let mut spawn_object =
+                    |asset_path, index_in_layer, direction: Direction| -> Entity {
+                        let scene = server.get_handle(asset_path);
+                        commands.entity(map_entity).add_children(|builder| {
+                            builder
+                                .spawn_bundle(DynamicSceneBundle {
+                                    scene,
+                                    transform: Transform {
+                                        translation: Vec3::new(x as f32, 0.0, y as f32)
+                                            + layer.default_offset(),
+                                        rotation: direction.rotate_around(Vec3::Y),
+                                        ..Default::default()
+                                    },
+                                    ..Default::default()
+                                })
+                                .insert(TileEntity {
+                                    tilemap: map_entity.into(),
+                                    path: TileEntityPath {
+                                        position: UVec2::new(x, y),
+                                        layer,
+                                        index_in_layer,
+                                    }
+                                    .into(),
+                                })
+                                .networked()
+                                .id()
                         })
-                        .insert(TileEntity {
-                            tilemap: map_entity.into(),
-                            position: UVec2::new(x, y).into(),
-                            layer: layer.into(),
-                        })
-                        .networked()
-                        .id()
-                });
-                tile_ref.layers[layer] = Some(entity);
+                    };
+
+                match layer_data {
+                    TileLayerData::Single(Some(p)) => {
+                        let entity = spawn_object(p, None, Direction::North);
+                        tile_ref.set(layer, TileLayerData::Single(Some(entity)));
+                    }
+                    TileLayerData::Directional(paths) => {
+                        let refs = paths
+                            .iter()
+                            .enumerate()
+                            .map(|(i, p)| {
+                                p.map(|p| spawn_object(p, Some(i as u8), i.try_into().unwrap()))
+                            })
+                            .collect::<ArrayVec<_, 4>>()
+                            .into_inner()
+                            .unwrap();
+                        tile_ref.set(layer, TileLayerData::Directional(refs));
+                    }
+                    _ => continue,
+                };
             }
 
             map.set_tile((x, y).into(), tile_ref).unwrap();
@@ -527,7 +547,7 @@ fn client_initialize_tile_objects(
     spawned: Query<(&SceneInstance, &Handle<DynamicScene>), Added<SceneInstance>>,
     mut loading: Local<Vec<InstanceId>>,
     spawner: Res<SceneSpawner>,
-    existing_meshes: Query<&Handle<Mesh>>,
+    existing_meshes: Query<(&Handle<Mesh>, Option<&Transform>)>,
     assets: Res<MapAssets>,
     asset_server: Res<AssetServer>,
     mut commands: Commands,
@@ -549,13 +569,15 @@ fn client_initialize_tile_objects(
         if let Some(entities) = spawner.iter_instance_entities(*instance) {
             if let Some(assets) = assets.client.as_ref() {
                 for entity in entities {
-                    if let Ok(mesh) = existing_meshes.get(entity) {
+                    if let Ok((mesh, transform)) = existing_meshes.get(entity) {
                         commands.entity(entity).insert_bundle(PbrBundle {
                             mesh: mesh.clone(),
                             material: assets.default_material.clone(),
+                            transform: transform.cloned().unwrap_or_default(),
                             ..Default::default()
                         });
                     }
+                    commands.entity(entity).insert(GlobalTransform::default());
                 }
             }
             false
@@ -566,51 +588,75 @@ fn client_initialize_tile_objects(
 }
 
 /// Stores a subset of tile map information on the client.
-#[derive(Default, Component, TypeUuid)]
+#[derive(Default, Component, TypeUuid, Networked)]
 #[uuid = "9036e9c7-f3c4-478e-81ed-3084e52d2253"]
+#[networked(server = "TileMap")]
 struct TileMapClient {
     tiles: HashMap<UVec2, TileReference>,
     dirty_tiles: HashSet<(UVec2, TileLayer)>,
 }
 
-// TODO: Do with proc macro
-impl networking::variable::NetworkedFromServer for TileMapClient {
-    type Param = ();
-
-    fn deserialize<'w, 's>(&mut self, _: &(), _: &[u8]) {
-        // No data
-    }
-
-    fn default_if_missing() -> Option<Self> {
-        Some(Default::default())
-    }
-}
-
 fn client_update_tile_entities(
-    changed_tiles: Query<(Entity, &Parent, &TileEntityClient), Changed<TileEntityClient>>,
+    changed_tiles: Query<
+        (Entity, &Parent, &TileEntityClient, Option<&Transform>),
+        Changed<TileEntityClient>,
+    >,
     mut tilemaps: Query<&mut TileMapClient>,
     mut commands: Commands,
 ) {
-    for (entity, parent, tile_entity) in changed_tiles.iter() {
-        let tile_position = *tile_entity.position;
-        if Some(tile_position) != tile_entity.old_position {
+    for (entity, parent, tile_entity, transform) in changed_tiles.iter() {
+        let tile_path = *tile_entity.path;
+        if Some(tile_path) != tile_entity.old_path {
             // Update position in world
+            let mut new_transform = transform.cloned().unwrap_or_default();
+            new_transform.translation = tile_path.layer.default_offset();
+            new_transform.translation.x += tile_path.position.x as f32;
+            new_transform.translation.z += tile_path.position.y as f32;
+
+            let direction: Direction = (tile_path.index_in_layer.unwrap_or_default() as usize)
+                .try_into()
+                .unwrap();
+            // TODO: This will break if object gets moved
+            new_transform.rotation *= direction.rotate_around(Vec3::Y);
+
             commands
                 .entity(parent.get())
-                .insert_bundle(SpatialBundle::from_transform(Transform::from_translation(
-                    Vec3::new(tile_position.x as f32, 0.0, tile_position.y as f32),
-                )));
+                .insert_bundle(SpatialBundle::from_transform(new_transform));
 
-            // Update position in index
             let mut tilemap = tilemaps
                 .get_mut(*tile_entity.tilemap)
                 .expect("Tilemap component must exist");
-            tilemap.tiles.entry(tile_position).or_default().layers[*tile_entity.layer] =
-                Some(entity);
+
+            // Remove from old path
+            if let Some(old_path) = tile_entity.old_path {
+                let entry = tilemap.tiles.entry(old_path.position).or_default();
+                match old_path.index_in_layer {
+                    Some(i) => {
+                        entry.set_index(old_path.layer, i as usize, None);
+                    }
+                    None => {
+                        entry.set(old_path.layer, TileLayerData::Single(None));
+                    }
+                }
+                tilemap
+                    .dirty_tiles
+                    .insert((old_path.position, old_path.layer));
+            }
+
+            // Add to new path
+            let entry = tilemap.tiles.entry(tile_path.position).or_default();
+            match tile_path.index_in_layer {
+                Some(i) => {
+                    entry.set_index(tile_path.layer, i as usize, Some(entity));
+                }
+                None => {
+                    entry.set(tile_path.layer, TileLayerData::Single(Some(entity)));
+                }
+            }
+
             tilemap
                 .dirty_tiles
-                .insert((tile_position, *tile_entity.layer));
-            // TODO: Remove from old position
+                .insert((tile_path.position, tile_path.layer));
         }
         // TODO: Handle all changes of tilemap parent and layer
 
@@ -640,9 +686,9 @@ fn client_update_adjacencies(
                     None => continue,
                 };
 
-                let tile_entity = match adjacent_tile.layers[layer] {
-                    Some(t) => t,
-                    None => continue,
+                let tile_entity = match adjacent_tile.get(layer) {
+                    TileLayerData::Single(Some(t)) => t,
+                    _ => continue,
                 };
 
                 let (adjacency_settings, mut mesh_handle, mut transform) =
@@ -661,7 +707,7 @@ fn client_update_adjacencies(
 
                     if let Some(tile_ref) = tilemap.tiles.get(&adjacent_position.as_uvec2()) {
                         // TODO: Support cross-layer checks
-                        if let Some(adjacent_entity) = tile_ref.layers[layer] {
+                        if let TileLayerData::Single(Some(adjacent_entity)) = tile_ref.get(layer) {
                             if let Ok(info) = adjacencies.get(adjacent_entity) {
                                 if adjacency_settings.category == info.category {
                                     adjacency_info.add(direction);

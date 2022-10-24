@@ -1,198 +1,438 @@
+// TODO: Document macro syntax
+
 extern crate proc_macro;
 
-use proc_macro::TokenStream;
-use quote::{format_ident, quote};
-use syn::{parse_macro_input, spanned::Spanned, ItemStruct};
+use std::{collections::hash_map::DefaultHasher, hash::Hasher};
 
-fn parse_networked_field(field: &syn::Field) -> syn::Result<(&syn::Field, &syn::Type)> {
-    let update_type = &field.ty;
-    let type_path = match update_type {
-        syn::Type::Path(p) => p,
-        _ => {
-            return Err(syn::Error::new(update_type.span(), "Invalid variable type"));
-        }
-    };
-    let mut iterator = type_path.path.segments.iter();
-    let segment = match iterator.find(|s| s.ident == "NetworkVar") {
-        Some(s) => s,
-        None => {
-            return Err(syn::Error::new(
-                update_type.span(),
-                "Synced variable must be of type NetworkVar",
-            ));
-        }
-    };
-    let actual_type = match &segment.arguments {
-        syn::PathArguments::AngleBracketed(args) => {
-            match args.args.first().expect("NetworkVar generic must exist") {
-                syn::GenericArgument::Type(t) => t,
-                _ => panic!("Expected generic type"),
-            }
-        }
-        _ => panic!("Expected generic type"),
-    };
-    Ok((field, actual_type))
+use darling::{ast, FromDeriveInput, FromField, ToTokens};
+use proc_macro::TokenStream;
+use quote::{format_ident, quote, quote_spanned};
+use syn::{
+    parenthesized, parse::Parse, parse_macro_input, punctuated::Punctuated, spanned::Spanned,
+    DeriveInput, Ident, Lit, Path, Token, Type,
+};
+
+#[derive(Debug, FromDeriveInput)]
+#[darling(attributes(networked), supports(struct_named))]
+struct NetworkedInput {
+    ident: Ident,
+    data: ast::Data<darling::util::Ignored, NetworkedFieldInput>,
+    #[darling(default)]
+    client: Option<Type>,
+    #[darling(default)]
+    server: Option<Type>,
+    #[darling(default)]
+    priority: i16,
+    #[darling(default = "default_param")]
+    param: Type,
 }
 
-#[proc_macro_derive(Networked, attributes(client, synced, priority))]
-pub fn networked_derive(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as ItemStruct);
-    if input.generics.lt_token.is_some() {
-        return syn::Error::new(
-            input.generics.span(),
-            "Networking derive is not supported on structs with generics",
-        )
-        .to_compile_error()
-        .into();
+fn default_param() -> Type {
+    syn::parse_quote!(())
+}
+
+#[derive(Debug, FromField)]
+#[darling(attributes(networked))]
+struct NetworkedFieldInput {
+    ident: Option<Ident>,
+    ty: Type,
+    #[darling(default)]
+    with: Option<FieldMethod>,
+    #[darling(default)]
+    updated: Option<Path>,
+}
+
+#[derive(Debug)]
+struct FieldMethod {
+    path: Path,
+    params: Vec<Type>,
+    networked_ty: Option<Type>,
+}
+
+impl Parse for FieldMethod {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let mut networked_ty = match input.peek2(Token![->]) {
+            true => {
+                let ty = input.parse::<Type>()?;
+                input.parse::<Token![->]>()?;
+                Some(ty)
+            }
+            false => None,
+        };
+
+        let path = input.parse()?;
+        let content;
+        parenthesized!(content in input);
+        let params: Punctuated<_, Token![,]> = content.parse_terminated(Type::parse)?;
+
+        if let Ok(t) = input.parse::<Token![->]>() {
+            if networked_ty.is_some() {
+                return Err(syn::Error::new_spanned(
+                    t,
+                    "Network type can only be specified once",
+                ));
+            }
+            networked_ty = Some(input.parse::<Type>()?);
+        }
+
+        Ok(FieldMethod {
+            path,
+            params: params.into_iter().collect(),
+            networked_ty,
+        })
     }
+}
 
-    let name = &input.ident;
-    let client_attribute = match input.attrs.iter().find(|a| a.path.is_ident("client")) {
-        Some(a) => a,
+impl darling::FromMeta for FieldMethod {
+    fn from_value(value: &Lit) -> darling::Result<Self> {
+        let value = match value {
+            Lit::Str(v) => v,
+            _ => return Err(darling::Error::unexpected_lit_type(value)),
+        };
+        Ok(value.parse()?)
+    }
+}
+
+struct NetworkedField {
+    ident: Ident,
+    networked_type: Type,
+    with: Option<FieldMethod>,
+    updated: Option<Path>,
+}
+
+#[derive(Clone, Copy)]
+enum NetworkedSide {
+    Server,
+    Client,
+}
+
+impl NetworkedSide {
+    fn variable_name(&self) -> &'static str {
+        match self {
+            NetworkedSide::Server => "NetworkVar",
+            NetworkedSide::Client => "ServerVar",
+        }
+    }
+}
+
+fn parse_networked_field_input(
+    input: NetworkedFieldInput,
+    side: NetworkedSide,
+) -> darling::Result<Option<NetworkedField>> {
+    let ident = input.ident.unwrap();
+
+    // Parse the field type to extract the actual type that will be networked
+    let update_type = &input.ty;
+    let type_path = match update_type {
+        Type::Path(p) => p,
+        _ => {
+            return Err(darling::Error::custom("Invalid variable type").with_span(update_type));
+        }
+    };
+
+    let mut iterator = type_path.path.segments.iter();
+    // Find the segment that has our relevant networked variable type
+    // TODO: Isn't this just the last one?
+    let segment = match iterator.find(|s| s.ident == side.variable_name()) {
+        Some(s) => s,
         None => {
-            return syn::Error::new(name.span(), "Missing #[client = XXX] attribute")
-                .to_compile_error()
-                .into()
+            // TODO: Differentiate between fields without annotation and with #[networked] annotation (see https://github.com/TedDriggs/darling/issues/167#issuecomment-1285517559)
+            return Ok(None);
         }
     };
 
-    let client_struct = match client_attribute.parse_args::<syn::Path>() {
-        Ok(p) => p,
-        _ => {
-            return syn::Error::new(client_attribute.span(), "Invalid client attribute syntax")
-                .to_compile_error()
-                .into()
-        }
-    };
-
-    let priority = match input.attrs.iter().find(|a| a.path.is_ident("priority")) {
-        Some(a) => match a.parse_args::<syn::LitInt>() {
-            Ok(l) => match l.base10_parse::<i16>() {
-                Ok(i) => i,
-                Err(err) => {
-                    return err.to_compile_error().into();
-                }
-            },
-            Err(err) => {
-                return err.to_compile_error().into();
-            }
+    // Try to find the generic type
+    let networked_type = match &segment.arguments {
+        syn::PathArguments::AngleBracketed(args) => match args.args.first() {
+            Some(syn::GenericArgument::Type(t)) => Some(t),
+            _ => None,
         },
-        None => 0i16,
-    };
+        _ => None,
+    }
+    .ok_or_else(|| {
+        darling::Error::custom(format!(
+            "{} must have a generic argument",
+            side.variable_name()
+        ))
+        .with_span(&segment.arguments)
+    })?;
 
-    let fields = match input.fields {
-        syn::Fields::Named(f) => f,
-        _ => {
-            return syn::Error::new(input.span(), "Only structs can be networked")
-                .to_compile_error()
-                .into()
+    Ok(Some(NetworkedField {
+        ident,
+        networked_type: networked_type.to_owned(),
+        with: input.with,
+        updated: input.updated,
+    }))
+}
+
+fn transform_field_value(
+    variable_access: proc_macro2::TokenStream,
+    param_indices: &[usize],
+    i: usize,
+    with: &FieldMethod,
+) -> proc_macro2::TokenStream {
+    let method_path = &with.path;
+    let paramset_method = format_ident!(
+        "p{}",
+        param_indices.iter().position(|&index| i == index).unwrap()
+    );
+    quote_spanned! { method_path.span() =>
+        #method_path(#variable_access, param.#paramset_method())
+    }
+}
+
+#[proc_macro_derive(Networked, attributes(networked))]
+pub fn networked_derive(input: TokenStream) -> TokenStream {
+    let derive_input = parse_macro_input!(input as DeriveInput);
+
+    let input: NetworkedInput = match NetworkedInput::from_derive_input(&derive_input) {
+        Ok(i) => i,
+        Err(err) => {
+            return err.write_errors().into();
         }
     };
 
-    let synced_fields = match fields
-        .named
-        .iter()
-        .filter(|f| f.attrs.iter().any(|a| a.path.is_ident("synced")))
-        .map(parse_networked_field)
-        .collect::<syn::Result<Vec<_>>>()
-        .map_err(syn::Error::into_compile_error)
+    // Get client or server attribute on the struct
+    let (side, matching_type) = match match [input.client, input.server] {
+        [Some(c), None] => Ok((NetworkedSide::Server, c)),
+        [None, Some(s)] => Ok((NetworkedSide::Client, s)),
+        [Some(_), Some(s)] => {
+            Err(darling::Error::custom("Only one of 'server' and 'client' may exist").with_span(&s))
+        }
+        [None, None] => Err(darling::Error::custom(
+            "One of 'server' and 'client' must exist",
+        )),
+    } {
+        Ok(o) => o,
+        Err(err) => return err.write_errors().into(),
+    };
+
+    let networked_fields: Vec<_> = match input
+        .data
+        .take_struct()
+        .expect("Should never be enum")
+        .fields
+        .into_iter()
+        .map(|i| parse_networked_field_input(i, side))
+        .collect::<Result<Vec<_>, _>>()
     {
-        Ok(f) => f,
-        Err(e) => return e.into(),
+        Ok(o) => o.into_iter().flatten().collect(),
+        Err(err) => return err.write_errors().into(),
     };
 
-    let writes = synced_fields.iter().map(|(field, actual_type)| {
-        let var_name = field.ident.as_ref().unwrap();
-        let changed_name = format_ident!("{}_changed", var_name);
-        quote! {
-            let #changed_name = since_tick
-                .map(|t| self.#var_name.has_changed_since(t.into()))
-                .unwrap_or(true);
-            serde::Serialize::serialize(
-                &#changed_name.then(|| {
-                    networking::variable::ValueUpdate::<#actual_type>::from(&*(self.#var_name))
-                }),
-                &mut serializer,
-            )
-            .unwrap();
-        }
-    });
+    let (param_indices, params): (Vec<_>, Vec<_>) = networked_fields
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| f.with.as_ref().map(|with| (i, with)))
+        .map(|(i, method)| (i, &method.params))
+        .unzip();
 
-    let updates = synced_fields.iter().map(|(field, _)| {
-        let var_name = field.ident.as_ref().unwrap();
+    let mut hasher = DefaultHasher::new();
+    for field in networked_fields.iter() {
+        let ty = field
+            .with
+            .as_ref()
+            .and_then(|w| w.networked_ty.as_ref())
+            .unwrap_or(&field.networked_type);
+        hasher.write(ty.to_token_stream().to_string().as_bytes());
+    }
+    let signature = hasher.finish();
 
-        quote! {
-            self.#var_name.update_state(tick)
-        }
-    });
+    let paramset_param = match params.is_empty() {
+        true => quote!(((),)),
+        false => quote!(#( (#(#params),*,) ),*),
+    };
 
-    let reads = synced_fields.iter().map(|(field, actual_type)| {
-        let var_name = field.ident.as_ref().unwrap();
-        let update_name = format_ident!("{}_update", var_name);
+    let paramset = quote! {
+        bevy::prelude::ParamSet<'static, 'static, (#paramset_param)>
+    };
 
-        quote! {
-            let #update_name =
-                Option::<networking::variable::ValueUpdate<#actual_type>>::deserialize(&mut deserializer)
-                    .expect("Error deserializing networked variable");
-            if let Some(#update_name) = #update_name {
-                self.#var_name.set(#update_name.0.into_owned());
+    let name = input.ident;
+    let priority = input.priority;
+    let param = input.param;
+    let method_param = quote_spanned!(param.span()=> param: &mut <<Self::Param as bevy::ecs::system::SystemParam>::Fetch as bevy::ecs::system::SystemParamFetch<'w, 's>>::Item);
+    match side {
+        NetworkedSide::Server => {
+            // Build writes for the serialize method
+            let writes = networked_fields
+                .iter()
+                .enumerate()
+                .map(|(i, networked_field)| {
+                    let var_name = &networked_field.ident;
+                    let changed_name = format_ident!("{}_changed", var_name);
+                    let networked_type = networked_field.with.as_ref().and_then(|w| w.networked_ty.as_ref()).unwrap_or(&networked_field.networked_type);
+
+                    let variable_access = quote_spanned! { var_name.span() =>
+                        &*(self.#var_name)
+                    };
+                    // Optionally transform the value before serializing
+                    let value_expression = match networked_field.with.as_ref() {
+                        Some(with) => {
+                            let transformation = transform_field_value(variable_access, &param_indices, i, with);
+                            quote!(owned(#transformation))
+                        }
+                        None => quote!(from(#variable_access)),
+                    };
+                    quote_spanned! { var_name.span() =>
+                        let #changed_name = since_tick
+                            .map(|t| self.#var_name.has_changed_since(t.into()))
+                            .unwrap_or(true);
+                        serde::Serialize::serialize(
+                            &#changed_name.then(|| {
+                                networking::variable::ValueUpdate::<#networked_type>::#value_expression
+                            }),
+                            &mut serializer,
+                        )
+                        .unwrap();
+                    }
+                }).collect::<Vec<_>>();
+
+            let serialize_body =
+                match writes.is_empty() {
+                    true => {
+                        // Optimization for networked marker structs
+                        quote! {
+                            if since_tick.is_some() {
+                                None
+                            } else {
+                                Some(networking::variable::Bytes::new())
+                            }
+                        }
+                    },
+                    false => {
+                        quote! {
+                            let mut writer =
+                                networking::variable::BufMut::writer(networking::variable::BytesMut::new());
+                            let mut serializer = networking::variable::StandardSerializer::new(
+                                &mut writer,
+                                networking::variable::serializer_options(),
+                            );
+
+                            #(#writes)*
+
+                            Some(writer.into_inner().into())
+                        }
+                    },
+                };
+
+            // Build trait update method
+            let field_updates = networked_fields.iter().map(|networked_field| {
+                let var_name = &networked_field.ident;
+
+                quote! {
+                    self.#var_name.update_state(tick)
+                }
+            }).collect::<Vec<_>>();
+            let update_body = match field_updates.is_empty() {
+                            true => quote!(false),
+                            false => quote!(#(#field_updates)|*),
+                        };
+
+            // Build server trait implementation
+            quote! {
+                impl networking::variable::NetworkedToClient for #name {
+                    type Param = #paramset;
+
+                    fn receiver_matters() -> bool {
+                        false
+                    }
+
+                    fn serialize<'w, 's>(
+                        &self,
+                        #method_param,
+                        _: Option<networking::ConnectionId>,
+                        since_tick: Option<std::num::NonZeroU32>,
+                    ) -> Option<networking::variable::Bytes> {
+                        #serialize_body
+                    }
+
+                    fn update_state(&mut self, tick: u32) -> bool {
+                        #update_body
+                    }
+
+                    fn priority(&self) -> i16 {
+                        #priority
+                    }
+
+                    fn client_type_id() -> std::any::TypeId {
+                        std::any::TypeId::of::<#matching_type>()
+                    }
+
+                    fn data_signature() -> u64 {
+                        #signature
+                    }
+                }
             }
         }
-    });
+        NetworkedSide::Client => {
+            let reads = networked_fields.iter().enumerate().map(|(i, networked_field)| {
+                let var_name = &networked_field.ident;
+                let networked_type = networked_field.with.as_ref().and_then(|w| w.networked_ty.as_ref()).unwrap_or(&networked_field.networked_type);
+                let update_name = format_ident!("{}_update", var_name);
+                let new_name = format_ident!("{}_new_value", var_name);
 
-    quote! {
-        impl networking::variable::NetworkedToClient for #name {
-            type Param = ();
+                let var_read = quote! {
+                    #update_name.0.into_owned()
+                };
 
-            fn receiver_matters() -> bool {
-                false
-            }
+                let var_expression = match networked_field.with.as_ref() {
+                    Some(with) => {
+                        transform_field_value(var_read, &param_indices, i, with)
+                    },
+                    None => var_read,
+                };
 
-            fn serialize(
-                &self,
-                _: &(),
-                _: Option<networking::ConnectionId>,
-                since_tick: Option<std::num::NonZeroU32>,
-            ) -> Option<networking::variable::Bytes> {
-                let mut writer =
-                    networking::variable::BufMut::writer(networking::variable::BytesMut::new());
-                let mut serializer = networking::variable::StandardSerializer::new(
-                    &mut writer,
-                    networking::variable::serializer_options(),
-                );
+                let update_hook = match &networked_field.updated {
+                    Some(updated) => {
+                        quote_spanned! { updated.span() =>
+                            #updated(self, &#new_name);
+                        }
+                    },
+                    None => proc_macro2::TokenStream::new(),
+                };
 
-                #(#writes)*
+                quote_spanned! { networked_field.ident.span() =>
+                    let #update_name =
+                        Option::<networking::variable::ValueUpdate<#networked_type>>::deserialize(&mut deserializer)
+                            .expect("Error deserializing networked variable");
+                    if let Some(#update_name) = #update_name {
+                        let #new_name = #var_expression;
+                        #update_hook
+                        self.#var_name.set(#new_name);
+                    }
+                }
+            });
 
-                Some(writer.into_inner().into())
-            }
+            // Build client trait implementation
+            quote! {
+                impl networking::variable::NetworkedFromServer for #name {
+                    type Param = #paramset;
 
-            fn update_state(&mut self, tick: u32) -> bool {
-                #(#updates)|*
-            }
+                    fn deserialize<'w, 's>(
+                        &mut self,
+                        #method_param,
+                        data: &[u8],
+                    ) {
+                        let mut deserializer = networking::variable::StandardDeserializer::with_reader(
+                            networking::variable::Buf::reader(data),
+                            networking::variable::serializer_options(),
+                        );
 
-            fn priority(&self) -> i16 {
-                #priority
-            }
-        }
+                        #(#reads)*
+                    }
 
-        impl networking::variable::NetworkedFromServer for #client_struct {
-            type Param = ();
+                    fn default_if_missing() -> Option<Self> {
+                        Some(Default::default())
+                    }
 
-            fn deserialize<'w, 's>(
-                &mut self,
-                _: &<<Self::Param as bevy::ecs::system::SystemParam>::Fetch as bevy::ecs::system::SystemParamFetch<'w, 's>>::Item,
-                data: &[u8],
-            ) {
-                let mut deserializer = networking::variable::StandardDeserializer::with_reader(
-                    networking::variable::Buf::reader(data),
-                    networking::variable::serializer_options(),
-                );
+                    fn server_type_id() -> std::any::TypeId {
+                        std::any::TypeId::of::<#matching_type>()
+                    }
 
-                #(#reads)*
-            }
-
-            fn default_if_missing() -> Option<Self> {
-                Some(Default::default())
+                    fn data_signature() -> u64 {
+                        #signature
+                    }
+                }
             }
         }
     }.into()

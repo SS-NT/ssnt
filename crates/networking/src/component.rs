@@ -49,7 +49,7 @@ fn send_networked_component_to_new<S: NetworkedToClient + Component, C: Networke
     visibilities: Res<NetworkVisibilities>,
     registry: Res<NetworkedComponentRegistry>,
     mut sender: MessageSender,
-    param: bevy::ecs::system::StaticSystemParam<S::Param>,
+    mut param: bevy::ecs::system::StaticSystemParam<S::Param>,
 ) {
     for (identity, component) in components.iter_mut() {
         let visibility = match visibilities.visibility.get(identity) {
@@ -63,7 +63,7 @@ fn send_networked_component_to_new<S: NetworkedToClient + Component, C: Networke
         if S::receiver_matters() {
             // Serialize component for every receiver
             for connection in visibility.new_observers() {
-                let data = match component.serialize(&*param, Some(*connection), None) {
+                let data = match component.serialize(&mut *param, Some(*connection), None) {
                     Some(d) => d,
                     None => continue,
                 };
@@ -83,7 +83,7 @@ fn send_networked_component_to_new<S: NetworkedToClient + Component, C: Networke
             let new_observers: HashSet<_> = visibility.new_observers().copied().collect();
             if !new_observers.is_empty() {
                 let data = component
-                    .serialize(&*param, None, None)
+                    .serialize(&mut *param, None, None)
                     .expect("Serializing without a specific receiver should always return data");
                 sender.send_with_priority(
                     &NetworkedComponentMessage {
@@ -122,7 +122,7 @@ fn receive_networked_component<C: NetworkedFromServer + Component>(
     registry: Res<NetworkedComponentRegistry>,
     identities: Res<NetworkIdentities>,
     mut buffer: ResMut<BufferedNetworkedComponents<C>>,
-    param: bevy::ecs::system::StaticSystemParam<C::Param>,
+    mut param: bevy::ecs::system::StaticSystemParam<C::Param>,
     mut commands: Commands,
 ) {
     for event in events.iter() {
@@ -158,7 +158,7 @@ fn receive_networked_component<C: NetworkedFromServer + Component>(
             entity,
             &event.message,
             &mut components,
-            &param,
+            &mut param,
             &mut commands,
         );
     }
@@ -170,7 +170,7 @@ fn apply_networked_component_to_scene<C: NetworkedFromServer + Component>(
     mut components: Query<&mut C>,
     scene_spawner: Res<SceneSpawner>,
     child_query: Query<&Children>,
-    param: bevy::ecs::system::StaticSystemParam<C::Param>,
+    mut param: bevy::ecs::system::StaticSystemParam<C::Param>,
     mut commands: Commands,
 ) where
     <C as NetworkedFromServer>::Param: SystemParam + 'static,
@@ -199,7 +199,7 @@ fn apply_networked_component_to_scene<C: NetworkedFromServer + Component>(
             }
         };
 
-        apply_component_update(root, message, &mut components, &param, &mut commands);
+        apply_component_update(root, message, &mut components, &mut param, &mut commands);
 
         false
     });
@@ -209,7 +209,7 @@ fn apply_component_update<C: NetworkedFromServer + Component>(
     entity: Entity,
     message: &NetworkedComponentMessage,
     components: &mut Query<&mut C>,
-    param: &bevy::ecs::system::StaticSystemParam<C::Param>,
+    param: &mut bevy::ecs::system::StaticSystemParam<C::Param>,
     commands: &mut Commands,
 ) {
     match components.get_mut(entity) {
@@ -246,6 +246,7 @@ impl AppExt for App {
         S: NetworkedToClient + Component,
         C: NetworkedFromServer + Component,
     {
+        assert_compatible::<S, C>();
         self.init_resource::<NetworkedComponentRegistry>();
         let mut registry = self.world.resource_mut::<NetworkedComponentRegistry>();
         if !registry.register::<C>() {

@@ -94,6 +94,14 @@ fn main() {
             .add_asset::<byond::tgm::TileMap>()
             .add_asset::<Mesh>() // TODO: remove once no longer needed by rapier
             .add_asset::<Scene>() // TODO: remove once no longer needed by rapier
+            // Register types used in scenes manually.
+            // The server will not do anything with them, but needs it so it can load scene files.
+            .register_type::<bevy::pbr::PointLight>()
+            .register_type::<bevy::pbr::CubemapVisibleEntities>()
+            .register_type::<bevy::pbr::NotShadowCaster>()
+            .register_type::<bevy::render::primitives::CubemapFrusta>()
+            .register_type::<bevy::render::view::Visibility>()
+            .register_type::<bevy::render::view::ComputedVisibility>()
             .add_asset_loader(TgmLoader)
             .add_startup_system(setup_server);
         }
@@ -204,7 +212,7 @@ fn setup_client(
 ) {
     // TODO: Replace with on-station lights
     commands.insert_resource(AmbientLight {
-        brightness: 0.2,
+        brightness: 0.01,
         ..Default::default()
     });
 

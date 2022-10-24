@@ -8,7 +8,7 @@ use crate::{
         AppExt as MessageAppExt, MessageEvent, MessageReceivers, MessageSender, MessagingSystem,
     },
     time::ServerNetworkTime,
-    variable::{NetworkRegistry, NetworkedFromServer, NetworkedToClient},
+    variable::{self, NetworkRegistry, NetworkedFromServer, NetworkedToClient},
     NetworkSystem, Players, ServerEvent,
 };
 
@@ -44,7 +44,7 @@ fn send_networked_resource_to_new<
     registry: Res<NetworkedResourceRegistry>,
     mut sender: MessageSender,
     mut events: EventReader<ServerEvent>,
-    param: StaticSystemParam<S::Param>,
+    mut param: StaticSystemParam<S::Param>,
 ) {
     let resource_id = registry
         .get_id(&C::TYPE_UUID)
@@ -56,7 +56,7 @@ fn send_networked_resource_to_new<
     if S::receiver_matters() {
         // Serialize resource for every receiver
         for connection in new_players {
-            let data = match resource.serialize(&*param, Some(*connection), None) {
+            let data = match resource.serialize(&mut *param, Some(*connection), None) {
                 Some(d) => d,
                 None => continue,
             };
@@ -70,7 +70,7 @@ fn send_networked_resource_to_new<
         let new_observers: HashSet<_> = new_players.copied().collect();
         if !new_observers.is_empty() {
             let data = resource
-                .serialize(&*param, None, None)
+                .serialize(&mut *param, None, None)
                 .expect("Serializing without a specific receiver should always return data");
             sender.send(
                 &NetworkedResourceMessage { resource_id, data },
@@ -89,7 +89,7 @@ fn send_changed_networked_resource<
     players: Res<Players>,
     server_time: Res<ServerNetworkTime>,
     mut sender: MessageSender,
-    param: StaticSystemParam<S::Param>,
+    mut param: StaticSystemParam<S::Param>,
 ) {
     if !resource.is_changed() {
         return;
@@ -108,7 +108,7 @@ fn send_changed_networked_resource<
     if S::receiver_matters() {
         // Serialize resource for every receiver
         for connection in players {
-            let data = match resource.serialize(&*param, Some(*connection), None) {
+            let data = match resource.serialize(&mut *param, Some(*connection), None) {
                 Some(d) => d,
                 None => continue,
             };
@@ -121,7 +121,7 @@ fn send_changed_networked_resource<
     } else {
         let all_players: HashSet<_> = players.copied().collect();
         let data = resource
-            .serialize(&*param, None, None)
+            .serialize(&mut *param, None, None)
             .expect("Serializing without a specific receiver should always return data");
         sender.send(
             &NetworkedResourceMessage { resource_id, data },
@@ -134,7 +134,7 @@ fn receive_networked_resource<C: NetworkedFromServer + Send + Sync + 'static>(
     mut events: EventReader<MessageEvent<NetworkedResourceMessage>>,
     mut resource: Option<ResMut<C>>,
     registry: Res<NetworkedResourceRegistry>,
-    param: bevy::ecs::system::StaticSystemParam<C::Param>,
+    mut param: bevy::ecs::system::StaticSystemParam<C::Param>,
     mut commands: Commands,
 ) {
     for event in events.iter() {
@@ -148,11 +148,11 @@ fn receive_networked_resource<C: NetworkedFromServer + Send + Sync + 'static>(
         }
 
         match resource.as_deref_mut() {
-            Some(res) => res.deserialize(&param, &message.data),
+            Some(res) => res.deserialize(&mut param, &message.data),
             None => {
                 // Apply data to default resource value if possible
                 if let Some(mut default) = C::default_if_missing() {
-                    default.deserialize(&param, &message.data);
+                    default.deserialize(&mut param, &message.data);
                     commands.insert_resource(default);
                 } else {
                     warn!(
@@ -180,6 +180,7 @@ impl AppExt for App {
         S: NetworkedToClient + Send + Sync + 'static,
         C: NetworkedFromServer + Send + Sync + 'static,
     {
+        variable::assert_compatible::<S, C>();
         self.init_resource::<NetworkedResourceRegistry>();
         let mut registry = self.world.resource_mut::<NetworkedResourceRegistry>();
         if !registry.register::<C>() {

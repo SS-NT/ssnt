@@ -1,7 +1,7 @@
 use bevy::{asset::AssetPathId, math::UVec2, utils::HashMap};
 
-use super::{Tile, TileMap};
-use maps::{TileData, TileLayer, TileMapData};
+use super::{Tile, TileMap, Value};
+use maps::{Direction, TileData, TileMapData};
 
 pub fn to_map_data(tilemap: &TileMap) -> TileMapData {
     let size = tilemap.size();
@@ -47,11 +47,9 @@ pub fn to_map_data(tilemap: &TileMap) -> TileMapData {
 
 fn tile_to_data(tile: &Tile) -> TileData {
     TileData {
-        layers: maps::enum_map! {
-            TileLayer::Turf => get_turf_path(tile),
-            TileLayer::Furniture => get_furniture_path(tile),
-            _ => None,
-        },
+        turf: get_turf_path(tile),
+        furniture: get_furniture_path(tile),
+        high_mounts: get_high_mounts_path(tile),
     }
 }
 
@@ -137,4 +135,52 @@ fn get_furniture_path(tile: &Tile) -> Option<AssetPathId> {
             .as_str()
             .into(),
     )
+}
+
+fn get_high_mounts_path(tile: &Tile) -> [Option<AssetPathId>; 4] {
+    let mut mounts = [None; 4];
+
+    for (byond_dir, name) in tile
+        .components
+        .iter()
+        .filter_map(|o| {
+            match o.path.as_str() {
+                "/obj/machinery/light" => Some("light_tube"),
+                _ => None,
+            }
+            .map(|n| (o, n))
+        })
+        .filter_map(|(o, n)| match o.variable("dir") {
+            Some(Value::Number(dir)) => Some((*dir as u8, n)),
+            _ => None,
+        })
+    {
+        if let Some(direction) = Direction::from_byond(byond_dir) {
+            mounts[direction as usize] = Some(
+                format!("tilemap/wall_mounts/{}.scn.ron", name)
+                    .as_str()
+                    .into(),
+            );
+        };
+    }
+
+    mounts
+}
+
+trait DirectionExt {
+    fn from_byond(direction: u8) -> Option<Self>
+    where
+        Self: Sized;
+}
+
+impl DirectionExt for Direction {
+    fn from_byond(direction: u8) -> Option<Self> {
+        match direction {
+            1 => Some(Direction::North),
+            2 => Some(Direction::South),
+            4 => Some(Direction::East),
+            8 => Some(Direction::West),
+            _ => None,
+        }
+    }
 }

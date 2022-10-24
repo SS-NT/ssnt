@@ -25,8 +25,8 @@ serde = { version = "*", features = ["derive"] }
 clap = { version = "3.0.13", features = ["derive"] }
 
 [patch.crates-io]
-bevy = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
-# bevy = { path = "../bevy" }
+# bevy = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy = { path = "../bevy" }
 
 [profile.dev.package."*"]
 opt-level = 3

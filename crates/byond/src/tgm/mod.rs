@@ -124,6 +124,13 @@ impl Object {
             variables,
         }
     }
+
+    fn variable(&self, name: &str) -> Option<&Value> {
+        self.variables
+            .iter()
+            .find(|v| v.name.as_str() == name)
+            .map(|v| &v.value)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

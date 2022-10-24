@@ -59,17 +59,16 @@ pub enum RoundState {
 }
 
 #[derive(Networked)]
-#[client(RoundDataClient)]
+#[networked(client = "RoundDataClient")]
 struct RoundData {
-    #[synced]
     state: NetworkVar<RoundState>,
     /// The server tick the round was started.
-    #[synced]
     start: NetworkVar<Option<u32>>,
 }
 
-#[derive(Default, TypeUuid)]
+#[derive(Default, TypeUuid, Networked)]
 #[uuid = "0db42b69-f2bd-4b28-96a2-e8123e51f45a"]
+#[networked(server = "RoundData")]
 pub struct RoundDataClient {
     state: ServerVar<RoundState>,
     start: ServerVar<Option<u32>>,
@@ -89,6 +88,7 @@ impl RoundDataClient {
 pub struct StartRoundRequest;
 
 fn load_map(mut commands: Commands, server: Res<AssetServer>) {
+    // TODO: Make map selection configurable
     let handle = server.load("maps/BoxStation.dmm");
     commands.insert_resource(crate::Map {
         handle,

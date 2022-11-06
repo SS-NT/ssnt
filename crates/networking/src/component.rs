@@ -63,7 +63,7 @@ fn send_networked_component_to_new<S: NetworkedToClient + Component, C: Networke
         if S::receiver_matters() {
             // Serialize component for every receiver
             for connection in visibility.new_observers() {
-                let data = match component.serialize(&mut *param, Some(*connection), None) {
+                let data = match component.serialize(&mut param, Some(*connection), None) {
                     Some(d) => d,
                     None => continue,
                 };
@@ -83,7 +83,7 @@ fn send_networked_component_to_new<S: NetworkedToClient + Component, C: Networke
             let new_observers: HashSet<_> = visibility.new_observers().copied().collect();
             if !new_observers.is_empty() {
                 let data = component
-                    .serialize(&mut *param, None, None)
+                    .serialize(&mut param, None, None)
                     .expect("Serializing without a specific receiver should always return data");
                 sender.send_with_priority(
                     &NetworkedComponentMessage {

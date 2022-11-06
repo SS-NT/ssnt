@@ -56,7 +56,7 @@ fn send_networked_resource_to_new<
     if S::receiver_matters() {
         // Serialize resource for every receiver
         for connection in new_players {
-            let data = match resource.serialize(&mut *param, Some(*connection), None) {
+            let data = match resource.serialize(&mut param, Some(*connection), None) {
                 Some(d) => d,
                 None => continue,
             };
@@ -70,7 +70,7 @@ fn send_networked_resource_to_new<
         let new_observers: HashSet<_> = new_players.copied().collect();
         if !new_observers.is_empty() {
             let data = resource
-                .serialize(&mut *param, None, None)
+                .serialize(&mut param, None, None)
                 .expect("Serializing without a specific receiver should always return data");
             sender.send(
                 &NetworkedResourceMessage { resource_id, data },
@@ -108,7 +108,7 @@ fn send_changed_networked_resource<
     if S::receiver_matters() {
         // Serialize resource for every receiver
         for connection in players {
-            let data = match resource.serialize(&mut *param, Some(*connection), None) {
+            let data = match resource.serialize(&mut param, Some(*connection), None) {
                 Some(d) => d,
                 None => continue,
             };
@@ -121,7 +121,7 @@ fn send_changed_networked_resource<
     } else {
         let all_players: HashSet<_> = players.copied().collect();
         let data = resource
-            .serialize(&mut *param, None, None)
+            .serialize(&mut param, None, None)
             .expect("Serializing without a specific receiver should always return data");
         sender.send(
             &NetworkedResourceMessage { resource_id, data },

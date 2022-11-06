@@ -76,7 +76,7 @@ pub struct RoundDataClient {
 
 impl RoundDataClient {
     pub fn state(&self) -> &RoundState {
-        &*self.state
+        &self.state
     }
 
     pub fn start(&self) -> Option<u32> {

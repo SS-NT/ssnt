@@ -58,7 +58,7 @@ fn get_turf_path(tile: &Tile) -> Option<AssetPathId> {
         .components
         .iter()
         .filter_map(|o| {
-            let priority = if o.path.starts_with("/obj") { 1 } else { 0 };
+            let priority = i32::from(o.path.starts_with("/obj"));
             let mut name = match o.path.as_str() {
                 "/turf/closed/wall" => Some("wall"),
                 "/turf/closed/wall/r_wall" => Some("reinforced wall"),

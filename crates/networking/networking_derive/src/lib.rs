@@ -262,16 +262,21 @@ pub fn networked_derive(input: TokenStream) -> TokenStream {
                     let changed_name = format_ident!("{}_changed", var_name);
                     let networked_type = networked_field.with.as_ref().and_then(|w| w.networked_ty.as_ref()).unwrap_or(&networked_field.networked_type);
 
-                    let variable_access = quote_spanned! { var_name.span() =>
-                        &*(self.#var_name)
-                    };
                     // Optionally transform the value before serializing
                     let value_expression = match networked_field.with.as_ref() {
                         Some(with) => {
+                            let variable_access = quote_spanned! { var_name.span() =>
+                                &self.#var_name
+                            };
                             let transformation = transform_field_value(variable_access, &param_indices, i, with);
                             quote!(owned(#transformation))
                         }
-                        None => quote!(from(#variable_access)),
+                        None => {
+                            let variable_access = quote_spanned! { var_name.span() =>
+                                &*(self.#var_name)
+                            };
+                            quote!(from(#variable_access))
+                        },
                     };
                     quote_spanned! { var_name.span() =>
                         let #changed_name = since_tick

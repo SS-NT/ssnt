@@ -3,6 +3,7 @@
 mod admin;
 mod camera;
 mod components;
+mod config;
 mod items;
 mod job;
 mod movement;
@@ -77,6 +78,14 @@ fn main() {
     let mut app = App::new();
     match role {
         NetworkRole::Server => {
+            match config::load_server_config() {
+                Ok(config) => app.insert_resource(config),
+                Err(err) => {
+                    error!("Error loading server configuration: {}", err);
+                    return;
+                }
+            };
+
             app.insert_resource(ScheduleRunnerSettings {
                 run_mode: bevy::app::RunMode::Loop {
                     wait: Some(Duration::from_secs_f64(1f64 / SERVER_TPS as f64)),
@@ -103,7 +112,8 @@ fn main() {
             .register_type::<bevy::render::view::Visibility>()
             .register_type::<bevy::render::view::ComputedVisibility>()
             .add_asset_loader(TgmLoader)
-            .add_startup_system(setup_server);
+            .add_startup_system(setup_server)
+            .add_startup_system(config::server_startup);
         }
         NetworkRole::Client => {
             app.add_plugins(DefaultPlugins)

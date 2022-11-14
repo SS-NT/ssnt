@@ -129,16 +129,16 @@ fn send_spawn_messages(
                 .filter(|c| connected_players.contains_key(c))
                 .collect();
             if !removed_observers.is_empty() {
-                // Send despawn message
-                sender.send_with_priority(
-                    &SpawnMessage::Despawn(*identity),
-                    MessageReceivers::Set(removed_observers.clone()),
-                    DESPAWN_MESSAGE_PRIORITY,
-                );
                 entity_events.send_batch(
                     removed_observers
                         .iter()
                         .map(|c| ServerEntityEvent::Despawned((entity, *c))),
+                );
+                // Send despawn message
+                sender.send_with_priority(
+                    &SpawnMessage::Despawn(*identity),
+                    MessageReceivers::Set(removed_observers),
+                    DESPAWN_MESSAGE_PRIORITY,
                 );
             }
         }

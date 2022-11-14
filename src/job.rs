@@ -30,6 +30,7 @@ pub struct JobDefinition {
     pub description: String,
 }
 
+#[derive(Resource)]
 pub struct JobAssets {
     // Used to keep definitions loaded
     #[allow(dead_code)]
@@ -48,7 +49,7 @@ fn load_assets(mut commands: Commands, server: ResMut<AssetServer>) {
     commands.insert_resource(assets);
 }
 
-#[derive(Default)]
+#[derive(Default, Resource)]
 pub struct SelectedJobs {
     selected: HashMap<ConnectionId, AssetPathId>,
 }

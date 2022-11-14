@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use bevy::{
     app::ScheduleRunnerSettings,
     prelude::{
-        warn, App, ParallelSystemDescriptorCoercion, Plugin, Res, ResMut, SystemLabel, SystemSet,
+        warn, App, IntoSystemDescriptor, Plugin, Res, ResMut, Resource, SystemLabel, SystemSet,
         Time,
     },
     utils::HashMap,
@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::{messaging::Channel, ConnectionId, NetworkManager, Players};
 
 /// Timing data of the server.
+#[derive(Resource)]
 pub struct ServerNetworkTime {
     /// How many seconds a server tick lasts
     server_tick_seconds: f64,
@@ -40,7 +41,7 @@ struct ServerClientTime {
     last_ping: f32,
 }
 
-#[derive(Default)]
+#[derive(Default, Resource)]
 struct ClientTimes {
     timings: HashMap<ConnectionId, ServerClientTime>,
 }
@@ -58,6 +59,7 @@ struct ReceivedServerTick {
     tick: u32,
 }
 
+#[derive(Resource)]
 pub(crate) struct ClientNetworkTime {
     /// How many seconds a server tick lasts
     pub server_tick_seconds: Option<f32>,
@@ -175,7 +177,7 @@ fn send_server_tick(
     network_time: Res<ServerNetworkTime>,
     players: Res<Players>,
 ) {
-    let seconds = time.seconds_since_startup() as f32;
+    let seconds = time.raw_elapsed_seconds() as f32;
     let tick = network_time.server_tick;
 
     for (connection, _) in players.players.iter() {
@@ -237,7 +239,7 @@ fn receive_server_tick(
 
             let received_tick = ReceivedServerTick {
                 tick: tick.tick,
-                time: time.seconds_since_startup() as f32,
+                time: time.raw_elapsed_seconds() as f32,
             };
             network_time.server_tick = Some(received_tick);
 
@@ -274,8 +276,7 @@ fn server_handle_response(
 }
 
 fn update_interpolated_tick(mut network_time: ResMut<ClientNetworkTime>, time: Res<Time>) {
-    let server_tick = match network_time.estimated_server_tick(time.seconds_since_startup() as f32)
-    {
+    let server_tick = match network_time.estimated_server_tick(time.raw_elapsed_seconds() as f32) {
         Some(t) => t,
         None => return,
     };

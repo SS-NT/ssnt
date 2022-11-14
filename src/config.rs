@@ -2,7 +2,7 @@ use std::{fs::read_to_string, time::Duration};
 
 use async_compat::Compat;
 use bevy::{
-    prelude::{error, Res},
+    prelude::{error, Res, Resource},
     tasks::IoTaskPool,
 };
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use tokio::time::{interval, MissedTickBehavior};
 
 use crate::{ArgCommands, Args};
 
-#[derive(Default, Deserialize)]
+#[derive(Default, Deserialize, Resource)]
 pub struct ServerConfig {
     registration: Option<ServerRegistration>,
 }

@@ -1,111 +1,51 @@
-[
-    // Light tube fixture
-    (
-        entity: 0,
-        components: [
-            {
-                "bevy_transform::components::transform::Transform": {
-                    "translation": {
-                        "x": 0.0,
-                        "y": 0.0,
-                        "z": 0.0,
-                    },
-                    "rotation": ( 0.0, 0.70710677, 0.0, -0.70710677),
-                    "scale": {
-                        "x": 1.0,
-                        "y": 1.0,
-                        "z": 1.0,
-                    }
-                }
-            },
-            {
-                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": {
-                    "id": "models/tilemap/lights.glb#Mesh12/Primitive0"
-                }
-            },
-            {
-                "bevy_pbr::light::NotShadowCaster": {
-                }
-            },
-        ]
-    ),
-    // Light tube
-    (
-        entity: 1,
-        components: [
-            {
-                "bevy_hierarchy::components::parent::Parent": (0,)
-            },
-            {
-                "bevy_transform::components::transform::Transform": {
-                    "translation": {
-                        "x": 0.0,
-                        "y": 0.0,
-                        "z": 0.0,
-                    },
-                    "rotation": (0.0, 0.0, 0.0, 1.0),
-                    "scale": {
-                        "x": 1.0,
-                        "y": 1.0,
-                        "z": 1.0,
-                    }
-                }
-            },
-            {
-                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": {
-                    "id": "models/tilemap/lights.glb#Mesh9/Primitive0"
-                }
-            },
-            {
-                "bevy_pbr::light::NotShadowCaster": {
-                }
-            },
-        ]
-    ),
-    // Light on the light tube
-    (
-        entity: 2,
-        components: [
-            {
-                "bevy_hierarchy::components::parent::Parent": (1,)
-            },
-            {
-                "bevy_transform::components::transform::Transform": {
-                    "translation": {
-                        "x": 0.0,
-                        "y": 0.0,
-                        "z": 0.0,
-                    },
-                    "rotation": (0.0, 0.0, 0.0, 1.0),
-                    "scale": {
-                        "x": 1.0,
-                        "y": 1.0,
-                        "z": 1.0,
-                    }
-                }
-            },
-            {
-                "bevy_pbr::light::PointLight": {
-                    "shadows_enabled": true,
-                }
-            },
-            {
-                "bevy_pbr::bundle::CubemapVisibleEntities": {
-                }
-            },
-            {
-                "bevy_render::primitives::CubemapFrusta": {
-                }
-            },
-            {
-                "bevy_render::view::visibility::Visibility": {
-                    "is_visible": true,
-                }
-            },
-            {
-                "bevy_render::view::visibility::ComputedVisibility": {
-                }
-            },
-        ]
-    )
-]
+(
+    entities: {
+        // Light tube fixture
+        0: (
+            components: {
+                "bevy_transform::components::transform::Transform": (
+                    rotation: ( 0.0, 0.70710677, 0.0, -0.70710677),
+                ),
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
+                    id: "models/tilemap/lights.glb#Mesh12/Primitive0"
+                ),
+                "bevy_pbr::light::NotShadowCaster": (),
+                "bevy_hierarchy::components::children::Children": ([(index: 1, generation: 0)]),
+            }
+        ),
+        // Light tube
+        1: (
+            components: {
+                "bevy_hierarchy::components::parent::Parent": (
+                    ( index: 0, generation: 0 )
+                ),
+                "bevy_transform::components::transform::Transform": (
+                ),
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
+                    id: "models/tilemap/lights.glb#Mesh9/Primitive0"
+                ),
+                "bevy_pbr::light::NotShadowCaster": (),
+                "bevy_hierarchy::components::children::Children": ([(index: 2, generation: 0)]),
+            }
+        ),
+        // Light on the light tube
+        2: (
+            components: {
+                "bevy_hierarchy::components::parent::Parent": (
+                    ( index: 1, generation: 0 )
+                ),
+                "bevy_transform::components::transform::Transform": (
+                ),
+                "bevy_pbr::light::PointLight": (
+                    shadows_enabled: true,
+                ),
+                "bevy_pbr::bundle::CubemapVisibleEntities": (),
+                "bevy_render::primitives::CubemapFrusta": (),
+                "bevy_render::view::visibility::Visibility": (
+                    is_visible: true,
+                ),
+                "bevy_render::view::visibility::ComputedVisibility": (),
+            }
+        )
+    }
+)

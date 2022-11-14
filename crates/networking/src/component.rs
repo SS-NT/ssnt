@@ -100,6 +100,7 @@ fn send_networked_component_to_new<S: NetworkedToClient + Component, C: Networke
 }
 
 /// Buffers initial networked component values for scenes that aren't spawned yet
+#[derive(Resource)]
 struct BufferedNetworkedComponents<C> {
     to_apply: Vec<(InstanceId, NetworkedComponentMessage, Entity)>,
     phantom_data: PhantomData<C>,

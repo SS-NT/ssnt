@@ -8,6 +8,7 @@ use std::{
 
 use bevy::{
     ecs::system::{SystemParam, SystemParamFetch},
+    prelude::Resource,
     reflect::TypeUuid,
     utils::Uuid,
 };
@@ -239,6 +240,7 @@ enum DiffableValueUpdate<'a, T: Clone + Diffable> {
 }
 
 /// Maps uuids to a smaller data type to save network bandwith.
+#[derive(Resource)]
 pub(crate) struct NetworkRegistry<T> {
     entries: Vec<Uuid>,
     phantom: PhantomData<T>,

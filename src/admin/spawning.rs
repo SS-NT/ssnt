@@ -3,11 +3,7 @@ use bevy::{
     input::Input,
     math::{Mat4, Vec2, Vec3},
     pbr::PbrBundle,
-    prelude::{
-        info, shape, warn, App, Assets, Camera, Commands, Component, EventReader, GlobalTransform,
-        Handle, Mesh, MouseButton, ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut,
-        SystemSet, Transform, With,
-    },
+    prelude::*,
     transform::TransformBundle,
     utils::HashMap,
     window::Windows,
@@ -40,6 +36,7 @@ struct SpawnableDefinition {
     shape: ColliderShape,
 }
 
+#[derive(Resource)]
 struct SpawnerAssets {
     spawnables: HashMap<Spawnable, SpawnableDefinition>,
 }
@@ -75,7 +72,7 @@ fn load_spawner_assets(mut commands: Commands, mut meshes: Option<ResMut<Assets<
     commands.insert_resource(SpawnerAssets { spawnables });
 }
 
-#[derive(Default)]
+#[derive(Default, Resource)]
 struct SpawnerUiState {
     to_spawn: Option<Spawnable>,
 }
@@ -161,12 +158,13 @@ fn create_spawnable(
 ) {
     let definition = assets.spawnables.get(&kind).unwrap();
 
-    commands
-        .insert(RigidBody::Dynamic)
-        .insert(Velocity::default())
-        .insert(Collider::from(definition.shape.clone()))
-        .insert_bundle(TransformBundle::from(Transform::from_translation(position)))
-        .insert(kind);
+    commands.insert((
+        RigidBody::Dynamic,
+        Velocity::default(),
+        Collider::from(definition.shape.clone()),
+        TransformBundle::from(Transform::from_translation(position)),
+        kind,
+    ));
 }
 
 fn handle_spawn_request(
@@ -176,11 +174,13 @@ fn handle_spawn_request(
 ) {
     for event in messages.iter() {
         if let SpawnerMessage::Request((position, kind)) = event.message {
-            let mut builder = commands.spawn();
+            let mut builder = commands.spawn_empty();
             create_spawnable(&mut builder, kind, &assets, position);
             builder
-                .insert(PrefabPath("spawnable".to_owned()))
-                .insert(NetworkTransform::default())
+                .insert((
+                    PrefabPath("spawnable".to_owned()),
+                    NetworkTransform::default(),
+                ))
                 .networked();
         }
     }
@@ -224,12 +224,13 @@ fn receive_spawned_type(
 
             let mut builder = commands.entity(entity);
             create_spawnable(&mut builder, spawnable, &assets, Vec3::ZERO);
-            builder
-                .insert(NetworkedTransform::default())
-                .insert_bundle(PbrBundle {
+            builder.insert((
+                NetworkedTransform::default(),
+                PbrBundle {
                     mesh: assets.spawnables.get(&spawnable).unwrap().mesh.clone(),
                     ..Default::default()
-                });
+                },
+            ));
         }
     }
 }

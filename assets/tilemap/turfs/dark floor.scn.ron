@@ -1,12 +1,11 @@
-[
-    (
-        entity: 0,
-        components: [
-            {
-                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": {
-                    "id": "models/tilemap/floors.glb#Mesh3/Primitive0"
-                }
-            },
-        ]
-    ),
-]
+(
+    entities: {
+        0: (
+            components: {
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
+                    id: "models/tilemap/floors.glb#Mesh3/Primitive0"
+                )
+            }
+        )
+    }
+)

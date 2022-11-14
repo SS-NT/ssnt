@@ -8,6 +8,6 @@ edition = "2021"
 [dependencies]
 maps = { path = "../maps" }
 utils = { path = "../utils" }
-bevy = "0.8"
+bevy = { workspace = true }
 nom = "6.1.2"
 anyhow = "1.0.40"

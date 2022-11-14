@@ -18,10 +18,10 @@ impl Plugin for SplashPlugin {
 struct OnSplashScreen;
 
 // Newtype to use a `Timer` for this screen as a resource
-#[derive(Deref, DerefMut)]
+#[derive(Deref, DerefMut, Resource)]
 struct SplashTimer(Timer);
 
-#[derive(Deref, DerefMut)]
+#[derive(Deref, DerefMut, Resource)]
 struct SplashFadeElement(Entity);
 
 fn splash_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -30,19 +30,21 @@ fn splash_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let mut fade = None;
     // Display the logo
     commands
-        .spawn_bundle(ImageBundle {
-            style: Style {
-                // This will center the logo
-                margin: UiRect::all(Val::Auto),
-                size: Size::new(Val::Percent(100.0), Val::Percent(100.0)),
+        .spawn((
+            ImageBundle {
+                style: Style {
+                    // This will center the logo
+                    margin: UiRect::all(Val::Auto),
+                    size: Size::new(Val::Percent(100.0), Val::Percent(100.0)),
+                    ..default()
+                },
+                image: UiImage(background),
                 ..default()
             },
-            image: UiImage(background),
-            ..default()
-        })
-        .insert(OnSplashScreen)
+            OnSplashScreen,
+        ))
         .with_children(|parent| {
-            parent.spawn_bundle(ImageBundle {
+            parent.spawn(ImageBundle {
                 style: Style {
                     margin: UiRect::all(Val::Auto),
                     ..default()
@@ -52,13 +54,13 @@ fn splash_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             });
             fade = Some(
                 parent
-                    .spawn_bundle(NodeBundle {
+                    .spawn(NodeBundle {
                         style: Style {
                             position_type: PositionType::Absolute,
                             size: Size::new(Val::Percent(100.0), Val::Percent(100.0)),
                             ..default()
                         },
-                        color: Color::rgba(0.0, 0.0, 0.0, 0.0).into(),
+                        background_color: Color::rgba(0.0, 0.0, 0.0, 0.0).into(),
                         ..default()
                     })
                     .id(),
@@ -66,7 +68,7 @@ fn splash_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         });
     commands.insert_resource(SplashFadeElement(fade.unwrap()));
     // Insert the timer as a resource
-    commands.insert_resource(SplashTimer(Timer::from_seconds(3.0, false)));
+    commands.insert_resource(SplashTimer(Timer::from_seconds(3.0, TimerMode::Once)));
 }
 
 // Tick the timer, and change state when finished
@@ -75,7 +77,7 @@ fn countdown(
     time: Res<Time>,
     mut timer: ResMut<SplashTimer>,
     fade_element: Res<SplashFadeElement>,
-    mut colors: Query<&mut UiColor>,
+    mut colors: Query<&mut BackgroundColor>,
 ) {
     const FADE_FROM_TIME: f32 = 0.7;
     const FADE_TO_TIME: f32 = 0.90;

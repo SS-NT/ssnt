@@ -1,8 +1,8 @@
 use bevy::{
     math::{IVec2, Vec2, Vec3Swizzles},
     prelude::{
-        Added, App, Changed, Component, CoreStage, Entity, GlobalTransform, Or,
-        ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SystemLabel, UVec2,
+        Added, App, Changed, Component, CoreStage, Entity, GlobalTransform, IntoSystemDescriptor,
+        Or, Plugin, Query, Res, ResMut, Resource, SystemLabel, UVec2,
     },
     transform::TransformSystem,
     utils::{HashMap, HashSet, Uuid},
@@ -100,7 +100,7 @@ impl NetworkVisibility {
 }
 
 /// Stores a mapping between network identities and their observers
-#[derive(Default)]
+#[derive(Default, Resource)]
 pub(crate) struct NetworkVisibilities {
     pub(crate) visibility: HashMap<NetworkIdentity, NetworkVisibility>,
 }
@@ -110,7 +110,7 @@ struct SpatialCell {
     entities: HashSet<Entity>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Resource)]
 struct SpatialHash {
     cells: HashMap<IVec2, SpatialCell>,
     cell_size: u16,

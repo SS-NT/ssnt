@@ -3,8 +3,8 @@ use std::{any::TypeId, time::Duration};
 use bevy::{
     ecs::system::SystemParam,
     prelude::{
-        trace, warn, App, EventReader, EventWriter, Local, ParallelSystemDescriptorCoercion,
-        Plugin, Res, ResMut, SystemLabel,
+        trace, warn, App, EventReader, EventWriter, IntoSystemDescriptor, Local, Plugin, Res,
+        ResMut, Resource, SystemLabel,
     },
     utils::{HashMap, HashSet},
 };
@@ -21,7 +21,7 @@ use crate::{ConnectionId, NetworkManager, NetworkSystem, Players};
 
 /// Assigns packet numbers to types uniquely and allows to lookup the id for a specific type.
 /// Used in packet registration, serialization and deserialization.
-#[derive(Default)]
+#[derive(Default, Resource)]
 pub struct MessageTypes {
     last_type: u16,
     types: HashMap<TypeId, u16>,
@@ -102,6 +102,7 @@ pub struct MessageEvent<T> {
 }
 
 // This should be private, but the SystemParam implementation prevents this.
+#[derive(Resource)]
 pub struct InternalSenderRes {
     sender: flume::Sender<OutboundMessage>,
 }

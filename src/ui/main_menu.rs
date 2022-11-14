@@ -16,6 +16,7 @@ impl Plugin for MainMenuPlugin {
     }
 }
 
+#[derive(Resource)]
 struct DisconnectReason {
     reason: String,
 }

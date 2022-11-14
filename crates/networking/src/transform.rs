@@ -3,9 +3,9 @@ use std::collections::VecDeque;
 use bevy::{
     math::{Quat, Vec3},
     prelude::{
-        warn, App, Commands, Component, CoreStage, EventReader, Local,
-        ParallelSystemDescriptorCoercion, Plugin, Query, Res, ResMut, SpatialBundle, SystemLabel,
-        SystemSet, Time, Transform, With, Without,
+        warn, App, Commands, Component, CoreStage, EventReader, IntoSystemDescriptor, Local,
+        Plugin, Query, Res, ResMut, Resource, SpatialBundle, SystemLabel, SystemSet, Time,
+        Transform, With, Without,
     },
     transform::TransformSystem,
     utils::{hashbrown::hash_map::Entry, HashMap},
@@ -183,7 +183,7 @@ fn update_transform(
     mut server: ResMut<RenetServer>,
     network_time: Res<ServerNetworkTime>,
 ) {
-    let seconds = time.time_since_startup().as_secs_f32();
+    let seconds = time.raw_elapsed_seconds();
     for (mut networked, transform, identity, velocity) in query.iter_mut() {
         let networked: &mut NetworkTransform = &mut networked;
         // Respect update rate
@@ -251,7 +251,7 @@ fn handle_retransmission(
     visibilities: Res<NetworkVisibilities>,
     mut server: ResMut<RenetServer>,
 ) {
-    let seconds = time.time_since_startup().as_secs_f32();
+    let seconds = time.raw_elapsed_seconds();
     for (mut networked, identity) in query.iter_mut() {
         let networked: &mut NetworkTransform = &mut networked;
 
@@ -318,7 +318,7 @@ fn handle_occasional_sync(
     visibilities: Res<NetworkVisibilities>,
     mut server: ResMut<RenetServer>,
 ) {
-    let seconds = time.time_since_startup().as_secs_f32();
+    let seconds = time.raw_elapsed_seconds();
 
     for (mut networked, identity) in query.iter_mut() {
         if networked.last_change + TRANSFORM_STILL_RESYNC_WAIT > seconds {
@@ -381,7 +381,7 @@ fn handle_acks(
     identities: Res<NetworkIdentities>,
     time: Res<Time>,
 ) {
-    let seconds = time.time_since_startup().as_secs_f32();
+    let seconds = time.raw_elapsed_seconds();
     'clients: for client_id in server.clients_id().into_iter() {
         while let Some(message) = server.receive_message(client_id, Channel::Transforms.id()) {
             let message: TransformMessage = match bincode::deserialize(&message) {
@@ -489,6 +489,7 @@ impl NetworkedTransform {
 
 const UPDATE_BUFFER_SIZE: usize = 150;
 /// Stores transform updates that could not be applied
+#[derive(Resource)]
 struct BufferedTransformUpdates {
     updates: VecDeque<TransformUpdate>,
 }
@@ -583,8 +584,7 @@ fn apply_buffered_updates(
                 networked.buffered_updates.push_back(update.clone());
                 commands
                     .entity(entity)
-                    .insert_bundle(SpatialBundle::default())
-                    .insert(networked);
+                    .insert((SpatialBundle::default(), networked));
             }
         }
 

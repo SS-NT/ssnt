@@ -36,10 +36,7 @@ struct NetworkedResourceMessage {
     data: Bytes,
 }
 
-fn send_networked_resource_to_new<
-    S: NetworkedToClient + Send + Sync + 'static,
-    C: NetworkedFromServer,
->(
+fn send_networked_resource_to_new<S: NetworkedToClient + Resource, C: NetworkedFromServer>(
     resource: Res<S>,
     registry: Res<NetworkedResourceRegistry>,
     mut sender: MessageSender,
@@ -80,10 +77,7 @@ fn send_networked_resource_to_new<
     }
 }
 
-fn send_changed_networked_resource<
-    S: NetworkedToClient + Send + Sync + 'static,
-    C: NetworkedFromServer,
->(
+fn send_changed_networked_resource<S: NetworkedToClient + Resource, C: NetworkedFromServer>(
     mut resource: ResMut<S>,
     registry: Res<NetworkedResourceRegistry>,
     players: Res<Players>,
@@ -130,7 +124,7 @@ fn send_changed_networked_resource<
     }
 }
 
-fn receive_networked_resource<C: NetworkedFromServer + Send + Sync + 'static>(
+fn receive_networked_resource<C: NetworkedFromServer + Resource>(
     mut events: EventReader<MessageEvent<NetworkedResourceMessage>>,
     mut resource: Option<ResMut<C>>,
     registry: Res<NetworkedResourceRegistry>,
@@ -168,8 +162,8 @@ fn receive_networked_resource<C: NetworkedFromServer + Send + Sync + 'static>(
 pub trait AppExt {
     fn add_networked_resource<S, C>(&mut self) -> &mut App
     where
-        S: NetworkedToClient + Send + Sync + 'static,
-        C: NetworkedFromServer + Send + Sync + 'static;
+        S: NetworkedToClient + Resource,
+        C: NetworkedFromServer + Resource;
 }
 
 impl AppExt for App {
@@ -177,8 +171,8 @@ impl AppExt for App {
     /// Changes are synced from the server resource (`S`) to the client resource (`C`).
     fn add_networked_resource<S, C>(&mut self) -> &mut App
     where
-        S: NetworkedToClient + Send + Sync + 'static,
-        C: NetworkedFromServer + Send + Sync + 'static,
+        S: NetworkedToClient + Resource,
+        C: NetworkedFromServer + Resource,
     {
         variable::assert_compatible::<S, C>();
         self.init_resource::<NetworkedResourceRegistry>();

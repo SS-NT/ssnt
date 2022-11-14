@@ -1,6 +1,8 @@
 use bevy::{
     ecs::system::{Command, EntityCommands},
-    prelude::{error, App, Component, CoreStage, Entity, Plugin, RemovedComponents, ResMut},
+    prelude::{
+        error, App, Component, CoreStage, Entity, Plugin, RemovedComponents, ResMut, Resource,
+    },
     utils::HashMap,
 };
 use serde::{Deserialize, Serialize};
@@ -15,7 +17,7 @@ pub struct NetworkIdentity(u32);
 ///
 /// Entity ids cannot be used over the network as they are an implementation detail and may conflict.
 /// To solve this, we create our own counter and map it to the actual entity id.
-#[derive(Default)]
+#[derive(Default, Resource)]
 pub struct NetworkIdentities {
     last_id: u32,
     identities: HashMap<NetworkIdentity, Entity>,

@@ -3,9 +3,8 @@ use bevy::{
     ecs::query::QuerySingleError,
     prelude::{
         debug, error, info, warn, App, AssetServer, Commands, Component, CoreStage,
-        DespawnRecursiveExt, Entity, EventReader, EventWriter, Handle,
-        ParallelSystemDescriptorCoercion, Plugin, Query, RemovedComponents, Res, ResMut,
-        SystemLabel, SystemSet, With,
+        DespawnRecursiveExt, Entity, EventReader, EventWriter, Handle, IntoSystemDescriptor,
+        Plugin, Query, RemovedComponents, Res, ResMut, Resource, SystemLabel, SystemSet, With,
     },
     scene::{DynamicScene, DynamicSceneBundle},
     utils::{HashMap, HashSet, Uuid},
@@ -87,7 +86,7 @@ fn send_spawn_messages(
                 // Get the asset hash or the string name that identifies the object
                 let identifier = match (name, scene) {
                     (None, None) => SpawnAssetIdentifier::Empty,
-                    (None, Some(scene)) => SpawnAssetIdentifier::AssetPath(match scene.id {
+                    (None, Some(scene)) => SpawnAssetIdentifier::AssetPath(match scene.id() {
                         bevy::asset::HandleId::Id(_, _) => {
                             warn!(entity = ?entity, "Cannot spawn networked object with dynamic handle id. Handle must be created from a loaded asset.");
                             continue;
@@ -194,22 +193,21 @@ fn receive_spawn(
                     continue;
                 }
 
-                let mut builder = commands.spawn();
-                builder.insert(spawn.network_id);
+                let mut builder = commands.spawn(spawn.network_id);
 
                 match spawn.identifier {
                     SpawnAssetIdentifier::Named(name) => {
                         builder.insert(PrefabPath(name));
                     }
                     SpawnAssetIdentifier::AssetPath(id) => {
-                        builder.insert_bundle(DynamicSceneBundle {
+                        builder.insert(DynamicSceneBundle {
                             scene: asset_server.get_handle(id),
                             ..Default::default()
                         });
                     }
                     SpawnAssetIdentifier::Empty => {}
                 }
-                let entity = builder.insert(spawn.network_id).id();
+                let entity = builder.id();
                 ids.set_identity(entity, spawn.network_id);
                 entity_events.send(NetworkedEntityEvent::Spawned(entity));
 
@@ -229,7 +227,7 @@ fn receive_spawn(
 }
 
 /// Tracks which connected client controls which entity
-#[derive(Default)]
+#[derive(Default, Resource)]
 pub struct ClientControls {
     mapping: HashMap<Uuid, Entity>,
     entities: HashSet<Entity>,

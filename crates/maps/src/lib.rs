@@ -468,25 +468,27 @@ fn spawn_from_data(
                         let scene = server.get_handle(asset_path);
                         commands.entity(map_entity).add_children(|builder| {
                             builder
-                                .spawn_bundle(DynamicSceneBundle {
-                                    scene,
-                                    transform: Transform {
-                                        translation: Vec3::new(x as f32, 0.0, y as f32)
-                                            + layer.default_offset(),
-                                        rotation: direction.rotate_around(Vec3::Y),
+                                .spawn((
+                                    DynamicSceneBundle {
+                                        scene,
+                                        transform: Transform {
+                                            translation: Vec3::new(x as f32, 0.0, y as f32)
+                                                + layer.default_offset(),
+                                            rotation: direction.rotate_around(Vec3::Y),
+                                            ..Default::default()
+                                        },
                                         ..Default::default()
                                     },
-                                    ..Default::default()
-                                })
-                                .insert(TileEntity {
-                                    tilemap: map_entity.into(),
-                                    path: TileEntityPath {
-                                        position: UVec2::new(x, y),
-                                        layer,
-                                        index_in_layer,
-                                    }
-                                    .into(),
-                                })
+                                    TileEntity {
+                                        tilemap: map_entity.into(),
+                                        path: TileEntityPath {
+                                            position: UVec2::new(x, y),
+                                            layer,
+                                            index_in_layer,
+                                        }
+                                        .into(),
+                                    },
+                                ))
                                 .networked()
                                 .id()
                         })
@@ -516,12 +518,12 @@ fn spawn_from_data(
             map.set_tile((x, y).into(), tile_ref).unwrap();
         }
 
-        commands
-            .entity(map_entity)
-            .insert(map)
-            .insert(GridAabb::default())
-            .insert_bundle(SpatialBundle::default()) // TODO: Remove, just testing
-            .insert(NetworkTransform::default());
+        commands.entity(map_entity).insert((
+            map,
+            GridAabb::default(),
+            SpatialBundle::default(),
+            NetworkTransform::default(),
+        ));
         info!("Spawned tiles for map (entity={:?})", map_entity);
     }
 }
@@ -566,11 +568,12 @@ fn client_initialize_tile_objects(
     }
 
     loading.retain(|instance| {
-        if let Some(entities) = spawner.iter_instance_entities(*instance) {
+        if spawner.instance_is_ready(*instance) {
+            let entities = spawner.iter_instance_entities(*instance);
             if let Some(assets) = assets.client.as_ref() {
                 for entity in entities {
                     if let Ok((mesh, transform)) = existing_meshes.get(entity) {
-                        commands.entity(entity).insert_bundle(PbrBundle {
+                        commands.entity(entity).insert(PbrBundle {
                             mesh: mesh.clone(),
                             material: assets.default_material.clone(),
                             transform: transform.cloned().unwrap_or_default(),
@@ -621,7 +624,7 @@ fn client_update_tile_entities(
 
             commands
                 .entity(parent.get())
-                .insert_bundle(SpatialBundle::from_transform(new_transform));
+                .insert(SpatialBundle::from_transform(new_transform));
 
             let mut tilemap = tilemaps
                 .get_mut(*tile_entity.tilemap)
@@ -727,6 +730,7 @@ fn client_update_adjacencies(
 
 /// Stores strong references to all tilemap object assets.
 /// This is so we can create handles from a path id, which doesn't load the assets by itself.
+#[derive(Resource)]
 struct MapAssets {
     #[allow(dead_code)]
     definitions: Vec<HandleUntyped>,

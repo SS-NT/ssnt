@@ -34,8 +34,8 @@ use std::{
 use bevy::{
     app::AppExit,
     prelude::{
-        error, info, warn, App, Commands, EventReader, EventWriter, Local,
-        ParallelSystemDescriptorCoercion, Plugin, Res, ResMut, State, SystemLabel,
+        error, info, warn, App, Commands, EventReader, EventWriter, IntoSystemDescriptor, Local,
+        Plugin, Res, ResMut, Resource, State, SystemLabel,
     },
     utils::{HashMap, Uuid},
 };
@@ -55,6 +55,7 @@ pub enum NetworkRole {
     Client,
 }
 
+#[derive(Resource)]
 pub struct NetworkManager {
     pub role: NetworkRole,
 }
@@ -92,6 +93,7 @@ pub enum ServerEvent {
     PlayerDisconnected(ConnectionId),
 }
 
+#[derive(Resource)]
 pub struct UserData {
     pub username: String,
 }
@@ -167,8 +169,7 @@ fn handle_joining_server(
                         user_data: None,
                     };
                     let client =
-                        RenetClient::new(current_time, socket, client_id, connection_config, auth)
-                            .unwrap();
+                        RenetClient::new(current_time, socket, connection_config, auth).unwrap();
                     commands.insert_resource(client);
                 }
             }
@@ -290,7 +291,7 @@ pub struct Player {
     pub username: String,
 }
 
-#[derive(Default)]
+#[derive(Default, Resource)]
 pub struct Players {
     players: HashMap<ConnectionId, Player>,
     user_ids: HashMap<Uuid, ConnectionId>,
@@ -405,8 +406,8 @@ enum NetworkSystem {
 impl Plugin for NetworkingPlugin {
     fn build(&self, app: &mut App) {
         match self.role {
-            NetworkRole::Server => app.add_plugin(RenetServerPlugin),
-            NetworkRole::Client => app.add_plugin(RenetClientPlugin),
+            NetworkRole::Server => app.add_plugin(RenetServerPlugin::default()),
+            NetworkRole::Client => app.add_plugin(RenetClientPlugin::default()),
         };
 
         app.insert_resource(NetworkManager { role: self.role })

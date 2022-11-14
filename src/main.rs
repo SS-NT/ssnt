@@ -46,7 +46,7 @@ use networking::{ClientEvent, NetworkRole, NetworkingPlugin};
 /// How many ticks the server runs per second
 const SERVER_TPS: u32 = 60;
 
-#[derive(Parser)]
+#[derive(Parser, Resource)]
 struct Args {
     #[clap(subcommand)]
     command: Option<ArgCommands>,
@@ -93,8 +93,8 @@ fn main() {
             })
             .add_plugins(MinimalPlugins)
             .add_plugin(TransformPlugin)
-            .add_plugin(AssetPlugin)
-            .add_plugin(LogPlugin)
+            .add_plugin(AssetPlugin::default())
+            .add_plugin(LogPlugin::default())
             .add_plugin(ScenePlugin)
             .add_plugin(HierarchyPlugin)
             .add_plugin(networking_plugin)
@@ -107,7 +107,6 @@ fn main() {
             // The server will not do anything with them, but needs it so it can load scene files.
             .register_type::<bevy::pbr::PointLight>()
             .register_type::<bevy::pbr::CubemapVisibleEntities>()
-            .register_type::<bevy::pbr::NotShadowCaster>()
             .register_type::<bevy::render::primitives::CubemapFrusta>()
             .register_type::<bevy::render::view::Visibility>()
             .register_type::<bevy::render::view::ComputedVisibility>()
@@ -121,7 +120,7 @@ fn main() {
                 .add_plugin(camera::CameraPlugin)
                 .add_plugin(EguiPlugin)
                 .insert_resource(WorldInspectorParams {
-                    enabled: false,
+                    enabled: true,
                     ..Default::default()
                 })
                 .add_plugin(WorldInspectorPlugin::new())
@@ -149,6 +148,10 @@ fn main() {
         .insert_resource(args)
         .add_startup_system(setup_shared)
         .register_type::<Player>()
+        // Temporary version of https://github.com/bevyengine/bevy/pull/6578
+        .register_type::<smallvec::SmallVec<[Entity; 8]>>()
+        // Types that bevy doesn't register yet
+        .register_type::<bevy::pbr::NotShadowCaster>()
         .run();
 }
 
@@ -187,7 +190,7 @@ impl Default for Player {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Resource)]
 pub struct Map {
     pub handle: Handle<byond::tgm::TileMap>,
     pub spawned: bool,
@@ -195,11 +198,11 @@ pub struct Map {
 
 fn setup_shared(mut commands: Commands) {
     // Spawn ground plane
-    commands
-        .spawn()
-        .insert_bundle(TransformBundle::from(Transform::from_xyz(0.0, -0.5, 0.0)))
-        .insert(Collider::cuboid(1000.0, 0.5, 1000.0))
-        .insert(KeepOnServerChange);
+    commands.spawn((
+        TransformBundle::from(Transform::from_xyz(0.0, -0.5, 0.0)),
+        Collider::cuboid(1000.0, 0.5, 1000.0),
+        KeepOnServerChange,
+    ));
 }
 
 fn setup_server(args: Res<Args>, mut commands: Commands) {
@@ -226,16 +229,17 @@ fn setup_client(
         ..Default::default()
     });
 
-    let temporary_camera_target = commands.spawn().insert(GlobalTransform::default()).id();
+    let temporary_camera_target = commands.spawn(GlobalTransform::default()).id();
 
-    commands
-        .spawn_bundle(Camera3dBundle {
+    commands.spawn((
+        Camera3dBundle {
             transform: Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
             ..Default::default()
-        })
-        .insert(TopDownCamera::new(temporary_camera_target))
-        .insert(camera::MainCamera)
-        .insert(KeepOnServerChange);
+        },
+        TopDownCamera::new(temporary_camera_target),
+        camera::MainCamera,
+        KeepOnServerChange,
+    ));
 
     if let Some(ArgCommands::Join { address }) = args.command {
         state.overwrite_set(GameState::MainMenu).unwrap();
@@ -278,12 +282,12 @@ fn create_player(commands: &mut EntityCommands) -> Entity {
         ReadMassProperties::default(),
     );
     commands
-        .insert_bundle(TransformBundle::from_transform(
-            Transform::from_translation((0.0, 1.0, 0.0).into()),
+        .insert((
+            TransformBundle::from_transform(Transform::from_translation((0.0, 1.0, 0.0).into())),
+            Player::default(),
+            player_rigid_body,
+            player_collider,
         ))
-        .insert(Player::default())
-        .insert_bundle(player_rigid_body)
-        .insert_bundle(player_collider)
         .id()
 }
 
@@ -300,13 +304,13 @@ fn handle_player_spawn(
                 if prefab.0 == "player" {
                     let player = create_player(&mut commands.entity(*entity));
                     let player_model = server.load("models/human.glb#Scene0");
-                    commands
-                        .entity(player)
-                        .insert(NetworkedTransform::default())
-                        .insert_bundle(SceneBundle {
+                    commands.entity(player).insert((
+                        NetworkedTransform::default(),
+                        SceneBundle {
                             scene: player_model,
                             ..Default::default()
-                        });
+                        },
+                    ));
                 }
             }
         }
@@ -327,10 +331,10 @@ fn set_camera_target(
 #[allow(dead_code)]
 fn test_containers(mut commands: Commands, q: ContainerQuery) {
     let mut item = Item::new("Toolbox".into(), UVec2::new(2, 1));
-    let item_entity = commands.spawn().id();
+    let item_entity = commands.spawn_empty().id();
 
     let mut container = Container::new(UVec2::new(5, 5));
-    let mut container_builder = commands.spawn();
+    let mut container_builder = commands.spawn_empty();
     let container_entity = container_builder.id();
     let mut container_writer = ContainerWriter::new(&mut container, container_entity, &q);
     container_writer.insert_item(&mut item, item_entity, UVec2::new(0, 0));
@@ -353,7 +357,7 @@ fn convert_tgm_map(
             let thread_pool = AsyncComputeTaskPool::get();
             let task =
                 thread_pool.spawn(async move { byond::tgm::conversion::to_map_data(&map_copy) });
-            let new_entity = commands.spawn().insert(ConvertByondMap(task)).id();
+            let new_entity = commands.spawn(ConvertByondMap(task)).id();
             info!("Scheduled tgm map conversion (entity={:?})", new_entity);
             commands.remove_resource::<Map>();
         }
@@ -369,8 +373,7 @@ fn create_tilemap_from_converted(
             commands
                 .entity(entity)
                 .remove::<ConvertByondMap>()
-                .insert(map_data)
-                .insert_bundle(SpatialBundle::default())
+                .insert((map_data, SpatialBundle::default()))
                 .networked();
             info!("Map conversion finished and applied (entity={:?})", entity);
         }
@@ -380,7 +383,7 @@ fn create_tilemap_from_converted(
 #[allow(dead_code)]
 fn print_containers(containers: Query<(&Container, Entity)>, container_query: ContainerQuery) {
     for (container, entity) in containers.iter() {
-        println!("Container Entity: {}", entity.id());
+        println!("Container Entity: {:?}", entity);
         let accessor = ContainerAccessor::new(container, &container_query);
         for (position, item) in accessor.items() {
             println!("  {}", item.name);

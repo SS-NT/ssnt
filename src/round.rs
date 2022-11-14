@@ -58,7 +58,7 @@ pub enum RoundState {
     Ended,
 }
 
-#[derive(Networked)]
+#[derive(Networked, Resource)]
 #[networked(client = "RoundDataClient")]
 struct RoundData {
     state: NetworkVar<RoundState>,
@@ -66,7 +66,7 @@ struct RoundData {
     start: NetworkVar<Option<u32>>,
 }
 
-#[derive(Default, TypeUuid, Networked)]
+#[derive(Default, TypeUuid, Networked, Resource)]
 #[uuid = "0db42b69-f2bd-4b28-96a2-e8123e51f45a"]
 #[networked(server = "RoundData")]
 pub struct RoundDataClient {
@@ -131,7 +131,7 @@ fn spawn_player(
     controls: &mut ClientControls,
     sender: &mut MessageSender,
 ) {
-    let player_entity = crate::create_player(&mut commands.spawn());
+    let player_entity = crate::create_player(&mut commands.spawn_empty());
     // Get spawn position for job
     let spawn_tile = main_map
         .job_spawn_positions
@@ -142,13 +142,15 @@ fn spawn_player(
     // Insert server-only components
     commands
         .entity(player_entity)
-        .insert(NetworkObserver {
-            range: 1,
-            player_id: player.id,
-        })
-        .insert(PrefabPath("player".into()))
-        .insert(NetworkTransform::default())
-        .insert(Transform::from_translation(spawn_position))
+        .insert((
+            NetworkObserver {
+                range: 1,
+                player_id: player.id,
+            },
+            PrefabPath("player".into()),
+            NetworkTransform::default(),
+            Transform::from_translation(spawn_position),
+        ))
         .networked();
 
     controls.give_control(player.id, player_entity);

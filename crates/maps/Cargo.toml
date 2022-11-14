@@ -7,8 +7,8 @@ edition = "2021"
 
 [dependencies]
 networking = { path = "../networking" }
-bevy = "0.8"
-bevy_rapier3d = "0.16.0"
+bevy = { workspace = true }
+bevy_rapier3d = { workspace = true }
 serde = { version = "*", features = ["derive"] }
 enum-map = "2.4.1"
 arrayvec = "0.7.2"

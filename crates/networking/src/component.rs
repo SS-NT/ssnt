@@ -1,11 +1,6 @@
-use std::{clone::Clone, marker::PhantomData, ops::Deref};
+use std::clone::Clone;
 
-use bevy::{
-    ecs::system::SystemParam,
-    prelude::*,
-    scene::{InstanceId, SceneInstance},
-    utils::HashSet,
-};
+use bevy::{prelude::*, utils::HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -99,30 +94,12 @@ fn send_networked_component_to_new<S: NetworkedToClient + Component, C: Networke
     }
 }
 
-/// Buffers initial networked component values for scenes that aren't spawned yet
-#[derive(Resource)]
-struct BufferedNetworkedComponents<C> {
-    to_apply: Vec<(InstanceId, NetworkedComponentMessage, Entity)>,
-    phantom_data: PhantomData<C>,
-}
-
-impl<C> Default for BufferedNetworkedComponents<C> {
-    fn default() -> Self {
-        Self {
-            to_apply: Default::default(),
-            phantom_data: Default::default(),
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn receive_networked_component<C: NetworkedFromServer + Component>(
     mut events: EventReader<MessageEvent<NetworkedComponentMessage>>,
     mut components: Query<&mut C>,
-    scene_instances: Query<&SceneInstance>,
     registry: Res<NetworkedComponentRegistry>,
     identities: Res<NetworkIdentities>,
-    mut buffer: ResMut<BufferedNetworkedComponents<C>>,
     mut param: bevy::ecs::system::StaticSystemParam<C::Param>,
     mut commands: Commands,
 ) {
@@ -148,13 +125,6 @@ fn receive_networked_component<C: NetworkedFromServer + Component>(
             }
         };
 
-        if let Ok(scene_instance) = scene_instances.get(entity) {
-            buffer
-                .to_apply
-                .push((**scene_instance, event.message.clone(), entity));
-            continue;
-        }
-
         apply_component_update(
             entity,
             &event.message,
@@ -163,47 +133,6 @@ fn receive_networked_component<C: NetworkedFromServer + Component>(
             &mut commands,
         );
     }
-}
-
-// TODO: DRY up a bit
-fn apply_networked_component_to_scene<C: NetworkedFromServer + Component>(
-    mut buffer: ResMut<BufferedNetworkedComponents<C>>,
-    mut components: Query<&mut C>,
-    scene_spawner: Res<SceneSpawner>,
-    child_query: Query<&Children>,
-    mut param: bevy::ecs::system::StaticSystemParam<C::Param>,
-    mut commands: Commands,
-) where
-    <C as NetworkedFromServer>::Param: SystemParam + 'static,
-{
-    buffer.to_apply.retain(|(instance, message, entity)| {
-        // Keep in buffer if scene not spawned
-        if !scene_spawner.instance_is_ready(*instance) {
-            return true;
-        }
-
-        let children = child_query
-            .get(*entity)
-            .expect("Parent of spawned scene should have children");
-        // Try to get scene root
-        let root = *match children.deref() {
-            [c] => c,
-            [] => {
-                panic!("Scene parent should have at least one child")
-            }
-            [..] => {
-                warn!(
-                    ?entity,
-                    "Networked components are only supported on scenes with one root entity"
-                );
-                return false;
-            }
-        };
-
-        apply_component_update(root, message, &mut components, &mut param, &mut commands);
-
-        false
-    });
 }
 
 fn apply_component_update<C: NetworkedFromServer + Component>(
@@ -261,26 +190,15 @@ impl AppExt for App {
                     .after(SpawningSystems::Spawn),
             );
         } else {
-            self.init_resource::<BufferedNetworkedComponents<C>>()
-                .add_system(
-                    receive_networked_component::<C>
-                        .before(NetworkSystem::ReadNetworkMessages)
-                        .label(ComponentSystem::Apply),
-                )
-                .add_system_to_stage(
-                    PostSceneSpawnerStage,
-                    apply_networked_component_to_scene::<C>.label(ComponentSystem::Apply),
-                );
+            self.add_system(
+                receive_networked_component::<C>
+                    .before(NetworkSystem::ReadNetworkMessages)
+                    .label(ComponentSystem::Apply),
+            );
         }
         self
     }
 }
-
-/// A stage that runs after the scene spawner and before any other stages.
-/// This is required so we can apply network variables before the components are accessed, giving the illusion of them always being there.
-// TODO: Replace this with a scene spawning modification?
-#[derive(Debug, Hash, PartialEq, Eq, Clone, StageLabel)]
-pub struct PostSceneSpawnerStage;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
 pub enum ComponentSystem {
@@ -293,14 +211,5 @@ impl Plugin for ComponentPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NetworkedComponentRegistry>()
             .add_network_message::<NetworkedComponentMessage>();
-
-        if app.world.resource::<NetworkManager>().is_client() {
-            // Only need to apply networked components on client, as they only go that direction
-            app.add_stage_after(
-                CoreStage::PreUpdate,
-                PostSceneSpawnerStage,
-                SystemStage::parallel(),
-            );
-        }
     }
 }

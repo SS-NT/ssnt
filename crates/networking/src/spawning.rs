@@ -3,10 +3,9 @@ use bevy::{
     ecs::query::QuerySingleError,
     prelude::{
         debug, error, info, warn, App, AssetServer, Commands, Component, CoreStage,
-        DespawnRecursiveExt, Entity, EventReader, EventWriter, Handle, IntoSystemDescriptor,
-        Plugin, Query, RemovedComponents, Res, ResMut, Resource, SystemLabel, SystemSet, With,
+        DespawnRecursiveExt, Entity, EventReader, EventWriter, IntoSystemDescriptor, Plugin, Query,
+        RemovedComponents, Res, ResMut, Resource, SystemLabel, SystemSet, With,
     },
-    scene::{DynamicScene, DynamicSceneBundle},
     utils::{HashMap, HashSet, Uuid},
 };
 use serde::{Deserialize, Serialize};
@@ -14,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
+    scene::{NetworkScene, NetworkSceneBundle},
     visibility::NetworkVisibilities,
     ConnectionId, NetworkManager, NetworkSystem, Players, ServerEvent,
 };
@@ -70,7 +70,7 @@ fn send_spawn_messages(
         Entity,
         &NetworkIdentity,
         Option<&PrefabPath>,
-        Option<&Handle<DynamicScene>>,
+        Option<&NetworkScene>,
     )>,
     visibilities: Res<NetworkVisibilities>,
     controlled: Res<ClientControls>,
@@ -86,7 +86,7 @@ fn send_spawn_messages(
                 // Get the asset hash or the string name that identifies the object
                 let identifier = match (name, scene) {
                     (None, None) => SpawnAssetIdentifier::Empty,
-                    (None, Some(scene)) => SpawnAssetIdentifier::AssetPath(match scene.id() {
+                    (None, Some(scene)) => SpawnAssetIdentifier::AssetPath(match scene.0.id() {
                         bevy::asset::HandleId::Id(_, _) => {
                             warn!(entity = ?entity, "Cannot spawn networked object with dynamic handle id. Handle must be created from a loaded asset.");
                             continue;
@@ -200,8 +200,8 @@ fn receive_spawn(
                         builder.insert(PrefabPath(name));
                     }
                     SpawnAssetIdentifier::AssetPath(id) => {
-                        builder.insert(DynamicSceneBundle {
-                            scene: asset_server.get_handle(id),
+                        builder.insert(NetworkSceneBundle {
+                            scene: asset_server.get_handle(id).into(),
                             ..Default::default()
                         });
                     }

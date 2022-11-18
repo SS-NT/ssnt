@@ -5,12 +5,12 @@ use bevy::{
     math::{IVec2, UVec2},
     prelude::*,
     reflect::TypeUuid,
-    scene::{InstanceId, SceneInstance},
     utils::{HashMap, HashSet},
 };
 use networking::{
-    component::{AppExt, ComponentSystem},
+    component::AppExt,
     identity::{EntityCommandsExt, NetworkIdentities, NetworkIdentity},
+    scene::NetworkSceneBundle,
     transform::NetworkTransform,
     variable::{NetworkVar, ServerVar},
     visibility::{GridAabb, VisibilitySystem, GLOBAL_GRID_CELL_SIZE},
@@ -469,8 +469,8 @@ fn spawn_from_data(
                         commands.entity(map_entity).add_children(|builder| {
                             builder
                                 .spawn((
-                                    DynamicSceneBundle {
-                                        scene,
+                                    NetworkSceneBundle {
+                                        scene: scene.into(),
                                         transform: Transform {
                                             translation: Vec3::new(x as f32, 0.0, y as f32)
                                                 + layer.default_offset(),
@@ -546,48 +546,43 @@ fn update_grid_aabb(mut query: Query<(&TileMap, &mut GridAabb), Changed<TileMap>
 // TODO: Remove once scenes support composition
 /// Adds some bundles to spawned tile scenes, so we don't need to specify them every time
 fn client_initialize_tile_objects(
-    spawned: Query<(&SceneInstance, &Handle<DynamicScene>), Added<SceneInstance>>,
-    mut loading: Local<Vec<InstanceId>>,
-    spawner: Res<SceneSpawner>,
+    new: Query<Entity, Added<TileEntityClient>>,
+    children_query: Query<&Children>,
     existing_meshes: Query<(&Handle<Mesh>, Option<&Transform>)>,
+    tile_entities: Query<&TileEntityClient>,
+    mut tilemaps: Query<&mut TileMapClient>,
     assets: Res<MapAssets>,
-    asset_server: Res<AssetServer>,
     mut commands: Commands,
 ) {
-    for (instance, handle) in spawned.iter() {
-        // Check if this scene is a tilemap entity
-        if !asset_server
-            .get_handle_path(handle)
-            .map(|p| p.path().starts_with("tilemap/"))
-            .unwrap_or(false)
-        {
+    let Some(assets) = assets.client.as_ref() else {
+        return;
+    };
+
+    let mut process_entity = |entity| {
+        if let Ok((mesh, transform)) = existing_meshes.get(entity) {
+            commands.entity(entity).insert(PbrBundle {
+                mesh: mesh.clone(),
+                material: assets.default_material.clone(),
+                transform: transform.cloned().unwrap_or_default(),
+                ..Default::default()
+            });
+        }
+    };
+
+    for root in new.iter() {
+        process_entity(root);
+        for child in children_query.iter_descendants(root) {
+            process_entity(child);
+        }
+
+        // Add to dirty tiles for adjacency
+        let Ok(tile) = tile_entities.get(root) else {
             continue;
-        }
-
-        loading.push(**instance);
+        };
+        let mut map = tilemaps.get_mut(*tile.tilemap).unwrap();
+        let path = &*tile.path;
+        map.dirty_tiles.insert((path.position, path.layer));
     }
-
-    loading.retain(|instance| {
-        if spawner.instance_is_ready(*instance) {
-            let entities = spawner.iter_instance_entities(*instance);
-            if let Some(assets) = assets.client.as_ref() {
-                for entity in entities {
-                    if let Ok((mesh, transform)) = existing_meshes.get(entity) {
-                        commands.entity(entity).insert(PbrBundle {
-                            mesh: mesh.clone(),
-                            material: assets.default_material.clone(),
-                            transform: transform.cloned().unwrap_or_default(),
-                            ..Default::default()
-                        });
-                    }
-                    commands.entity(entity).insert(GlobalTransform::default());
-                }
-            }
-            false
-        } else {
-            true
-        }
-    });
 }
 
 /// Stores a subset of tile map information on the client.
@@ -601,13 +596,13 @@ struct TileMapClient {
 
 fn client_update_tile_entities(
     changed_tiles: Query<
-        (Entity, &Parent, &TileEntityClient, Option<&Transform>),
+        (Entity, &TileEntityClient, Option<&Transform>),
         Changed<TileEntityClient>,
     >,
     mut tilemaps: Query<&mut TileMapClient>,
     mut commands: Commands,
 ) {
-    for (entity, parent, tile_entity, transform) in changed_tiles.iter() {
+    for (entity, tile_entity, transform) in changed_tiles.iter() {
         let tile_path = *tile_entity.path;
         if Some(tile_path) != tile_entity.old_path {
             // Update position in world
@@ -621,10 +616,7 @@ fn client_update_tile_entities(
                 .unwrap();
             // TODO: This will break if object gets moved
             new_transform.rotation *= direction.rotate_around(Vec3::Y);
-
-            commands
-                .entity(parent.get())
-                .insert(SpatialBundle::from_transform(new_transform));
+            commands.entity(entity).insert(new_transform);
 
             let mut tilemap = tilemaps
                 .get_mut(*tile_entity.tilemap)
@@ -663,9 +655,7 @@ fn client_update_tile_entities(
         }
         // TODO: Handle all changes of tilemap parent and layer
 
-        commands
-            .entity(*tile_entity.tilemap)
-            .add_child(parent.get());
+        commands.entity(*tile_entity.tilemap).add_child(entity);
     }
 }
 
@@ -780,12 +770,9 @@ impl Plugin for MapPlugin {
             .unwrap()
             .is_client()
         {
-            app.add_system(client_initialize_tile_objects)
-                .add_system_to_stage(
-                    CoreStage::PostUpdate,
-                    client_update_tile_entities.after(ComponentSystem::Apply),
-                )
-                .add_system(client_update_adjacencies.after(client_update_tile_entities));
+            app.add_system_to_stage(CoreStage::PostUpdate, client_initialize_tile_objects)
+                .add_system(client_update_tile_entities)
+                .add_system_to_stage(CoreStage::PostUpdate, client_update_adjacencies);
         } else {
             app.add_system(spawn_from_data).add_system_to_stage(
                 CoreStage::PostUpdate,

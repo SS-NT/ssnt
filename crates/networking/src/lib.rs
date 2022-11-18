@@ -4,6 +4,7 @@ pub mod component;
 pub mod identity;
 pub mod messaging;
 pub mod resource;
+pub mod scene;
 pub mod spawning;
 pub mod time;
 pub mod transform;
@@ -21,6 +22,7 @@ use bevy_renet::{
 };
 use component::ComponentPlugin;
 use resource::ResourcePlugin;
+use scene::ScenePlugin;
 use time::{ClientNetworkTime, ServerNetworkTime, TimePlugin};
 
 use std::{
@@ -421,6 +423,7 @@ impl Plugin for NetworkingPlugin {
             .add_plugin(ComponentPlugin)
             .add_plugin(ResourcePlugin)
             .add_plugin(TransformPlugin)
+            .add_plugin(ScenePlugin)
             .add_system(report_errors);
 
         if self.role == NetworkRole::Client {

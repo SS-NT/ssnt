@@ -9,7 +9,7 @@ use networking::{
     time::ServerNetworkTime,
     transform::NetworkTransform,
     variable::{NetworkVar, ServerVar},
-    visibility::NetworkObserver,
+    visibility::{NetworkObserver, NetworkObserverBundle},
     ConnectionId, Networked, Player, Players,
 };
 use serde::{Deserialize, Serialize};
@@ -143,9 +143,12 @@ fn spawn_player(
     commands
         .entity(player_entity)
         .insert((
-            NetworkObserver {
-                range: 1,
-                player_id: player.id,
+            NetworkObserverBundle {
+                observer: NetworkObserver {
+                    range: 1,
+                    player_id: player.id,
+                },
+                cells: Default::default(),
             },
             PrefabPath("player".into()),
             NetworkTransform::default(),

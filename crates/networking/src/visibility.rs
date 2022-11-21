@@ -1,9 +1,10 @@
 use bevy::{
     math::{IVec2, Vec2, Vec3Swizzles},
     prelude::{
-        Added, App, Changed, Component, CoreStage, Entity, GlobalTransform, IntoSystemDescriptor,
-        Or, Plugin, Query, Res, ResMut, Resource, SystemLabel, UVec2,
+        Added, App, Bundle, Changed, Component, CoreStage, Entity, GlobalTransform,
+        IntoSystemDescriptor, Or, Plugin, Query, Res, ResMut, Resource, SystemLabel, UVec2,
     },
+    time::Time,
     transform::TransformSystem,
     utils::{HashMap, HashSet, Uuid},
 };
@@ -15,6 +16,12 @@ use crate::{identity::NetworkIdentity, ConnectionId, NetworkManager, NetworkSyst
 pub struct NetworkObserver {
     pub range: u32,
     pub player_id: Uuid,
+}
+
+#[derive(Bundle)]
+pub struct NetworkObserverBundle {
+    pub observer: NetworkObserver,
+    pub cells: NetworkObserverCells,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -161,11 +168,6 @@ impl SpatialHash {
         }
     }
 
-    fn relevant_cells(&self, position: IVec2, size: UVec2) -> impl Iterator<Item = &SpatialCell> {
-        self.relevant_positions(position, size)
-            .flat_map(|pos| self.cells.get(&pos))
-    }
-
     fn relevant_positions(&self, position: IVec2, size: UVec2) -> impl Iterator<Item = IVec2> {
         ((position.x - size.x as i32)..=(position.x + size.x as i32)).flat_map(move |x| {
             ((position.y - size.y as i32)..=(position.y + size.y as i32))
@@ -195,6 +197,19 @@ pub struct GridAabb {
     pub center: IVec2,
 }
 
+/// Stores what cells this observer currently observes.
+#[derive(Component, Default)]
+pub struct NetworkObserverCells {
+    cells: HashMap<IVec2, NetworkObserverCell>,
+}
+
+struct NetworkObserverCell {
+    last_observed: f32,
+}
+
+/// How long a grid cell stays observed after it is out of range.
+const OBSERVER_CELL_TIMEOUT_SECONDS: f32 = 1.0;
+
 fn global_grid_update(
     mut grid: ResMut<GlobalGrid>,
     mut query: Query<
@@ -220,15 +235,16 @@ fn grid_visibility(
     mut visibilities: ResMut<NetworkVisibilities>,
     players: Res<Players>,
     grid: Res<GlobalGrid>,
-    observers: Query<(&NetworkObserver, &InGrid)>,
+    mut observers: Query<(&NetworkObserver, &InGrid, &mut NetworkObserverCells)>,
     identities: Query<&NetworkIdentity>,
+    time: Res<Time>,
 ) {
     // Act like all observers have stopped observing (nothing visible by default)
     for (_, vis) in visibilities.visibility.iter_mut() {
         vis.assume_removed();
     }
 
-    for (observer, grid_position) in observers.iter() {
+    for (observer, grid_position, mut observer_cells) in observers.iter_mut() {
         let position = match grid_position.position {
             Some(p) => p,
             None => continue,
@@ -239,12 +255,34 @@ fn grid_visibility(
             None => continue,
         };
 
-        for cell in grid.relevant_cells(position, UVec2::new(observer.range, observer.range)) {
-            for entity in cell.entities.iter() {
-                if let Ok(identity) = identities.get(*entity) {
-                    let visibility = visibilities.visibility.entry(*identity).or_default();
-                    visibility.add_observer(connection);
-                }
+        // Update the cells the observer sees
+        let current_time = time.raw_elapsed_seconds();
+        for position in
+            grid.relevant_positions(position, UVec2::new(observer.range, observer.range))
+        {
+            observer_cells.cells.insert(
+                position,
+                NetworkObserverCell {
+                    last_observed: current_time,
+                },
+            );
+        }
+
+        // Remove cells that have not been seen in some time
+        observer_cells
+            .cells
+            .retain(|_, cell| current_time - cell.last_observed < OBSERVER_CELL_TIMEOUT_SECONDS);
+
+        // Loop through all entities in visible cells
+        for entity in observer_cells
+            .cells
+            .keys()
+            .flat_map(|pos| grid.cells.get(pos))
+            .flat_map(|c| &c.entities)
+        {
+            if let Ok(identity) = identities.get(*entity) {
+                let visibility = visibilities.visibility.entry(*identity).or_default();
+                visibility.add_observer(connection);
             }
         }
     }

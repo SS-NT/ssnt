@@ -49,58 +49,64 @@ impl<T: std::clone::Clone + Reflect + Sync + Send + 'static> AdjacencyVariants<T
 /// Stores in what directions an object is surrounded.
 #[derive(Default)]
 pub struct AdjacencyInformation {
-    directions: [bool; 4],
+    /// Represents a bitfield of the neighbours presence.
+    /// Starts at the tile right above and goes clockwise.
+    directions: u8,
+}
+
+macro_rules! match_pattern {
+    ($val:expr, $pat:literal) => {{
+        const PAT: u8 = $pat;
+        const PATR: u8 = AdjacencyInformation::rotate_right(PAT);
+        const PATRR: u8 = AdjacencyInformation::rotate_right(PATR);
+        const PATRRR: u8 = AdjacencyInformation::rotate_right(PATRR);
+        match ($val) & 0b10101010 {
+            PAT => Some(Direction::North),
+            PATR => Some(Direction::East),
+            #[allow(unreachable_patterns)]
+            PATRR => Some(Direction::South),
+            #[allow(unreachable_patterns)]
+            PATRRR => Some(Direction::West),
+            _ => None,
+        }
+    }};
 }
 
 impl AdjacencyInformation {
     pub fn add(&mut self, direction: Direction) {
-        self.directions[direction as usize] = true;
+        let add = match direction {
+            Direction::North => 0b10000000,
+            Direction::East => 0b00100000,
+            Direction::South => 0b00001000,
+            Direction::West => 0b00000010,
+        };
+        self.directions |= add;
     }
 
     pub fn is_o(&self) -> bool {
-        self.directions == [false, false, false, false]
+        // For now we ignore diagonals
+        self.directions & 0b10101010 == 0
     }
 
     pub fn is_u(&self) -> Option<Direction> {
-        match self.directions {
-            [true, false, false, false] => Some(Direction::North),
-            [false, true, false, false] => Some(Direction::East),
-            [false, false, true, false] => Some(Direction::South),
-            [false, false, false, true] => Some(Direction::West),
-            _ => None,
-        }
+        match_pattern!(self.directions, 0b10000000)
     }
 
     pub fn is_l(&self) -> Option<Direction> {
-        match self.directions {
-            [true, true, false, false] => Some(Direction::North),
-            [false, true, true, false] => Some(Direction::East),
-            [false, false, true, true] => Some(Direction::South),
-            [true, false, false, true] => Some(Direction::West),
-            _ => None,
-        }
+        match_pattern!(self.directions, 0b10100000)
     }
 
     pub fn is_t(&self) -> Option<Direction> {
-        match self.directions {
-            [true, true, false, true] => Some(Direction::North),
-            [true, true, true, false] => Some(Direction::East),
-            [false, true, true, true] => Some(Direction::South),
-            [true, false, true, true] => Some(Direction::West),
-            _ => None,
-        }
+        match_pattern!(self.directions, 0b10100010)
     }
 
     pub fn is_i(&self) -> Option<Direction> {
-        match self.directions {
-            [true, false, true, false] => Some(Direction::North),
-            [false, true, false, true] => Some(Direction::East),
-            _ => None,
-        }
+        match_pattern!(self.directions, 0b10001000)
     }
 
     pub fn is_x(&self) -> bool {
-        self.directions == [true, true, true, true]
+        // For now we ignore diagonals
+        self.directions & 0b10101010 == 0b10101010
     }
 
     pub fn rotation_from_dir(direction: Direction) -> Quat {
@@ -111,6 +117,14 @@ impl AdjacencyInformation {
             Direction::West => 3,
         };
         Quat::from_axis_angle(Vec3::Y, std::f32::consts::FRAC_PI_2 * (corners as f32))
+    }
+
+    /// Rotates the directional map by 90 degrees clockwise
+    const fn rotate_right(directions: u8) -> u8 {
+        // Move the lowest two bits all the way to the left
+        ((directions & 0b11) << 6)
+            // Combine it with the rest shifted to the right
+            | (directions >> 2)
     }
 }
 

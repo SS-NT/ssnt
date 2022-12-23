@@ -177,7 +177,7 @@ fn send_server_tick(
     network_time: Res<ServerNetworkTime>,
     players: Res<Players>,
 ) {
-    let seconds = time.raw_elapsed_seconds() as f32;
+    let seconds = time.raw_elapsed_seconds();
     let tick = network_time.server_tick;
 
     for (connection, _) in players.players.iter() {
@@ -239,7 +239,7 @@ fn receive_server_tick(
 
             let received_tick = ReceivedServerTick {
                 tick: tick.tick,
-                time: time.raw_elapsed_seconds() as f32,
+                time: time.raw_elapsed_seconds(),
             };
             network_time.server_tick = Some(received_tick);
 
@@ -276,7 +276,7 @@ fn server_handle_response(
 }
 
 fn update_interpolated_tick(mut network_time: ResMut<ClientNetworkTime>, time: Res<Time>) {
-    let server_tick = match network_time.estimated_server_tick(time.raw_elapsed_seconds() as f32) {
+    let server_tick = match network_time.estimated_server_tick(time.raw_elapsed_seconds()) {
         Some(t) => t,
         None => return,
     };

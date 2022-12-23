@@ -36,9 +36,9 @@ tokio = { version = "1.21.2", features = ["time"] }
 smallvec = "*"
 
 [patch.crates-io]
-# bevy = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
-bevy = { path = "../bevy" }
-bevy_ecs = { path = "../bevy/crates/bevy_ecs" }
+bevy = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_ecs = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+# bevy = { path = "../bevy" }
 bevy_rapier3d = { git = "https://github.com/devil-ira/bevy_rapier", branch = "bevy-0.9" }
 
 [profile.dev.package."*"]

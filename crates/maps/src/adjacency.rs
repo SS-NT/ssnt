@@ -46,6 +46,25 @@ impl<T: std::clone::Clone + Reflect + Sync + Send + 'static> AdjacencyVariants<T
     }
 }
 
+pub struct Surrounded<T> {
+    data: [Option<T>; 4],
+}
+
+impl<T> Surrounded<T> {
+    const fn index(direction: Direction) -> usize {
+        match direction {
+            Direction::North => 0,
+            Direction::East => 1,
+            Direction::South => 2,
+            Direction::West => 3,
+        }
+    }
+
+    pub fn get(&self, direction: Direction) -> Option<&T> {
+        self.data[Self::index(direction)].as_ref()
+    }
+}
+
 /// Stores in what directions an object is surrounded.
 #[derive(Default)]
 pub struct AdjacencyInformation {

@@ -663,8 +663,9 @@ source = "git+https://github.com/Alainx277/bevy?branch=ssnt#07628cd306c7075e81bc
 
 [[package]]
 name = "bevy_rapier3d"
-version = "0.18.0"
-source = "git+https://github.com/devil-ira/bevy_rapier?branch=bevy-0.9#d5542960bc1f58ce4969bb42b1e8ecae75f1d8b5"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e2805bef07b206854b417a544e32782677106c99f4e001d00d884f74ed4d37f"
 dependencies = [
  "bevy",
  "bitflags",

@@ -2,11 +2,8 @@ use std::collections::VecDeque;
 
 use bevy::{
     math::{Quat, Vec3},
-    prelude::{
-        warn, App, Commands, Component, CoreStage, EventReader, IntoSystemDescriptor, Local,
-        Plugin, Query, Res, ResMut, Resource, SpatialBundle, SystemLabel, SystemSet, Time,
-        Transform, With, Without,
-    },
+    prelude::*,
+    reflect::Reflect,
     transform::TransformSystem,
     utils::{hashbrown::hash_map::Entry, HashMap},
 };
@@ -19,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
-    messaging::Channel,
+    messaging::{deserialize, serialize_once, Channel},
     spawning::{ClientControlled, ServerEntityEvent, SpawningSystems},
     time::{ClientNetworkTime, ServerNetworkTime, TimeSystem},
     visibility::NetworkVisibilities,
@@ -115,8 +112,15 @@ struct ClientData {
     last_sequence: u32,
 }
 
+#[derive(Default)]
+struct TransformSnapshot {
+    position: Option<Vec3>,
+    rotation: Option<Quat>,
+}
+
 /// Sends transform changes to clients
-#[derive(Component)]
+#[derive(Component, Reflect)]
+#[reflect(Component)]
 pub struct NetworkTransform {
     /// How many times this transform is sent per second
     pub update_rate: f32,
@@ -128,8 +132,13 @@ pub struct NetworkTransform {
     /// This is a multiplicator, 1 = 1 x RTT.
     /// Retransmission is only necessary when the update rate is below RTT or the transform has stopped moving.
     pub retransmission_multiplicator: f32,
+    /// All transform information when it was last updated
+    #[reflect(ignore)]
+    full_snapshot: TransformSnapshot,
+    #[reflect(ignore)]
     sent_updates: VecDeque<TransformUpdate>,
     sent_queue_length: usize,
+    #[reflect(ignore)]
     client_data: HashMap<ConnectionId, ClientData>,
     /// The sequence number that was last created
     last_sequence: u32,
@@ -144,6 +153,7 @@ impl Default for NetworkTransform {
             position_threshold: 0.01,
             rotation_threshold: 0.01,
             retransmission_multiplicator: 2.0,
+            full_snapshot: Default::default(),
             sent_updates: VecDeque::with_capacity(30),
             sent_queue_length: 30,
             client_data: Default::default(),
@@ -193,10 +203,9 @@ fn update_transform(
 
         networked.last_update = seconds;
 
-        // Compare current values
-        let last_update = networked.sent_updates.back();
-        let last_position = last_update.and_then(|u| u.position);
-        let last_rotation = last_update.and_then(|u| u.rotation);
+        // Compare values to the one last sent
+        let last_position = networked.full_snapshot.position;
+        let last_rotation = networked.full_snapshot.rotation;
 
         let new_position: Vec3 = transform.translation;
         let update_position = last_position.is_none()
@@ -206,9 +215,18 @@ fn update_transform(
         let update_rotation = last_rotation.is_none()
             || !new_rotation.abs_diff_eq(last_rotation.unwrap(), networked.rotation_threshold);
 
-        // Exit early if nothing to send
+        // Exit early if transform did not significantly change
         if !update_position && !update_rotation {
             continue;
+        }
+
+        // Update the full snapshot if we're going to send the information
+        if update_position {
+            networked.full_snapshot.position = Some(new_position);
+        }
+
+        if update_rotation {
+            networked.full_snapshot.rotation = Some(new_rotation);
         }
 
         // Construct the update message
@@ -216,6 +234,7 @@ fn update_transform(
             identity: *identity,
             // TODO: Move this into a message at the start of a packet
             sequence_number: network_time.current_tick(),
+            // TODO: Here we would need to do delta compression for each client, as they may have dropped the last packet
             position: if update_position {
                 Some(new_position)
             } else {
@@ -233,7 +252,8 @@ fn update_transform(
 
         // Send to all observers
         if let Some(visibility) = visibilities.visibility.get(identity) {
-            let serialized = bincode::serialize(&TransformMessage::Update(update.clone())).unwrap();
+            let message = TransformMessage::Update(update);
+            let serialized = serialize_once(&message);
             for connection in visibility.observers() {
                 server.send_message(connection.0, Channel::Transforms.id(), serialized.clone());
             }
@@ -272,9 +292,7 @@ fn handle_retransmission(
             None => continue,
         };
 
-        let serialized =
-            bincode::serialize(&TransformMessage::Update(last_update.clone())).unwrap();
-
+        let serialized = serialize_once(&TransformMessage::Update(last_update.clone()));
         // Retransmit for missed acks
         for (connection, data) in networked.client_data.iter_mut() {
             if data.last_sequence == networked.last_sequence {
@@ -334,8 +352,7 @@ fn handle_occasional_sync(
             None => continue,
         };
 
-        let serialized =
-            bincode::serialize(&TransformMessage::Update(last_update.clone())).unwrap();
+        let serialized = serialize_once(&TransformMessage::Update(last_update.clone()));
         for (connection, data) in networked.client_data.iter_mut() {
             if !visibility.has_observer(connection) {
                 continue;
@@ -367,8 +384,7 @@ fn handle_newly_spawned(
                 None => continue,
             };
 
-            let serialized =
-                bincode::serialize(&TransformMessage::Update(last_update.clone())).unwrap();
+            let serialized = serialize_once(&TransformMessage::Update(last_update.clone()));
             server.send_message(connection.0, Channel::Transforms.id(), serialized);
         }
     }
@@ -384,7 +400,7 @@ fn handle_acks(
     let seconds = time.raw_elapsed_seconds();
     'clients: for client_id in server.clients_id().into_iter() {
         while let Some(message) = server.receive_message(client_id, Channel::Transforms.id()) {
-            let message: TransformMessage = match bincode::deserialize(&message) {
+            let message: TransformMessage = match deserialize(&message) {
                 Ok(m) => m,
                 Err(_) => {
                     warn!(client_id, "Invalid transform message from client");
@@ -523,7 +539,7 @@ fn handle_transform_messages(
     mut acknowledgments: Local<Vec<Acknowledgment>>,
 ) {
     while let Some(message) = client.receive_message(Channel::Transforms.id()) {
-        let message: TransformMessage = match bincode::deserialize(&message) {
+        let message: TransformMessage = match deserialize(&message) {
             Ok(m) => m,
             Err(_) => {
                 warn!("Invalid transform message");
@@ -545,7 +561,7 @@ fn handle_transform_messages(
     for ack in acknowledgments.drain(..) {
         client.send_message(
             Channel::Transforms.id(),
-            bincode::serialize(&TransformMessage::Ack(ack)).unwrap(),
+            serialize_once(&TransformMessage::Ack(ack)),
         );
     }
 }
@@ -641,11 +657,20 @@ fn sync_networked_transform(
 
 /// Applies transform updates to entities with physics
 fn sync_networked_transform_physics(
-    mut query: Query<(&mut NetworkedTransform, &mut Transform, &mut Velocity), With<RigidBody>>,
+    mut query: Query<
+        (
+            Entity,
+            &mut NetworkedTransform,
+            &mut Transform,
+            Option<&mut Velocity>,
+        ),
+        With<RigidBody>,
+    >,
     network_time: Res<ClientNetworkTime>,
+    mut commands: Commands,
 ) {
     let current_tick = network_time.interpolated_tick();
-    for (mut networked_transform, mut transform, mut velocity) in query.iter_mut() {
+    for (entity, mut networked_transform, mut transform, velocity) in query.iter_mut() {
         let (next_update, previous_update) =
             match networked_transform.relevant_updates(current_tick) {
                 Some(u) => u,
@@ -669,12 +694,23 @@ fn sync_networked_transform_physics(
             transform.rotation = rotation;
         }
 
-        if let Some(linear_velocity) = update.linear_velocity {
-            velocity.linvel = linear_velocity;
-        }
+        match velocity {
+            Some(mut v) => {
+                if let Some(linear_velocity) = update.linear_velocity {
+                    v.linvel = linear_velocity;
+                }
 
-        if let Some(angular_velocity) = update.angular_velocity {
-            velocity.angvel = angular_velocity;
+                if let Some(angular_velocity) = update.angular_velocity {
+                    v.angvel = angular_velocity;
+                }
+            }
+            None => {
+                let velocity = Velocity {
+                    linvel: update.linear_velocity.unwrap_or_default(),
+                    angvel: update.angular_velocity.unwrap_or_default(),
+                };
+                commands.entity(entity).insert(velocity);
+            }
         }
 
         networked_transform.ever_applied = true;
@@ -696,6 +732,8 @@ pub(crate) struct TransformPlugin;
 
 impl Plugin for TransformPlugin {
     fn build(&self, app: &mut App) {
+        app.register_type::<NetworkTransform>();
+
         if app
             .world
             .get_resource::<NetworkManager>()

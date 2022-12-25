@@ -14,10 +14,28 @@ use bevy_renet::{
     },
     run_if_client_connected,
 };
-use bytes::Bytes;
+use bincode::Options;
+use bytes::{BufMut, Bytes};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{ConnectionId, NetworkManager, NetworkSystem, Players};
+
+/// Serialize data once and allow it to be shared in multiple places without reallocating.
+pub(crate) fn serialize_once<T: Serialize>(data: &T) -> Bytes {
+    let options = bincode::options();
+    let mut writer =
+        bytes::BytesMut::with_capacity(options.serialized_size(data).unwrap() as usize).writer();
+    options.serialize_into(&mut writer, data).unwrap();
+    writer.into_inner().freeze()
+}
+
+pub(crate) fn deserialize<T>(data: &[u8]) -> bincode::Result<T>
+where
+    T: for<'a> Deserialize<'a>,
+{
+    let options = bincode::options();
+    options.deserialize(data)
+}
 
 /// Assigns packet numbers to types uniquely and allows to lookup the id for a specific type.
 /// Used in packet registration, serialization and deserialization.

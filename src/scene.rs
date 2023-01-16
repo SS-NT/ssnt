@@ -13,7 +13,7 @@ fn modify_loaded_scenes(
             for dynamic_entity in &mut scene.entities {
                 dynamic_entity
                     .components
-                    .push(Box::new(GlobalTransform::default()));
+                    .push(Box::<GlobalTransform>::default());
             }
         }
     }

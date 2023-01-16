@@ -129,10 +129,8 @@ impl Command for SetPhysicsCommand {
                     let original = root.remove::<OriginalRigidBody>().unwrap();
                     root.insert(original.0);
                 }
-            } else {
-                if rigidbody != RapierRigidBody::Fixed {
-                    root.insert((OriginalRigidBody(rigidbody), RapierRigidBody::Fixed));
-                }
+            } else if rigidbody != RapierRigidBody::Fixed {
+                root.insert((OriginalRigidBody(rigidbody), RapierRigidBody::Fixed));
             }
         }
 

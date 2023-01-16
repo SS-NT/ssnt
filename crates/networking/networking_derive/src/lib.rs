@@ -280,7 +280,7 @@ pub fn networked_derive(input: TokenStream) -> TokenStream {
                     };
                     quote_spanned! { var_name.span() =>
                         let #changed_name = since_tick
-                            .map(|t| self.#var_name.has_changed_since(t.into()))
+                            .map(|t| self.#var_name.has_changed_since(t))
                             .unwrap_or(true);
                         serde::Serialize::serialize(
                             &#changed_name.then(|| {

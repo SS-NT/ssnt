@@ -573,7 +573,7 @@ fn client_progress_ui(
         return;
     };
 
-    if let Some(_) = *interaction.estimate_duration {
+    if interaction.estimate_duration.is_some() {
         todo!()
     } else {
         egui::Area::new("interaction progress")

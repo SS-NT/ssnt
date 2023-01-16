@@ -34,7 +34,7 @@
                         z: 0.0,
                     ),
                 ),
-                "ssnt::physics::Collider": (
+                "physics::Collider": (
                     kind: Cuboid (hx: 0.5, hy: 1.0, hz: 0.5)
                 )
             }

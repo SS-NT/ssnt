@@ -1,5 +1,7 @@
 use bevy::{ecs::entity::EntityMap, prelude::*};
 
+use crate::identity::NetworkIdentity;
+
 pub(crate) struct ScenePlugin;
 
 impl Plugin for ScenePlugin {
@@ -23,6 +25,21 @@ impl From<Handle<DynamicScene>> for NetworkScene {
 
 pub enum NetworkSceneEvent {
     Created(Entity),
+}
+
+/// A component on the scene root that lists the children that have their own network ids.
+/// Counterpart of [`NetworkSceneIdentities`].
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct NetworkSceneChildren {
+    pub networked_children: Vec<Entity>,
+}
+
+/// A component listing the network identities of the children an object has.
+/// Counterpart of [`NetworkSceneChildren`].
+#[derive(Component)]
+pub struct NetworkSceneIdentities {
+    pub child_identities: Vec<NetworkIdentity>,
 }
 
 /// Add to an entity to attach a scene that can be networked.

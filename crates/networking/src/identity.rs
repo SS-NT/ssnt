@@ -1,8 +1,10 @@
 use bevy::{
     ecs::system::{Command, EntityCommands},
     prelude::{
-        error, App, Component, CoreStage, Entity, Plugin, RemovedComponents, ResMut, Resource,
+        error, App, Component, CoreStage, Entity, FromWorld, Plugin, ReflectComponent,
+        RemovedComponents, ResMut, Resource,
     },
+    reflect::Reflect,
     utils::HashMap,
 };
 use serde::{Deserialize, Serialize};
@@ -10,8 +12,16 @@ use serde::{Deserialize, Serialize};
 use crate::{visibility::InGrid, NetworkManager};
 
 /// A numeric id which matches on the server and clients
-#[derive(Component, Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Component, Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, Reflect)]
+#[reflect(Component)]
 pub struct NetworkIdentity(u32);
+
+// Mock implementation for component reflection
+impl FromWorld for NetworkIdentity {
+    fn from_world(_: &mut bevy::prelude::World) -> Self {
+        Self(u32::MAX)
+    }
+}
 
 /// A lookup to match network identities with ECS entity ids.
 ///
@@ -25,7 +35,7 @@ pub struct NetworkIdentities {
 }
 
 impl NetworkIdentities {
-    pub(crate) fn set_identity(&mut self, entity: Entity, identity: NetworkIdentity) {
+    pub fn set_identity(&mut self, entity: Entity, identity: NetworkIdentity) {
         self.identities.insert(identity, entity);
         self.entities.insert(entity, identity);
     }
@@ -59,6 +69,7 @@ impl Command for NetworkCommand {
                 "Tried to create networked entity {:?} without being the server",
                 self.entity
             );
+            return;
         }
         let mut identities = world.get_resource_mut::<NetworkIdentities>().unwrap();
         let id = identities.last_id + 1;
@@ -92,7 +103,8 @@ pub(crate) struct IdentityPlugin;
 
 impl Plugin for IdentityPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<NetworkIdentities>()
+        app.register_type::<NetworkIdentity>()
+            .init_resource::<NetworkIdentities>()
             .add_system_to_stage(
                 // TODO: Run this directly before trackers are cleared. Blocked on Bevy ECS changes.
                 CoreStage::PostUpdate,

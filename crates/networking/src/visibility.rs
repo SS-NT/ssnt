@@ -41,7 +41,7 @@ pub struct NetworkVisibility {
 }
 
 impl NetworkVisibility {
-    fn add_observer(&mut self, connection: ConnectionId) {
+    pub fn add_observer(&mut self, connection: ConnectionId) {
         self.observers
             .entry(connection)
             .and_modify(|s| {
@@ -50,6 +50,31 @@ impl NetworkVisibility {
                 }
             })
             .or_insert(ObserverState::Added);
+    }
+
+    pub fn remove_observers(&mut self) {
+        self.observers.retain(|_, state| match state {
+            ObserverState::Added => false,
+            ObserverState::Observing => {
+                *state = ObserverState::Removed;
+                true
+            }
+            ObserverState::Removed => true,
+        });
+    }
+
+    pub fn remove_observer(&mut self, connection: ConnectionId) {
+        if let Some(state) = self.observers.get_mut(&connection) {
+            match state {
+                ObserverState::Added => {
+                    self.observers.remove(&connection);
+                }
+                ObserverState::Observing => {
+                    *state = ObserverState::Removed;
+                }
+                ObserverState::Removed => {}
+            }
+        }
     }
 
     /// Marks all observer states as removed.
@@ -86,6 +111,13 @@ impl NetworkVisibility {
         })
     }
 
+    pub fn existing_observers(&self) -> impl Iterator<Item = &ConnectionId> {
+        self.observers.iter().filter_map(|(id, s)| match s {
+            ObserverState::Observing => Some(id),
+            _ => None,
+        })
+    }
+
     pub fn removed_observers(&self) -> impl Iterator<Item = &ConnectionId> {
         self.observers.iter().filter_map(|(id, s)| match s {
             ObserverState::Removed => Some(id),
@@ -108,8 +140,14 @@ impl NetworkVisibility {
 
 /// Stores a mapping between network identities and their observers
 #[derive(Default, Resource)]
-pub(crate) struct NetworkVisibilities {
+pub struct NetworkVisibilities {
     pub(crate) visibility: HashMap<NetworkIdentity, NetworkVisibility>,
+}
+
+impl NetworkVisibilities {
+    pub fn get_mut(&mut self, identity: NetworkIdentity) -> Option<&mut NetworkVisibility> {
+        self.visibility.get_mut(&identity)
+    }
 }
 
 #[derive(Default, Debug)]
@@ -298,6 +336,7 @@ fn update_visibility(mut visibilities: ResMut<NetworkVisibilities>) {
 pub enum VisibilitySystem {
     UpdateGrid,
     UpdateVisibility,
+    GridVisibility,
 }
 
 pub(crate) struct VisibilityPlugin;
@@ -324,6 +363,7 @@ impl Plugin for VisibilityPlugin {
                 .add_system(update_visibility.label(VisibilitySystem::UpdateVisibility))
                 .add_system(
                     grid_visibility
+                        .label(VisibilitySystem::GridVisibility)
                         .label(NetworkSystem::Visibility)
                         .after(VisibilitySystem::UpdateGrid)
                         .after(VisibilitySystem::UpdateVisibility),

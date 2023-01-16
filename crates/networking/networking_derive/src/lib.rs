@@ -280,7 +280,7 @@ pub fn networked_derive(input: TokenStream) -> TokenStream {
                     };
                     quote_spanned! { var_name.span() =>
                         let #changed_name = since_tick
-                            .map(|t| self.#var_name.has_changed_since(t.into()))
+                            .map(|t| self.#var_name.has_changed_since(t))
                             .unwrap_or(true);
                         serde::Serialize::serialize(
                             &#changed_name.then(|| {
@@ -346,7 +346,7 @@ pub fn networked_derive(input: TokenStream) -> TokenStream {
                         &self,
                         #method_param,
                         _: Option<networking::ConnectionId>,
-                        since_tick: Option<std::num::NonZeroU32>,
+                        since_tick: Option<u32>,
                     ) -> Option<networking::variable::Bytes> {
                         #serialize_body
                     }
@@ -397,8 +397,8 @@ pub fn networked_derive(input: TokenStream) -> TokenStream {
                 };
 
                 quote_spanned! { networked_field.ident.span() =>
-                    let #update_name =
-                        Option::<networking::variable::ValueUpdate<#networked_type>>::deserialize(&mut deserializer)
+                    let #update_name: Option::<networking::variable::ValueUpdate<#networked_type>> =
+                        serde::Deserialize::deserialize(&mut deserializer)
                             .expect("Error deserializing networked variable");
                     if let Some(#update_name) = #update_name {
                         let #new_name = #var_expression;

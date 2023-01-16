@@ -35,7 +35,7 @@ use byond::tgm::TgmLoader;
 use camera::TopDownCamera;
 use clap::{Parser, Subcommand};
 use futures_lite::future;
-use items::containers::Container;
+use items::containers::{Container, DisplayContainer};
 use maps::TileMapData;
 use networking::identity::{EntityCommandsExt as NetworkingEntityCommandsExt, NetworkIdentities};
 use networking::scene::{NetworkSceneChildren, NetworkSceneIdentities};
@@ -305,6 +305,7 @@ fn create_player(
                 side: body::LimbSide::Left,
             },
             Container::new((2, 2).into()),
+            DisplayContainer,
         ));
         if let Some((identities, identity_index)) = identities.as_mut() {
             let left_hand_id = *identities.child_identities.get(0).unwrap();
@@ -320,6 +321,7 @@ fn create_player(
                 side: body::LimbSide::Right,
             },
             Container::new((2, 2).into()),
+            DisplayContainer,
         ));
         if let Some((identities, identity_index)) = identities {
             let right_hand_id = *identities.child_identities.get(1).unwrap();

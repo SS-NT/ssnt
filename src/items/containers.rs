@@ -80,7 +80,7 @@ impl Container {
 
 /// A component on containers which show their contents to everyone in the area.
 #[derive(Component)]
-struct DisplayContainer;
+pub struct DisplayContainer;
 
 /// An event requesting to move an item from or into a container.
 pub struct MoveItemOrder {

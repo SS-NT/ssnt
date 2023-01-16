@@ -1,0 +1,39 @@
+(
+    entities: {
+        0: (
+            components: {
+                "bevy_transform::components::transform::Transform": (
+                ),
+                "networking::transform::NetworkTransform": (
+                ),
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
+                    id: "models/items/wrenches.glb#Mesh0/Primitive0"
+                ),
+                "ssnt::items::Item": (
+                    name: "Wrench"
+                ),
+                "physics::RigidBody": (
+                    kind: Dynamic
+                ),
+                "bevy_hierarchy::components::children::Children": ([(index: 1, generation: 0)]),
+            }
+        ),
+        1: (
+            components: {
+                "bevy_hierarchy::components::parent::Parent": (
+                    ( index: 0, generation: 0 )
+                ),
+                "bevy_transform::components::transform::Transform": (
+                    translation: (
+                        x: 0.0,
+                        y: 0.35,
+                        z: 0.0,
+                    ),
+                ),
+                "physics::Collider": (
+                    kind: Cuboid (hx: 0.1, hy: 0.3, hz: 0.1)
+                )
+            }
+        )
+    }
+)

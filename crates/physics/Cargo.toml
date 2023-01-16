@@ -1,5 +1,5 @@
 [package]
-name = "utils"
+name = "physics"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,3 +7,5 @@ edition = "2021"
 
 [dependencies]
 bevy = { workspace = true }
+bevy_rapier3d = { workspace = true }
+serde = { version = "*", features = ["derive"] }

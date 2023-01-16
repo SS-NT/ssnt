@@ -12,6 +12,7 @@ use bevy_renet::{
     renet::{RenetClient, RenetServer},
     run_if_client_connected,
 };
+use physics::PhysicsEntityCommands;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -39,6 +40,8 @@ pub(crate) struct TransformUpdate {
     rotation: Option<Quat>,
     linear_velocity: Option<Vec3>,
     angular_velocity: Option<Vec3>,
+    parent: Option<Option<NetworkIdentity>>,
+    disabled: bool,
 }
 
 impl TransformUpdate {
@@ -55,8 +58,15 @@ impl TransformUpdate {
 
         // Calculate at which time point we are between the updates
         let distance = to.sequence_number - from.sequence_number;
-        let t = (tick - from.sequence_number as f32) / distance as f32;
+        let mut t = (tick - from.sequence_number as f32) / distance as f32;
         debug_assert!((0.0..=1.0).contains(&t));
+
+        // Do not interpolate if the parent changed
+        if let Some(new_parent) = to.parent {
+            if from.parent != Some(new_parent) {
+                t = if t > 0.5 { 1.0 } else { 0.0 };
+            }
+        }
 
         let position = Self::interpolate_component(from.position, to.position, t, Vec3::lerp);
         let rotation = Self::interpolate_component(from.rotation, to.rotation, t, Quat::lerp);
@@ -64,6 +74,13 @@ impl TransformUpdate {
             Self::interpolate_component(from.linear_velocity, to.linear_velocity, t, Vec3::lerp);
         let angular_velocity =
             Self::interpolate_component(from.angular_velocity, to.angular_velocity, t, Vec3::lerp);
+        let parent =
+            Self::interpolate_component(
+                from.parent,
+                to.parent,
+                t,
+                |from, to, t| if t > 0.5 { to } else { from },
+            );
 
         TransformUpdate {
             identity: from.identity,
@@ -72,6 +89,8 @@ impl TransformUpdate {
             rotation,
             linear_velocity,
             angular_velocity,
+            parent,
+            disabled: if t > 0.5 { to.disabled } else { from.disabled },
         }
     }
 
@@ -116,6 +135,8 @@ struct ClientData {
 struct TransformSnapshot {
     position: Option<Vec3>,
     rotation: Option<Quat>,
+    parent: Option<Option<NetworkIdentity>>,
+    frozen: Option<bool>,
 }
 
 /// Sends transform changes to clients
@@ -187,15 +208,19 @@ fn update_transform(
         &Transform,
         &NetworkIdentity,
         Option<&Velocity>,
+        Option<&Parent>,
+        Option<&RigidBody>,
     )>,
+    identity_query: Query<&NetworkIdentity>,
     time: Res<Time>,
     visibilities: Res<NetworkVisibilities>,
     mut server: ResMut<RenetServer>,
     network_time: Res<ServerNetworkTime>,
 ) {
     let seconds = time.raw_elapsed_seconds();
-    for (mut networked, transform, identity, velocity) in query.iter_mut() {
+    for (mut networked, transform, identity, velocity, parent, body) in query.iter_mut() {
         let networked: &mut NetworkTransform = &mut networked;
+
         // Respect update rate
         if networked.last_update + 1.0 / networked.update_rate > seconds {
             continue;
@@ -203,20 +228,35 @@ fn update_transform(
 
         networked.last_update = seconds;
 
+        // Rarely send full update to recover from sync failures
+        let is_occasional_update = networked.last_change + TRANSFORM_STILL_RESYNC_WAIT < seconds;
+
         // Compare values to the one last sent
         let last_position = networked.full_snapshot.position;
         let last_rotation = networked.full_snapshot.rotation;
+        let last_parent = networked.full_snapshot.parent;
+        let last_frozen = networked.full_snapshot.frozen;
 
         let new_position: Vec3 = transform.translation;
         let update_position = last_position.is_none()
+            || is_occasional_update
             || !new_position.abs_diff_eq(last_position.unwrap(), networked.position_threshold);
 
         let new_rotation: Quat = transform.rotation;
         let update_rotation = last_rotation.is_none()
+            || is_occasional_update
             || !new_rotation.abs_diff_eq(last_rotation.unwrap(), networked.rotation_threshold);
 
+        let new_parent = parent
+            .and_then(|p| identity_query.get(p.get()).ok())
+            .copied();
+        let update_parent = last_parent.is_none() || new_parent != last_parent.unwrap();
+
+        let new_frozen = body.map(|b| *b == RigidBody::Fixed).unwrap_or_default();
+        let update_frozen = last_frozen.is_none() || last_frozen.unwrap() != new_frozen;
+
         // Exit early if transform did not significantly change
-        if !update_position && !update_rotation {
+        if !update_position && !update_rotation && !update_parent && !update_frozen {
             continue;
         }
 
@@ -224,9 +264,14 @@ fn update_transform(
         if update_position {
             networked.full_snapshot.position = Some(new_position);
         }
-
         if update_rotation {
             networked.full_snapshot.rotation = Some(new_rotation);
+        }
+        if update_parent {
+            networked.full_snapshot.parent = Some(new_parent);
+        }
+        if update_frozen {
+            networked.full_snapshot.frozen = Some(new_frozen);
         }
 
         // Construct the update message
@@ -235,18 +280,12 @@ fn update_transform(
             // TODO: Move this into a message at the start of a packet
             sequence_number: network_time.current_tick(),
             // TODO: Here we would need to do delta compression for each client, as they may have dropped the last packet
-            position: if update_position {
-                Some(new_position)
-            } else {
-                None
-            },
-            rotation: if update_rotation {
-                Some(new_rotation)
-            } else {
-                None
-            },
+            position: update_position.then_some(new_position),
+            rotation: update_rotation.then_some(new_rotation),
             linear_velocity: velocity.map(|v| v.linvel),
             angular_velocity: velocity.map(|v| v.angvel),
+            parent: update_parent.then_some(new_parent),
+            disabled: new_frozen,
         };
         networked.add_update(update.clone());
 
@@ -327,44 +366,6 @@ fn handle_retransmission(
 }
 
 const TRANSFORM_STILL_RESYNC_WAIT: f32 = 5.0;
-
-/// Syncs the transform from time to time if it's not changing.
-/// This fixes physic desyncs when movement is stopped.
-fn handle_occasional_sync(
-    mut query: Query<(&mut NetworkTransform, &NetworkIdentity)>,
-    time: Res<Time>,
-    visibilities: Res<NetworkVisibilities>,
-    mut server: ResMut<RenetServer>,
-) {
-    let seconds = time.raw_elapsed_seconds();
-
-    for (mut networked, identity) in query.iter_mut() {
-        if networked.last_change + TRANSFORM_STILL_RESYNC_WAIT > seconds {
-            continue;
-        }
-
-        let visibility = match visibilities.visibility.get(identity) {
-            Some(v) => v,
-            None => continue,
-        };
-        let last_update = match networked.sent_updates.back() {
-            Some(u) => u.clone(),
-            None => continue,
-        };
-
-        let serialized = serialize_once(&TransformMessage::Update(last_update.clone()));
-        for (connection, data) in networked.client_data.iter_mut() {
-            if !visibility.has_observer(connection) {
-                continue;
-            }
-
-            server.send_message(connection.0, Channel::Transforms.id(), serialized.clone());
-            data.last_sent = seconds;
-        }
-
-        networked.last_change = seconds;
-    }
-}
 
 /// Sends the newest position to clients that just had the object enter their visibility/was spawned.
 /// If we didn't do this, networked objects would appear at the world origin for a few milliseconds.
@@ -459,6 +460,7 @@ pub struct NetworkedTransform {
     /// If this has ever been applied to a transform.
     /// Is `false` when newly created and set after the first update is applied.
     ever_applied: bool,
+    disabled: bool,
 }
 
 impl NetworkedTransform {
@@ -657,15 +659,13 @@ fn sync_networked_transform(
 
 /// Applies transform updates to entities with physics
 fn sync_networked_transform_physics(
-    mut query: Query<
-        (
-            Entity,
-            &mut NetworkedTransform,
-            &mut Transform,
-            Option<&mut Velocity>,
-        ),
-        With<RigidBody>,
-    >,
+    mut query: Query<(
+        Entity,
+        &mut NetworkedTransform,
+        &mut Transform,
+        Option<&mut Velocity>,
+    )>,
+    identities: Res<NetworkIdentities>,
     network_time: Res<ClientNetworkTime>,
     mut commands: Commands,
 ) {
@@ -692,6 +692,24 @@ fn sync_networked_transform_physics(
 
         if let Some(rotation) = update.rotation {
             transform.rotation = rotation;
+        }
+
+        if let Some(parent) = update.parent {
+            if let Some(parent) = parent {
+                if let Some(parent_entity) = identities.get_entity(parent) {
+                    commands.entity(entity).set_parent(parent_entity);
+                } else {
+                    warn!(parent_id = ?parent, entity = ?entity, "Transform parent not found");
+                }
+            } else {
+                commands.entity(entity).remove_parent();
+            }
+        }
+
+        let disabled = update.disabled;
+        if disabled != networked_transform.disabled {
+            commands.entity(entity).set_physics(!disabled);
+            networked_transform.disabled = update.disabled;
         }
 
         match velocity {
@@ -746,7 +764,6 @@ impl Plugin for TransformPlugin {
                     .with_system(update_transform.after(TimeSystem::Tick))
                     .with_system(handle_retransmission)
                     .with_system(handle_acks)
-                    .with_system(handle_occasional_sync)
                     .with_system(handle_newly_spawned),
             );
         } else {

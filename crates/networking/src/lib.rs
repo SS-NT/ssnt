@@ -384,7 +384,6 @@ fn client_disconnect_on_exit(
     if events.iter().last().is_some() {
         if let Some(mut client) = client {
             if client.is_connected() {
-                bevy::log::info!("Disconnected");
                 client.disconnect();
             }
         }
@@ -400,7 +399,7 @@ pub struct NetworkingPlugin {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
-enum NetworkSystem {
+pub enum NetworkSystem {
     ReadNetworkMessages,
     Visibility,
 }

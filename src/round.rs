@@ -131,7 +131,7 @@ fn spawn_player(
     controls: &mut ClientControls,
     sender: &mut MessageSender,
 ) {
-    let player_entity = crate::create_player(&mut commands.spawn_empty());
+    let player_entity = crate::create_player(&mut commands.spawn_empty(), None);
     // Get spawn position for job
     let spawn_tile = main_map
         .job_spawn_positions

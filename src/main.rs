@@ -1,13 +1,15 @@
 #![allow(clippy::type_complexity)]
 
 mod admin;
+mod body;
 mod camera;
 mod components;
 mod config;
+mod event;
+mod interaction;
 mod items;
 mod job;
 mod movement;
-mod physics;
 mod round;
 mod scene;
 mod ui;
@@ -33,12 +35,10 @@ use byond::tgm::TgmLoader;
 use camera::TopDownCamera;
 use clap::{Parser, Subcommand};
 use futures_lite::future;
-use items::{
-    containers::{Container, ContainerAccessor, ContainerQuery, ContainerWriter},
-    Item,
-};
+use items::containers::Container;
 use maps::TileMapData;
-use networking::identity::EntityCommandsExt as NetworkingEntityCommandsExt;
+use networking::identity::{EntityCommandsExt as NetworkingEntityCommandsExt, NetworkIdentities};
+use networking::scene::{NetworkSceneChildren, NetworkSceneIdentities};
 use networking::spawning::{ClientControlled, NetworkedEntityEvent, PrefabPath};
 use networking::transform::NetworkedTransform;
 use networking::{ClientEvent, NetworkRole, NetworkingPlugin};
@@ -145,6 +145,9 @@ fn main() {
         .add_plugin(AdminPlugin)
         .add_plugin(round::RoundPlugin)
         .add_plugin(job::JobPlugin)
+        .add_plugin(items::ItemPlugin)
+        .add_plugin(interaction::InteractionPlugin)
+        .add_plugin(body::BodyPlugin)
         .insert_resource(args)
         .add_startup_system(setup_shared)
         .register_type::<Player>()
@@ -266,7 +269,11 @@ fn clean_entities_on_disconnect(
     }
 }
 
-fn create_player(commands: &mut EntityCommands) -> Entity {
+// TODO: Replace completely, incredible spaghetti density
+fn create_player(
+    commands: &mut EntityCommands,
+    mut identities: Option<(&NetworkSceneIdentities, &mut ResMut<NetworkIdentities>)>,
+) -> Entity {
     let player_rigid_body = (
         RigidBody::Dynamic,
         LockedAxes::ROTATION_LOCKED,
@@ -281,28 +288,78 @@ fn create_player(commands: &mut EntityCommands) -> Entity {
         ColliderMassProperties::Density(5.0),
         ReadMassProperties::default(),
     );
-    commands
-        .insert((
-            TransformBundle::from_transform(Transform::from_translation((0.0, 1.0, 0.0).into())),
-            Player::default(),
-            player_rigid_body,
-            player_collider,
-        ))
-        .id()
+    let builder = commands.insert((
+        TransformBundle::from_transform(Transform::from_translation((0.0, 1.0, 0.0).into())),
+        Player::default(),
+        player_rigid_body,
+        player_collider,
+        body::Hands::default(),
+    ));
+
+    // Add hands
+    let identities = &mut identities;
+    let (left_hand, right_hand) = builder.add_children(|parent| {
+        let mut left_hand = parent.spawn((
+            SpatialBundle::from_transform(Transform::from_xyz(0.7, 1.1, 0.0)),
+            body::Hand {
+                side: body::LimbSide::Left,
+            },
+            Container::new((2, 2).into()),
+        ));
+        if let Some((identities, identity_index)) = identities.as_mut() {
+            let left_hand_id = *identities.child_identities.get(0).unwrap();
+            left_hand.insert(left_hand_id);
+            identity_index.set_identity(left_hand.id(), left_hand_id);
+        } else {
+            left_hand.networked();
+        }
+        let left_hand = left_hand.id();
+        let mut right_hand = parent.spawn((
+            SpatialBundle::from_transform(Transform::from_xyz(-0.7, 1.1, 0.0)),
+            body::Hand {
+                side: body::LimbSide::Right,
+            },
+            Container::new((2, 2).into()),
+        ));
+        if let Some((identities, identity_index)) = identities {
+            let right_hand_id = *identities.child_identities.get(1).unwrap();
+            right_hand.insert(right_hand_id);
+            identity_index.set_identity(right_hand.id(), right_hand_id);
+        } else {
+            right_hand.networked();
+        }
+        (left_hand, right_hand.id())
+    });
+
+    if identities.is_none() {
+        builder.insert(NetworkSceneChildren {
+            networked_children: vec![left_hand, right_hand],
+        });
+    }
+
+    builder.insert(body::Body {
+        limbs: vec![left_hand, right_hand],
+    });
+
+    builder.id()
 }
 
 // TODO: replace with spawning scene
 fn handle_player_spawn(
-    query: Query<&PrefabPath>,
+    query: Query<(&PrefabPath, &NetworkSceneIdentities)>,
     mut entity_events: EventReader<NetworkedEntityEvent>,
     mut commands: Commands,
     server: ResMut<AssetServer>,
+    mut identity_index: ResMut<NetworkIdentities>,
 ) {
     for event in entity_events.iter() {
         if let NetworkedEntityEvent::Spawned(entity) = event {
-            if let Ok(prefab) = query.get(*entity) {
+            if let Ok((prefab, identities)) = query.get(*entity) {
                 if prefab.0 == "player" {
-                    let player = create_player(&mut commands.entity(*entity));
+                    let player = create_player(
+                        &mut commands.entity(*entity),
+                        Some((identities, &mut identity_index)),
+                    );
                     let player_model = server.load("models/human.glb#Scene0");
                     commands.entity(player).insert((
                         NetworkedTransform::default(),
@@ -326,21 +383,6 @@ fn set_camera_target(
             camera.target = entity;
         }
     }
-}
-
-#[allow(dead_code)]
-fn test_containers(mut commands: Commands, q: ContainerQuery) {
-    let mut item = Item::new("Toolbox".into(), UVec2::new(2, 1));
-    let item_entity = commands.spawn_empty().id();
-
-    let mut container = Container::new(UVec2::new(5, 5));
-    let mut container_builder = commands.spawn_empty();
-    let container_entity = container_builder.id();
-    let mut container_writer = ContainerWriter::new(&mut container, container_entity, &q);
-    container_writer.insert_item(&mut item, item_entity, UVec2::new(0, 0));
-
-    container_builder.insert(container);
-    commands.entity(item_entity).insert(item);
 }
 
 #[derive(Component)]
@@ -376,19 +418,6 @@ fn create_tilemap_from_converted(
                 .insert((map_data, SpatialBundle::default()))
                 .networked();
             info!("Map conversion finished and applied (entity={:?})", entity);
-        }
-    }
-}
-
-#[allow(dead_code)]
-fn print_containers(containers: Query<(&Container, Entity)>, container_query: ContainerQuery) {
-    for (container, entity) in containers.iter() {
-        println!("Container Entity: {:?}", entity);
-        let accessor = ContainerAccessor::new(container, &container_query);
-        for (position, item) in accessor.items() {
-            println!("  {}", item.name);
-            println!("    Size:     {}", item.size);
-            println!("    Position: {}", position);
         }
     }
 }

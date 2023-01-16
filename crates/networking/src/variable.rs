@@ -2,7 +2,6 @@ use std::{
     any::TypeId,
     borrow::Cow,
     marker::PhantomData,
-    num::NonZeroU32,
     ops::{Deref, DerefMut},
 };
 
@@ -13,6 +12,7 @@ use bevy::{
     utils::Uuid,
 };
 use serde::{Deserialize, Serialize};
+pub use smallvec::SmallVec;
 
 use crate::ConnectionId;
 
@@ -25,6 +25,12 @@ pub use bincode::Serializer as StandardSerializer;
 /// A trait implemented by any component or resource that should be networked to clients.
 pub trait NetworkedToClient {
     type Param: SystemParam;
+
+    /// Restrict observers to a smaller set.
+    /// Useful to only send the component to a specific player (or owner).
+    fn limit_observers(&self) -> Option<SmallVec<[ConnectionId; 1]>> {
+        None
+    }
 
     /// Does this serialize differently depending on who the receiver is?
     fn receiver_matters() -> bool;
@@ -39,7 +45,7 @@ pub trait NetworkedToClient {
         &self,
         param: &mut <<Self::Param as SystemParam>::Fetch as SystemParamFetch<'w, 's>>::Item,
         receiver: Option<ConnectionId>,
-        since_tick: Option<NonZeroU32>,
+        since_tick: Option<u32>,
     ) -> Option<Bytes>;
 
     /// Updates the internal change state.

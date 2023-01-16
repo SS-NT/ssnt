@@ -17,6 +17,8 @@ bevy_rapier3d = "0.19.0"
 byond = { path = "crates/byond" }
 maps = { path = "crates/maps" }
 networking = { path = "crates/networking" }
+physics = { path = "crates/physics" }
+utils = { path = "crates/utils" }
 bevy = { workspace = true, features = ["bevy_gltf"] }
 bevy_egui = "0.17.1"
 bevy-inspector-egui = "0.14.0"

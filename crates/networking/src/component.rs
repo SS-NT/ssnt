@@ -9,6 +9,7 @@ use crate::{
         AppExt as MessagingAppExt, MessageEvent, MessageReceivers, MessageSender, MessagingSystem,
     },
     spawning::SpawningSystems,
+    time::ServerNetworkTime,
     variable::*,
     visibility::NetworkVisibilities,
     NetworkManager, NetworkSystem,
@@ -20,6 +21,13 @@ struct NetworkedComponentMessage {
     identity: NetworkIdentity,
     component_id: ComponentNetworkId,
     data: Bytes,
+}
+
+/// A message that tells the client to remove a component.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct RemoveNetworkedComponentMessage {
+    identity: NetworkIdentity,
+    component_id: ComponentNetworkId,
 }
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -38,6 +46,67 @@ impl From<u16> for ComponentNetworkId {
 }
 
 type NetworkedComponentRegistry = NetworkRegistry<ComponentNetworkId>;
+
+fn send_networked_component_changed<S: NetworkedToClient + Component, C: NetworkedFromServer>(
+    mut components: Query<(&NetworkIdentity, &mut S), Changed<S>>,
+    visibilities: Res<NetworkVisibilities>,
+    registry: Res<NetworkedComponentRegistry>,
+    server_time: Res<ServerNetworkTime>,
+    mut sender: MessageSender,
+    mut param: bevy::ecs::system::StaticSystemParam<S::Param>,
+) {
+    for (identity, mut component) in components.iter_mut() {
+        let visibility = match visibilities.visibility.get(identity) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        // Check if component networked state changes
+        if !component.update_state(server_time.current_tick()) {
+            continue;
+        }
+
+        let component_id = registry
+            .get_id(&C::TYPE_UUID)
+            .expect("Networked component incorrectly registered");
+        if S::receiver_matters() {
+            // Serialize component for every receiver
+            let priority = component.priority();
+            for connection in visibility.observers() {
+                let data = match component.serialize(&mut param, Some(*connection), None) {
+                    Some(d) => d,
+                    None => continue,
+                };
+
+                sender.send_with_priority(
+                    &NetworkedComponentMessage {
+                        identity: *identity,
+                        component_id,
+                        data,
+                    },
+                    MessageReceivers::Single(*connection),
+                    priority,
+                );
+            }
+        } else {
+            let new_observers: HashSet<_> = visibility.observers().copied().collect();
+            if !new_observers.is_empty() {
+                let Some(data) = component.serialize(&mut param, None, None) else {
+                    continue;
+                };
+                sender.send_with_priority(
+                    &NetworkedComponentMessage {
+                        identity: *identity,
+                        component_id,
+                        data,
+                    },
+                    MessageReceivers::Set(new_observers),
+                    component.priority(),
+                );
+            }
+        }
+    }
+}
 
 fn send_networked_component_to_new<S: NetworkedToClient + Component, C: NetworkedFromServer>(
     mut components: Query<(&NetworkIdentity, &S)>,
@@ -161,6 +230,70 @@ fn apply_component_update<C: NetworkedFromServer + Component>(
     bevy::log::trace!(component=std::any::type_name::<C>(), entity = ?entity, "Applied networked component data");
 }
 
+fn send_networked_component_removed<S: NetworkedToClient + Component, C: NetworkedFromServer>(
+    removed_from: RemovedComponents<S>,
+    entities: Query<()>,
+    identities: Res<NetworkIdentities>,
+    visibilities: Res<NetworkVisibilities>,
+    registry: Res<NetworkedComponentRegistry>,
+    mut sender: MessageSender,
+) {
+    for entity in removed_from.iter() {
+        // Skip if entire entity was deleted -> networked separately
+        if !entities.contains(entity) {
+            return;
+        }
+
+        let Some(identity) = identities.get_identity(entity) else {
+            continue;
+        };
+        let visibility = match visibilities.visibility.get(&identity) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        let component_id = registry
+            .get_id(&C::TYPE_UUID)
+            .expect("Networked component incorrectly registered");
+
+        let observers: HashSet<_> = visibility.observers().copied().collect();
+        if !observers.is_empty() {
+            sender.send_with_priority(
+                &RemoveNetworkedComponentMessage {
+                    identity,
+                    component_id,
+                },
+                MessageReceivers::Set(observers),
+                -10,
+            );
+        }
+    }
+}
+
+fn client_handle_component_removal<C: NetworkedFromServer + Component>(
+    mut events: EventReader<MessageEvent<RemoveNetworkedComponentMessage>>,
+    registry: Res<NetworkedComponentRegistry>,
+    identities: Res<NetworkIdentities>,
+    mut commands: Commands,
+) {
+    for event in events.iter() {
+        // TODO: Move the id->uuid conversion into one system for performance?
+        // Check if the message is for this component
+        let uuid = registry
+            .get_uuid(event.message.component_id)
+            .expect("Received component message for unknown component");
+        if uuid != &C::TYPE_UUID {
+            continue;
+        }
+
+        let target = event.message.identity;
+        let Some(entity) = identities.get_entity(target) else {
+            continue;
+        };
+
+        commands.entity(entity).remove::<C>();
+    }
+}
 pub trait AppExt {
     fn add_networked_component<S, C>(&mut self) -> &mut App
     where
@@ -188,12 +321,24 @@ impl AppExt for App {
                     .before(MessagingSystem::SendOutbound)
                     .after(NetworkSystem::Visibility)
                     .after(SpawningSystems::Spawn),
+            )
+            .add_system(
+                send_networked_component_changed::<S, C>
+                    .before(MessagingSystem::SendOutbound)
+                    .before(NetworkSystem::Visibility),
+            )
+            .add_system_to_stage(
+                CoreStage::PostUpdate,
+                send_networked_component_removed::<S, C>,
             );
         } else {
             self.add_system(
                 receive_networked_component::<C>
                     .before(NetworkSystem::ReadNetworkMessages)
                     .label(ComponentSystem::Apply),
+            )
+            .add_system(
+                client_handle_component_removal::<C>.after(NetworkSystem::ReadNetworkMessages),
             );
         }
         self
@@ -210,6 +355,7 @@ pub(crate) struct ComponentPlugin;
 impl Plugin for ComponentPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NetworkedComponentRegistry>()
-            .add_network_message::<NetworkedComponentMessage>();
+            .add_network_message::<NetworkedComponentMessage>()
+            .add_network_message::<RemoveNetworkedComponentMessage>();
     }
 }

@@ -114,6 +114,7 @@ impl From<OutboundMessage> for NetworkMessage {
 struct UnreliableNetworkMessage(pub NetworkMessage);
 
 // A typed event sent for every received message
+#[derive(Clone, Copy)]
 pub struct MessageEvent<T> {
     pub message: T,
     pub connection: ConnectionId,

@@ -2,10 +2,11 @@ use bevy::{
     asset::AssetPathId,
     ecs::query::QuerySingleError,
     prelude::{
-        debug, error, info, warn, App, AssetServer, Commands, Component, CoreStage,
-        DespawnRecursiveExt, Entity, EventReader, EventWriter, IntoSystemDescriptor, Plugin, Query,
-        RemovedComponents, Res, ResMut, Resource, SystemLabel, SystemSet, With,
+        debug, error, info, warn, App, AssetServer, Assets, Commands, Component, CoreStage,
+        DespawnRecursiveExt, Entity, EventReader, EventWriter, IntoSystemDescriptor, Parent,
+        Plugin, Query, RemovedComponents, Res, ResMut, Resource, SystemLabel, SystemSet, With,
     },
+    scene::DynamicScene,
     utils::{HashMap, HashSet, Uuid},
 };
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
-    scene::{NetworkScene, NetworkSceneBundle},
+    scene::{NetworkScene, NetworkSceneBundle, NetworkSceneChildren, NetworkSceneIdentities},
     visibility::NetworkVisibilities,
     ConnectionId, NetworkManager, NetworkSystem, Players, ServerEvent,
 };
@@ -23,6 +24,8 @@ use crate::{
 struct SpawnEntity {
     pub network_id: NetworkIdentity,
     pub identifier: SpawnAssetIdentifier,
+    /// Network identities for children.
+    pub child_ids: Vec<NetworkIdentity>,
 }
 
 /// Tells a client what object to spawn.
@@ -65,27 +68,47 @@ pub enum NetworkedEntityEvent {
     Despawned(Entity),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_spawn_messages(
     query: Query<(
         Entity,
         &NetworkIdentity,
         Option<&PrefabPath>,
         Option<&NetworkScene>,
+        Option<&NetworkSceneChildren>,
     )>,
+    identities: Query<&NetworkIdentity>,
+    with_parents: Query<(), With<Parent>>,
     visibilities: Res<NetworkVisibilities>,
     controlled: Res<ClientControls>,
     players: Res<Players>,
     mut sender: MessageSender,
     mut entity_events: EventWriter<ServerEntityEvent>,
+    scenes: Res<Assets<DynamicScene>>,
 ) {
-    for (entity, identity, name, scene) in query.iter() {
+    for (entity, identity, name, scene, children) in query.iter() {
+        // Only send scenes once they're loaded
+        if let Some(scene) = scene {
+            // TODO: Can we check for scene spawned instead of asset existence?
+            if !scenes.contains(&scene.0) {
+                continue;
+            }
+        }
+
         if let Some(visibility) = visibilities.visibility.get(identity) {
             let new_observers: HashSet<ConnectionId> =
                 visibility.new_observers().copied().collect();
             if !new_observers.is_empty() {
                 // Get the asset hash or the string name that identifies the object
                 let identifier = match (name, scene) {
-                    (None, None) => SpawnAssetIdentifier::Empty,
+                    (None, None) => {
+                        // Only allow root objects without asset identifier
+                        // TODO: There's probably a better way to prevent scene children spawning
+                        if with_parents.contains(entity) {
+                            continue;
+                        }
+                        SpawnAssetIdentifier::Empty
+                    }
                     (None, Some(scene)) => SpawnAssetIdentifier::AssetPath(match scene.0.id() {
                         bevy::asset::HandleId::Id(_, _) => {
                             warn!(entity = ?entity, "Cannot spawn networked object with dynamic handle id. Handle must be created from a loaded asset.");
@@ -99,13 +122,24 @@ fn send_spawn_messages(
                         continue;
                     }
                 };
+
+                // Collect the network ids of the children
+                let child_ids = children.map(|c| {
+                    c.networked_children
+                        .iter()
+                        .map(|child| identities.get(*child).unwrap())
+                        .copied()
+                        .collect()
+                });
+
                 let message = SpawnEntity {
                     identifier,
                     network_id: *identity,
+                    child_ids: child_ids.unwrap_or_default(),
                 };
 
                 // Increase priority if object is owned by a player
-                let priority = if controlled.entities.contains(&entity) {
+                let priority = if controlled.controlling_player(entity).is_some() {
                     60
                 } else {
                     50
@@ -207,6 +241,13 @@ fn receive_spawn(
                     }
                     SpawnAssetIdentifier::Empty => {}
                 }
+
+                if !spawn.child_ids.is_empty() {
+                    builder.insert(NetworkSceneIdentities {
+                        child_identities: spawn.child_ids,
+                    });
+                }
+
                 let entity = builder.id();
                 ids.set_identity(entity, spawn.network_id);
                 entity_events.send(NetworkedEntityEvent::Spawned(entity));
@@ -230,18 +271,18 @@ fn receive_spawn(
 #[derive(Default, Resource)]
 pub struct ClientControls {
     mapping: HashMap<Uuid, Entity>,
-    entities: HashSet<Entity>,
+    reverse_mapping: HashMap<Entity, Uuid>,
     changed: HashSet<Uuid>,
 }
 
 impl ClientControls {
     pub fn give_control(&mut self, id: Uuid, entity: Entity) {
         if let Some(entity) = self.mapping.remove(&id) {
-            self.entities.remove(&entity);
+            self.reverse_mapping.remove(&entity);
         }
 
         self.mapping.insert(id, entity);
-        self.entities.insert(entity);
+        self.reverse_mapping.insert(entity, id);
         self.changed.insert(id);
     }
 
@@ -251,6 +292,10 @@ impl ClientControls {
 
     pub fn controlled_entity(&self, id: Uuid) -> Option<Entity> {
         self.mapping.get(&id).copied()
+    }
+
+    pub fn controlling_player(&self, entity: Entity) -> Option<Uuid> {
+        self.reverse_mapping.get(&entity).copied()
     }
 }
 

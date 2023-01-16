@@ -1,13 +1,31 @@
-// TODO: Remove this once used again
-#![allow(dead_code)]
-
-use bevy::{
-    math::UVec2,
-    prelude::{Component, Entity, Query, RemovedComponents},
-    utils::HashMap,
+use bevy::{prelude::*, utils::HashMap};
+use networking::{
+    identity::NetworkIdentity,
+    is_server,
+    spawning::ClientControls,
+    visibility::{NetworkVisibilities, VisibilitySystem},
+    NetworkSystem, Players,
 };
+use physics::PhysicsEntityCommands;
+use utils::order::{Order, OrderAppExt, OrderResult};
 
-use super::Item;
+use super::{Item, StoredItem};
+
+pub struct ContainerPlugin;
+
+impl Plugin for ContainerPlugin {
+    fn build(&self, app: &mut App) {
+        if is_server(app) {
+            app.register_order::<MoveItemOrder, MoveItemResult>()
+                .add_system(do_item_move)
+                .add_system(
+                    item_in_container_visibility
+                        .after(VisibilitySystem::GridVisibility)
+                        .label(NetworkSystem::Visibility),
+                );
+        }
+    }
+}
 
 #[derive(Component)]
 pub struct Container {
@@ -33,57 +51,23 @@ impl Container {
             self.items.remove(&k);
         }
     }
-}
 
-pub type ContainerQuery<'world, 'state> = Query<'world, 'state, (&'static Item,)>;
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
 
-pub struct ContainerItemIterator<'a, 'world: 'a, 'state: 'a> {
-    query: &'a ContainerQuery<'world, 'state>,
-    inner_iter: bevy::utils::hashbrown::hash_map::Iter<'a, UVec2, Entity>,
-}
-
-impl<'a, 'world, 'state> Iterator for ContainerItemIterator<'a, 'world, 'state> {
-    type Item = (&'a UVec2, &'a Item);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let entry = self.inner_iter.next()?;
-            if let Ok((item,)) = self.query.get(*entry.1) {
-                return Some((entry.0, item));
-            }
+    fn can_fit(&self, items_query: &Query<&Item>, item: &Item, position: UVec2) -> bool {
+        if position.x + item.size.x > self.size.x || position.y + item.size.y > self.size.y {
+            return false;
         }
-    }
-}
 
-impl<'a, 'world, 'state> From<&ContainerAccessor<'a, 'world, 'state>>
-    for ContainerItemIterator<'a, 'world, 'state>
-{
-    fn from(accessor: &ContainerAccessor<'a, 'world, 'state>) -> Self {
-        Self {
-            query: accessor.query,
-            inner_iter: accessor.container.items.iter(),
-        }
-    }
-}
-
-pub struct ContainerAccessor<'a, 'world, 'state> {
-    container: &'a Container,
-    query: &'a ContainerQuery<'world, 'state>,
-}
-
-impl<'a, 'world, 'state> ContainerAccessor<'a, 'world, 'state> {
-    pub fn new(container: &'a Container, query: &'a ContainerQuery<'world, 'state>) -> Self {
-        Self { container, query }
-    }
-
-    pub fn can_fit(&self, item: &Item, position: UVec2) -> bool {
-        for (&other_position, &entity) in self.container.items.iter() {
-            let other_item = self.query.get(entity).unwrap();
+        for (&other_position, &entity) in self.items.iter() {
+            let other_item = items_query.get(entity).unwrap();
 
             let x_overlap = (position.x as i32 - other_position.x as i32).unsigned_abs() * 2
-                < item.size.x + other_item.0.size.x;
+                < item.size.x + other_item.size.x;
             let y_overlap = (position.y as i32 - other_position.y as i32).unsigned_abs() * 2
-                < item.size.y + other_item.0.size.y;
+                < item.size.y + other_item.size.y;
 
             if x_overlap && y_overlap {
                 return false;
@@ -92,55 +76,132 @@ impl<'a, 'world, 'state> ContainerAccessor<'a, 'world, 'state> {
 
         true
     }
+}
 
-    pub fn items(&self) -> ContainerItemIterator {
-        self.into()
+/// A component on containers which show their contents to everyone in the area.
+#[derive(Component)]
+struct DisplayContainer;
+
+/// An event requesting to move an item from or into a container.
+pub struct MoveItemOrder {
+    pub item: Entity,
+    pub container: Option<Entity>,
+    pub position: Option<UVec2>,
+}
+
+pub struct MoveItemResult {
+    success: bool,
+}
+
+impl MoveItemResult {
+    pub fn was_success(&self) -> bool {
+        self.success
     }
 }
 
-pub struct ContainerWriter<'a, 'world, 'state> {
-    container: &'a mut Container,
-    entity: Entity,
-    query: &'a ContainerQuery<'world, 'state>,
-}
-
-impl<'a, 'world, 'state> ContainerWriter<'a, 'world, 'state> {
-    pub fn new(
-        container: &'a mut Container,
-        entity: Entity,
-        query: &'a ContainerQuery<'world, 'state>,
-    ) -> Self {
-        Self {
-            container,
-            entity,
-            query,
-        }
-    }
-
-    pub fn insert_item(&'a mut self, item: &mut Item, item_entity: Entity, position: UVec2) {
-        if !ContainerAccessor::new(self.container, self.query).can_fit(item, position) {
-            return;
-        }
-
-        self.container.insert_item_unchecked(item_entity, position);
-        item.container = Some(self.entity);
-    }
-}
-
-pub fn cleanup_removed_items_system(
-    removed_items: RemovedComponents<Item>,
-    mut containers: Query<(&mut Container,)>,
+fn do_item_move(
+    mut orders: EventReader<Order<MoveItemOrder>>,
+    mut results: EventWriter<OrderResult<MoveItemOrder, MoveItemResult>>,
+    mut containers: Query<&mut Container>,
+    mut items: Query<(Entity, &Item, Option<&mut StoredItem>)>,
+    global_transforms: Query<&GlobalTransform>,
+    only_items: Query<&Item>,
+    mut commands: Commands,
 ) {
-    for entity in removed_items.iter() {
-        for (mut container,) in containers.iter_mut() {
-            let mut key = None;
-            if let Some((&k, _)) = container.items.iter().find(|(_, ent)| **ent == entity) {
-                key = Some(k);
+    for order in orders.iter() {
+        let data = order.data();
+
+        let Ok((item_entity, item, mut stored)) = items.get_mut(data.item) else {
+            results.send(order.complete(MoveItemResult { success: false }));
+            continue;
+        };
+
+        // Remove from old container if it exists
+        if let Some(stored) = stored.as_mut() {
+            let mut container = containers.get_mut(*stored.container).unwrap();
+            container.remove_item(item_entity);
+        }
+
+        let Some(container_entity) = data.container else {
+            // If we're putting it back into the world
+            if stored.is_some() {
+                let mut entity_commands = commands.entity(item_entity);
+                entity_commands
+                    .remove::<StoredItem>()
+                    .remove_parent()
+                    .enable_physics();
+
+                if let Ok(transform) = global_transforms.get(item_entity) {
+                    entity_commands.insert(Transform::from(*transform));
+                }
             }
-            if let Some(k) = key {
-                container.items.remove(&k);
-                continue;
+            results.send(order.complete(MoveItemResult { success: true }));
+            return;
+        };
+
+        let Ok(mut container) = containers.get_mut(container_entity) else {
+            results.send(order.complete(MoveItemResult { success: false }));
+            continue;
+        };
+
+        let position = data.position.expect("Automatic position not supported yet");
+        if !container.can_fit(&only_items, item, position) {
+            results.send(order.complete(MoveItemResult { success: false }));
+            continue;
+        }
+
+        container.insert_item_unchecked(data.item, position);
+        if let Some(stored) = stored.as_mut() {
+            *stored.container = container_entity;
+        } else {
+            commands.entity(data.item).insert(StoredItem {
+                container: container_entity.into(),
+            });
+        }
+
+        results.send(order.complete(MoveItemResult { success: true }));
+
+        // TODO: Do all containers nest their items? Probably...
+        commands.entity(container_entity).add_child(data.item);
+        // Freeze the item as a child
+        commands
+            .entity(item_entity)
+            .insert(Transform::default())
+            .disable_physics();
+    }
+}
+
+/// Influences the network visibility of items that are stored in a container.
+fn item_in_container_visibility(
+    items: Query<(&StoredItem, &NetworkIdentity)>,
+    containers: Query<(Entity, Option<&DisplayContainer>), With<Container>>,
+    mut visibilities: ResMut<NetworkVisibilities>,
+    parents: Query<&Parent>,
+    controls: Res<ClientControls>,
+    players: Res<Players>,
+) {
+    for (item, identity) in items.iter() {
+        let Some(visibility) = visibilities.get_mut(*identity) else {
+            continue;
+        };
+
+        let (container_entity, display) = containers.get(*item.container).unwrap();
+
+        if display.is_none() {
+            // Remove all observers by default for non-displaying containers
+            visibility.remove_observers();
+
+            // Add any parent player as an observer (players should see all the containers on their character)
+            // TODO: Is this actually the best idea?
+            if let Some(connection) = parents
+                .iter_ancestors(container_entity)
+                .find_map(|root| controls.controlling_player(root))
+                .and_then(|player| players.get_connection(&player))
+            {
+                visibility.add_observer(connection);
             }
+
+            // TODO: Handle players looking into the container (having UI open)
         }
     }
 }

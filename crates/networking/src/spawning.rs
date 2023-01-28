@@ -12,7 +12,7 @@ use bevy::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    identity::{NetworkIdentities, NetworkIdentity},
+    identity::{IdentitySystem, NetworkIdentities, NetworkIdentity},
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     scene::{NetworkScene, NetworkSceneBundle, NetworkSceneChildren, NetworkSceneIdentities},
     visibility::NetworkVisibilities,
@@ -258,6 +258,7 @@ fn receive_spawn(
                 if let Some(entity) = ids.get_entity(*id) {
                     commands.entity(entity).despawn_recursive();
                     ids.remove_entity(entity);
+                    entity_events.send(NetworkedEntityEvent::Despawned(entity));
                     debug!("Received despawn message for {:?}", id);
                 } else {
                     warn!("Received despawn message for non-existent {:?}", id);
@@ -440,7 +441,10 @@ impl Plugin for SpawningPlugin {
                                 .after(SpawningSystems::Spawn),
                         ),
                 )
-                .add_system_to_stage(CoreStage::PostUpdate, network_deleted_entities);
+                .add_system_to_stage(
+                    CoreStage::PostUpdate,
+                    network_deleted_entities.before(IdentitySystem::ClearRemoved),
+                );
         } else {
             app.add_event::<NetworkedEntityEvent>().add_system_set(
                 SystemSet::new()

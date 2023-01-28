@@ -2,6 +2,7 @@ use adjacency::{AdjacencyInformation, TilemapAdjacency};
 use arrayvec::ArrayVec;
 use bevy::{
     asset::AssetPathId,
+    ecs::system::Command,
     math::{IVec2, UVec2},
     prelude::*,
     reflect::TypeUuid,
@@ -11,6 +12,7 @@ use networking::{
     component::AppExt,
     identity::{EntityCommandsExt, NetworkIdentities, NetworkIdentity},
     scene::NetworkSceneBundle,
+    spawning::{NetworkedEntityEvent, SpawningSystems},
     transform::NetworkTransform,
     variable::{NetworkVar, ServerVar},
     visibility::{GridAabb, VisibilitySystem, GLOBAL_GRID_CELL_SIZE},
@@ -397,6 +399,17 @@ impl TileReference {
             }
         }
     }
+
+    fn remove_at(&mut self, path: TileEntityPath) {
+        match path.index_in_layer {
+            Some(i) => {
+                self.set_index(path.layer, i as usize, None);
+            }
+            None => {
+                self.set(path.layer, TileLayerData::Single(None));
+            }
+        }
+    }
 }
 
 // TODO: Also implement default serializations for some types (like Entity)
@@ -543,6 +556,34 @@ fn update_grid_aabb(mut query: Query<(&TileMap, &mut GridAabb), Changed<TileMap>
     }
 }
 
+pub trait MapCommandsExt {
+    fn despawn_tile_entity(&mut self, entity: Entity);
+}
+
+impl<'w, 's> MapCommandsExt for Commands<'w, 's> {
+    fn despawn_tile_entity(&mut self, entity: Entity) {
+        self.add(DespawnTileEntityCommand { entity });
+        self.entity(entity).despawn_recursive();
+    }
+}
+
+struct DespawnTileEntityCommand {
+    entity: Entity,
+}
+
+impl Command for DespawnTileEntityCommand {
+    fn write(self, world: &mut World) {
+        if let Some(tile) = world.entity_mut(self.entity).remove::<TileEntity>() {
+            let path = *tile.path;
+            if let Some(mut map) = world.get_mut::<TileMap>(*tile.tilemap) {
+                if let Some(reference) = map.tile_mut(path.position) {
+                    reference.remove_at(path);
+                }
+            }
+        }
+    }
+}
+
 // TODO: Remove once scenes support composition
 /// Adds some bundles to spawned tile scenes, so we don't need to specify them every time
 fn client_initialize_tile_objects(
@@ -594,6 +635,16 @@ struct TileMapClient {
     dirty_tiles: HashSet<(UVec2, TileLayer)>,
 }
 
+impl TileMapClient {
+    fn remove_at(&mut self, path: TileEntityPath) {
+        let Some(entry) = self.tiles.get_mut(&path.position) else {
+            return;
+        };
+        entry.remove_at(path);
+        self.dirty_tiles.insert((path.position, path.layer));
+    }
+}
+
 fn client_update_tile_entities(
     changed_tiles: Query<
         (Entity, &TileEntityClient, Option<&Transform>),
@@ -624,18 +675,7 @@ fn client_update_tile_entities(
 
             // Remove from old path
             if let Some(old_path) = tile_entity.old_path {
-                let entry = tilemap.tiles.entry(old_path.position).or_default();
-                match old_path.index_in_layer {
-                    Some(i) => {
-                        entry.set_index(old_path.layer, i as usize, None);
-                    }
-                    None => {
-                        entry.set(old_path.layer, TileLayerData::Single(None));
-                    }
-                }
-                tilemap
-                    .dirty_tiles
-                    .insert((old_path.position, old_path.layer));
+                tilemap.remove_at(old_path);
             }
 
             // Add to new path
@@ -656,6 +696,27 @@ fn client_update_tile_entities(
         // TODO: Handle all changes of tilemap parent and layer
 
         commands.entity(*tile_entity.tilemap).add_child(entity);
+    }
+}
+
+fn client_mark_deleted_tile_entities(
+    mut events: EventReader<NetworkedEntityEvent>,
+    tile_entities: Query<&TileEntityClient>,
+    mut tilemaps: Query<&mut TileMapClient>,
+) {
+    for entity in events.iter().filter_map(|e| match e {
+        NetworkedEntityEvent::Spawned(_) => None,
+        NetworkedEntityEvent::Despawned(e) => Some(*e),
+    }) {
+        let Ok(tile) = tile_entities.get(entity) else {
+            continue;
+        };
+
+        let Ok(mut map) = tilemaps.get_mut(*tile.tilemap) else {
+            continue;
+        };
+
+        map.remove_at(*tile.path);
     }
 }
 
@@ -772,6 +833,7 @@ impl Plugin for MapPlugin {
         {
             app.add_system_to_stage(CoreStage::PostUpdate, client_initialize_tile_objects)
                 .add_system(client_update_tile_entities)
+                .add_system(client_mark_deleted_tile_entities.after(SpawningSystems::Spawn))
                 .add_system_to_stage(CoreStage::PostUpdate, client_update_adjacencies);
         } else {
             app.add_system(spawn_from_data).add_system_to_stage(

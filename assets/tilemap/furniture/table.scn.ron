@@ -2,6 +2,8 @@
     entities: {
         0: (
             components: {
+                "ssnt::construction::WrenchDeconstructable": (
+                ),
                 "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
                     id: "models/tilemap/tables.glb#Mesh71/Primitive0"
                 ),

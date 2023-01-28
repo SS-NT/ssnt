@@ -5,6 +5,7 @@ mod body;
 mod camera;
 mod components;
 mod config;
+mod construction;
 mod event;
 mod interaction;
 mod items;
@@ -148,6 +149,7 @@ fn main() {
         .add_plugin(items::ItemPlugin)
         .add_plugin(interaction::InteractionPlugin)
         .add_plugin(body::BodyPlugin)
+        .add_plugin(construction::ConstructionPlugin)
         .insert_resource(args)
         .add_startup_system(setup_shared)
         .register_type::<Player>()

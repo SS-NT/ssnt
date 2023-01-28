@@ -1,8 +1,8 @@
 use bevy::{
     ecs::system::{Command, EntityCommands},
     prelude::{
-        error, App, Component, CoreStage, Entity, FromWorld, Plugin, ReflectComponent,
-        RemovedComponents, ResMut, Resource,
+        error, App, Component, CoreStage, Entity, FromWorld, IntoSystemDescriptor, Plugin,
+        ReflectComponent, RemovedComponents, ResMut, Resource, SystemLabel,
     },
     reflect::Reflect,
     utils::HashMap,
@@ -99,6 +99,11 @@ impl EntityCommandsExt for EntityCommands<'_, '_, '_> {
     }
 }
 
+#[derive(SystemLabel)]
+pub(crate) enum IdentitySystem {
+    ClearRemoved,
+}
+
 pub(crate) struct IdentityPlugin;
 
 impl Plugin for IdentityPlugin {
@@ -108,7 +113,7 @@ impl Plugin for IdentityPlugin {
             .add_system_to_stage(
                 // TODO: Run this directly before trackers are cleared. Blocked on Bevy ECS changes.
                 CoreStage::PostUpdate,
-                unregister_deleted_entities,
+                unregister_deleted_entities.label(IdentitySystem::ClearRemoved),
             );
     }
 }

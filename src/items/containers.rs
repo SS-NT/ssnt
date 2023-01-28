@@ -76,6 +76,10 @@ impl Container {
 
         true
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&UVec2, &Entity)> {
+        self.items.iter()
+    }
 }
 
 /// A component on containers which show their contents to everyone in the area.

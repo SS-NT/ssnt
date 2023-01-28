@@ -12,6 +12,8 @@
                 "ssnt::items::Item": (
                     name: "Wrench"
                 ),
+                "ssnt::construction::Wrench": (
+                ),
                 "physics::RigidBody": (
                     kind: Dynamic
                 ),

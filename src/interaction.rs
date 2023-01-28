@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::{sync::Mutex, time::Duration};
 
 use bevy::{
     ecs::{query::QuerySingleError, schedule::SystemLabelId, system::SystemState},
@@ -20,7 +20,12 @@ use networking::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{camera::MainCamera, event::*};
+use crate::{
+    body::{Body, Hand, Hands},
+    camera::MainCamera,
+    event::*,
+    items::containers::Container,
+};
 
 pub struct InteractionPlugin;
 
@@ -30,7 +35,8 @@ impl Plugin for InteractionPlugin {
             .add_network_message::<InteractionListClient>()
             .add_network_message::<InteractionExecuteRequest>()
             .add_network_message::<InteractionExecuteDefaultRequest>()
-            .add_networked_component::<ActiveInteraction, ActiveInteractionClient>();
+            .add_networked_component::<ActiveInteraction, ActiveInteractionClient>()
+            .add_event::<InteractionListOrder>();
 
         if is_server(app) {
             app.register_type::<TestInteraction>();
@@ -42,11 +48,14 @@ impl Plugin for InteractionPlugin {
                         .intercept::<InteractionListEvent>(),
                 )
                 .add_system(execute_interaction_example)
-                .add_system(
-                    handle_interaction_list_request.label(InteractionListEvent::start_label()),
-                )
+                .add_system(begin_interaction_list.label(InteractionListEvent::start_label()))
                 .add_system(
                     handle_completed_interaction_list.label(InteractionListEvent::end_label()),
+                )
+                .add_system(
+                    handle_interaction_list_request
+                        .before(InteractionListEvent::start_label())
+                        .after(NetworkSystem::ReadNetworkMessages),
                 )
                 .add_system(
                     handle_default_interaction_request
@@ -75,27 +84,26 @@ pub enum InteractionSystem {
     Input,
 }
 
+/// Event to order the creation of an interaction list
+struct InteractionListOrder {
+    connection: ConnectionId,
+    target: NetworkIdentity,
+    send_to_client: bool,
+}
+
 pub struct InteractionListEvent {
     /// If we should send the result of this list to the client
     send_to_client: bool,
     connection: ConnectionId,
     pub source: Entity,
     pub target: Entity,
+    pub used_hand: Option<Entity>,
+    pub item_in_hand: Option<Entity>,
     // Behind a mutex to allow concurrent execution of interaction systems
     interactions: Mutex<Vec<InteractionOption>>,
 }
 
 impl InteractionListEvent {
-    fn new(connection: ConnectionId, source: Entity, target: Entity, send_to_client: bool) -> Self {
-        Self {
-            connection,
-            source,
-            target,
-            send_to_client,
-            interactions: Default::default(),
-        }
-    }
-
     pub fn add_interaction(&self, interaction: InteractionOption) {
         self.interactions.lock().unwrap().push(interaction);
     }
@@ -170,7 +178,6 @@ pub enum InteractionStatus {
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub enum InteractionSpecificity {
     /// The interaction is available on a limited set of specific objects.
-    #[allow(dead_code)]
     Specific,
     // The interaction is available on many objects.
     Generic,
@@ -181,11 +188,24 @@ pub enum InteractionSpecificity {
 #[component(storage = "SparseSet")]
 #[networked(client = "ActiveInteractionClient")]
 pub struct ActiveInteraction {
-    started: NetworkVar<f32>,
+    started: f32,
     estimate_duration: NetworkVar<Option<f32>>,
     pub target: Entity,
     pub status: InteractionStatus,
     reflect_component: ReflectComponent,
+}
+
+impl ActiveInteraction {
+    /// The time the interaction was started at in seconds.
+    pub fn start_time(&self) -> f32 {
+        self.started
+    }
+
+    pub fn set_initial_duration(&mut self, duration: Duration) {
+        if self.estimate_duration.is_none() {
+            *self.estimate_duration = Some(duration.as_secs_f32());
+        }
+    }
 }
 
 // TODO: Restrict networking to owning player
@@ -194,38 +214,55 @@ pub struct ActiveInteraction {
 #[component(storage = "SparseSet")]
 #[networked(server = "ActiveInteraction")]
 struct ActiveInteractionClient {
-    started: ServerVar<f32>,
+    started: Option<f32>,
     estimate_duration: ServerVar<Option<f32>>,
 }
 
-fn handle_interaction_list_request(
-    mut messages: EventReader<MessageEvent<InteractionListRequest>>,
+fn begin_interaction_list(
+    mut orders: EventReader<InteractionListOrder>,
     mut events: ResMut<InterceptableEvents<InteractionListEvent>>,
     identities: Res<NetworkIdentities>,
     players: Res<Players>,
     controls: Res<ClientControls>,
+    bodies: Query<(&Body, &Hands)>,
+    hand_query: Query<(Entity, &Container), With<Hand>>,
 ) {
-    for event in messages.iter() {
+    for event in orders.iter() {
         let connection = event.connection;
-        let Some(target) = identities.get_entity(event.message.target) else {
-            warn!(connection=?connection, "Interaction list requested for non-existent identity {:?}", event.message.target);
+        let Some(target) = identities.get_entity(event.target) else {
+            warn!(connection=?connection, "Interaction list attempted for non-existent identity {:?}", event.target);
             continue;
         };
         let Some(player) = players.get(connection).map(|p| p.id) else {
-            warn!(connection=?connection, "Received interaction list request from connection without player data");
+            warn!(connection=?connection, "Interaction list attempted for connection without player data");
             continue;
         };
         let Some(player_entity) = controls.controlled_entity(player) else {
-            warn!(connection=?connection, player=?player, "Received interaction list request from player without controlled entity");
+            warn!(connection=?connection, player=?player, "Interaction list attempted for player without controlled entity");
             continue;
         };
-        events.push(InteractionListEvent::new(
+
+        // Fetch the used hand and item once here, as it's used in many interactions
+        let hand = bodies.get(player_entity).ok().and_then(|(body, hands)| {
+            hand_query
+                .iter_many(&body.limbs)
+                .nth(hands.active_hand_index())
+        });
+        let item_in_hand =
+            hand.and_then(|(_, container)| container.iter().next().map(|(_, item)| *item));
+        let used_hand = hand.unzip().0;
+
+        events.push(InteractionListEvent {
+            send_to_client: event.send_to_client,
             connection,
-            player_entity,
+            source: player_entity,
             target,
-            true,
-        ));
-        debug!(connection=?connection, target=?target, "Interaction list requested");
+            used_hand,
+            item_in_hand,
+            interactions: Default::default(),
+        });
+
+        debug!(connection=?connection, target=?target, "Interaction list build started");
     }
 }
 
@@ -265,34 +302,31 @@ fn handle_completed_interaction_list(
     }
 }
 
-fn handle_default_interaction_request(
-    mut messages: EventReader<MessageEvent<InteractionExecuteDefaultRequest>>,
-    mut events: ResMut<InterceptableEvents<InteractionListEvent>>,
-    identities: Res<NetworkIdentities>,
-    players: Res<Players>,
-    controls: Res<ClientControls>,
+fn handle_interaction_list_request(
+    mut messages: EventReader<MessageEvent<InteractionListRequest>>,
+    mut orders: EventWriter<InteractionListOrder>,
 ) {
     for event in messages.iter() {
-        let connection = event.connection;
-        let Some(target) = identities.get_entity(event.message.target) else {
-            warn!(connection=?connection, "Default interaction requested for non-existent identity {:?}", event.message.target);
-            continue;
-        };
-        let Some(player) = players.get(connection).map(|p| p.id) else {
-            warn!(connection=?connection, "Received execute default interaction request from connection without player data");
-            continue;
-        };
-        let Some(player_entity) = controls.controlled_entity(player) else {
-            warn!(connection=?connection, player=?player, "Received execute default interaction request from player without controlled entity");
-            continue;
-        };
-        events.push(InteractionListEvent::new(
-            connection,
-            player_entity,
-            target,
-            false,
-        ));
-        debug!(connection=?connection, target=?target, "Default interaction requested");
+        orders.send(InteractionListOrder {
+            connection: event.connection,
+            target: event.message.target,
+            send_to_client: true,
+        });
+        debug!(connection=?event.connection, target=?event.message.target, "Interaction list requested");
+    }
+}
+
+fn handle_default_interaction_request(
+    mut messages: EventReader<MessageEvent<InteractionExecuteDefaultRequest>>,
+    mut orders: EventWriter<InteractionListOrder>,
+) {
+    for event in messages.iter() {
+        orders.send(InteractionListOrder {
+            connection: event.connection,
+            target: event.message.target,
+            send_to_client: false,
+        });
+        debug!(connection=?event.connection, target=?event.message.target, "Default interaction requested");
     }
 }
 
@@ -389,7 +423,7 @@ fn handle_interaction_execute_request(
 
         // Record active interaction
         world.entity_mut(player_entity).insert(ActiveInteraction {
-            started: started.into(),
+            started,
             estimate_duration: None.into(),
             target,
             status: InteractionStatus::Running,
@@ -547,11 +581,15 @@ fn client_interaction_selection_ui(
 
 fn client_progress_ui(
     mut egui_context: ResMut<EguiContext>,
-    interactions: Query<(&ActiveInteractionClient, &GlobalTransform), With<ClientControlled>>,
+    mut interactions: Query<
+        (&mut ActiveInteractionClient, &GlobalTransform),
+        With<ClientControlled>,
+    >,
     windows: Res<Windows>,
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    time: Res<Time>,
 ) {
-    let (interaction, transform) = match interactions.get_single() {
+    let (mut interaction, transform) = match interactions.get_single_mut() {
         Ok(i) => i,
         Err(QuerySingleError::MultipleEntities(_)) => {
             warn!("Multiple entities with active interaction. There should only be one (on the entity controlled by the player).");
@@ -573,18 +611,25 @@ fn client_progress_ui(
         return;
     };
 
-    if interaction.estimate_duration.is_some() {
-        todo!()
-    } else {
-        egui::Area::new("interaction progress")
-            .fixed_pos(egui::pos2(
-                screen_position.x,
-                window.height() - screen_position.y,
-            ))
-            .show(egui_context.ctx_mut(), |ui| {
-                ui.spinner();
-            });
+    // TODO: This may be inaccurate with high RTT, use interpolated tick instead
+    if interaction.started.is_none() {
+        interaction.started = Some(time.elapsed_seconds());
     }
+
+    egui::Area::new("interaction progress")
+        .fixed_pos(egui::pos2(
+            screen_position.x,
+            window.height() - screen_position.y,
+        ))
+        .show(egui_context.ctx_mut(), |ui| {
+            if let Some(estimate) = *interaction.estimate_duration {
+                let remaining = estimate + interaction.started.unwrap() - time.elapsed_seconds();
+                let t = (estimate - remaining) / estimate;
+                ui.add(egui::ProgressBar::new(t).desired_width(80.0));
+            } else {
+                ui.spinner();
+            }
+        });
 }
 
 #[derive(Component, Reflect)]
@@ -626,7 +671,7 @@ fn execute_interaction_example(
             interaction.first_run = false;
         }
 
-        if *active.started + 2.0 < time.elapsed_seconds() {
+        if active.started + 2.0 < time.elapsed_seconds() {
             active.status = InteractionStatus::Completed;
         }
     }

@@ -81,6 +81,12 @@ pub struct Hands {
     active_hand: usize,
 }
 
+impl Hands {
+    pub fn active_hand_index(&self) -> usize {
+        self.active_hand
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct ChangeHandRequest {
     index: usize,

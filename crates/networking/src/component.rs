@@ -186,8 +186,10 @@ fn receive_networked_component<C: NetworkedFromServer + Component>(
         let entity = match identities.get_entity(target) {
             Some(e) => e,
             None => {
+                let component = std::any::type_name::<C>();
                 warn!(
                     identity = ?target,
+                    component,
                     "Received component message for non-existent identity"
                 );
                 continue;

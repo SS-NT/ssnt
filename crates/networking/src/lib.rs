@@ -74,7 +74,7 @@ impl NetworkManager {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 #[non_exhaustive]
-enum ClientState {
+pub enum ClientState {
     Initial,
     Joining(SocketAddr),
     Connected,
@@ -86,6 +86,11 @@ pub enum ClientEvent {
     Joined,
     JoinFailed(String),
     Disconnected(String),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum ClientOrder {
+    Leave,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -279,6 +284,21 @@ fn client_handle_disconnect(
     commands.remove_resource::<RenetClient>();
 }
 
+fn client_handle_orders(
+    mut orders: EventReader<ClientOrder>,
+    mut client: Option<ResMut<RenetClient>>,
+) {
+    for order in orders.iter() {
+        match order {
+            ClientOrder::Leave => {
+                if let Some(client) = client.as_mut() {
+                    client.disconnect();
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct ConnectionId(u64);
 
@@ -428,11 +448,13 @@ impl Plugin for NetworkingPlugin {
         if self.role == NetworkRole::Client {
             app.add_state(ClientState::Initial)
                 .add_event::<ClientEvent>()
+                .add_event::<ClientOrder>()
                 .add_system(handle_joining_server)
                 .add_system(client_joined_server.after(NetworkSystem::ReadNetworkMessages))
                 .add_system(client_send_hello)
                 .add_system(client_handle_join_error)
                 .add_system(client_handle_disconnect)
+                .add_system(client_handle_orders)
                 .add_system(client_disconnect_on_exit);
         } else {
             app.add_event::<ServerEvent>()

@@ -112,6 +112,13 @@ impl TransformUpdate {
             None => to,
         }
     }
+
+    fn apply_snapshot(&mut self, snapshot: &TransformSnapshot) {
+        self.position = snapshot.position;
+        self.rotation = snapshot.rotation;
+        self.parent = snapshot.parent;
+        self.disabled = snapshot.frozen.unwrap_or_default();
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -131,7 +138,7 @@ struct ClientData {
     last_sequence: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct TransformSnapshot {
     position: Option<Vec3>,
     rotation: Option<Quat>,
@@ -153,7 +160,10 @@ pub struct NetworkTransform {
     /// This is a multiplicator, 1 = 1 x RTT.
     /// Retransmission is only necessary when the update rate is below RTT or the transform has stopped moving.
     pub retransmission_multiplicator: f32,
-    /// All transform information when it was last updated
+    /// All changed information when it was last updated
+    #[reflect(ignore)]
+    sent_snapshot: TransformSnapshot,
+    /// All information when it was last updated
     #[reflect(ignore)]
     full_snapshot: TransformSnapshot,
     #[reflect(ignore)]
@@ -174,6 +184,7 @@ impl Default for NetworkTransform {
             position_threshold: 0.01,
             rotation_threshold: 0.01,
             retransmission_multiplicator: 2.0,
+            sent_snapshot: Default::default(),
             full_snapshot: Default::default(),
             sent_updates: VecDeque::with_capacity(30),
             sent_queue_length: 30,
@@ -232,10 +243,10 @@ fn update_transform(
         let is_occasional_update = networked.last_change + TRANSFORM_STILL_RESYNC_WAIT < seconds;
 
         // Compare values to the one last sent
-        let last_position = networked.full_snapshot.position;
-        let last_rotation = networked.full_snapshot.rotation;
-        let last_parent = networked.full_snapshot.parent;
-        let last_frozen = networked.full_snapshot.frozen;
+        let last_position = networked.sent_snapshot.position;
+        let last_rotation = networked.sent_snapshot.rotation;
+        let last_parent = networked.sent_snapshot.parent;
+        let last_frozen = networked.sent_snapshot.frozen;
 
         let new_position: Vec3 = transform.translation;
         let update_position = last_position.is_none()
@@ -250,29 +261,37 @@ fn update_transform(
         let new_parent = parent
             .and_then(|p| identity_query.get(p.get()).ok())
             .copied();
-        let update_parent = last_parent.is_none() || new_parent != last_parent.unwrap();
+        let update_parent =
+            last_parent.is_none() || is_occasional_update || new_parent != last_parent.unwrap();
 
         let new_frozen = body.map(|b| *b == RigidBody::Fixed).unwrap_or_default();
-        let update_frozen = last_frozen.is_none() || last_frozen.unwrap() != new_frozen;
+        let update_frozen =
+            last_frozen.is_none() || is_occasional_update || last_frozen.unwrap() != new_frozen;
 
         // Exit early if transform did not significantly change
         if !update_position && !update_rotation && !update_parent && !update_frozen {
             continue;
         }
 
-        // Update the full snapshot if we're going to send the information
+        // Update the sent snapshot if we're going to send the information
         if update_position {
-            networked.full_snapshot.position = Some(new_position);
+            networked.sent_snapshot.position = Some(new_position);
         }
         if update_rotation {
-            networked.full_snapshot.rotation = Some(new_rotation);
+            networked.sent_snapshot.rotation = Some(new_rotation);
         }
         if update_parent {
-            networked.full_snapshot.parent = Some(new_parent);
+            networked.sent_snapshot.parent = Some(new_parent);
         }
         if update_frozen {
-            networked.full_snapshot.frozen = Some(new_frozen);
+            networked.sent_snapshot.frozen = Some(new_frozen);
         }
+
+        // Update the full snapshot with everything
+        networked.full_snapshot.position = Some(new_position);
+        networked.full_snapshot.rotation = Some(new_rotation);
+        networked.full_snapshot.parent = Some(new_parent);
+        networked.full_snapshot.frozen = Some(new_frozen);
 
         // Construct the update message
         let update = TransformUpdate {
@@ -380,12 +399,16 @@ fn handle_newly_spawned(
                 Ok(e) => e,
                 Err(_) => continue,
             };
-            let last_update = match transform.sent_updates.back() {
+            let mut last_update = match transform.sent_updates.back() {
                 Some(u) => u.clone(),
                 None => continue,
             };
 
-            let serialized = serialize_once(&TransformMessage::Update(last_update.clone()));
+            // Include all information in update, the client has no data yet
+            let full = transform.full_snapshot;
+            last_update.apply_snapshot(&full);
+
+            let serialized = serialize_once(&TransformMessage::Update(last_update));
             server.send_message(connection.0, Channel::Transforms.id(), serialized);
         }
     }

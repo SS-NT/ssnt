@@ -1,11 +1,7 @@
 use bevy::{
     asset::AssetPathId,
     ecs::query::QuerySingleError,
-    prelude::{
-        debug, error, info, warn, App, AssetServer, Assets, Commands, Component, CoreStage,
-        DespawnRecursiveExt, Entity, EventReader, EventWriter, IntoSystemDescriptor, Parent,
-        Plugin, Query, RemovedComponents, Res, ResMut, Resource, SystemLabel, SystemSet, With,
-    },
+    prelude::*,
     scene::DynamicScene,
     utils::{HashMap, HashSet, Uuid},
 };
@@ -361,8 +357,16 @@ fn receive_control_updates(
     mut events: EventReader<MessageEvent<ControlUpdate>>,
     query: Query<Entity, With<ClientControlled>>,
     ids: Res<NetworkIdentities>,
+    mut buffered_controlled: Local<Option<NetworkIdentity>>,
     mut commands: Commands,
 ) {
+    if let Some(network_id) = buffered_controlled.as_ref() {
+        if let Some(new_entity) = ids.get_entity(*network_id) {
+            commands.entity(new_entity).insert(ClientControlled);
+            *buffered_controlled = None;
+        }
+    }
+
     for event in events.iter() {
         info!(
             "Client control updating to {:?}",
@@ -384,14 +388,10 @@ fn receive_control_updates(
 
         let new_id = event.message.controlled_entity;
         if let Some(id) = new_id {
-            // TODO: Somehow buffer until network identity is known?
             if let Some(new_entity) = ids.get_entity(id) {
                 commands.entity(new_entity).insert(ClientControlled);
             } else {
-                error!(
-                    "Received client control update for non-existing identity {:?}",
-                    id
-                );
+                *buffered_controlled = Some(id);
             }
         }
     }

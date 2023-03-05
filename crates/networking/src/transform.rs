@@ -18,48 +18,112 @@ use serde::{Deserialize, Serialize};
 use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
     messaging::{deserialize, serialize_once, Channel},
-    spawning::{ClientControlled, ServerEntityEvent, SpawningSystems},
+    spawning::{ClientControlled, SpawningSystems},
     time::{ClientNetworkTime, ServerNetworkTime, TimeSystem},
     visibility::NetworkVisibilities,
     ConnectionId, NetworkManager,
 };
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) struct Acknowledgment {
-    identity: NetworkIdentity,
-    sequence_number: u32,
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
+struct SequenceNumber(u32);
+
+impl SequenceNumber {
+    const fn from_tick(tick: u32) -> Self {
+        Self(tick)
+    }
+
+    const fn as_tick(&self) -> f32 {
+        self.0 as f32
+    }
+
+    fn between(from: Self, to: Self, tick: f32) -> f32 {
+        let distance = to.0 - from.0;
+        let t = (tick - from.as_tick()) / distance as f32;
+        debug_assert!((0.0..=1.0).contains(&t));
+        t
+    }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) struct TransformUpdate {
-    identity: NetworkIdentity,
-    /// The server tick this update was created
-    sequence_number: u32,
-    // TODO: Add delta compression
-    position: Option<Vec3>,
-    rotation: Option<Quat>,
-    linear_velocity: Option<Vec3>,
-    angular_velocity: Option<Vec3>,
-    parent: Option<Option<NetworkIdentity>>,
+/// The full state of a transform
+#[derive(Clone, Copy)]
+struct TransformSnapshot {
+    sequence_number: SequenceNumber,
+    position: Vec3,
+    rotation: Quat,
+    parent: Option<NetworkIdentity>,
     disabled: bool,
+    physics: Option<PhysicsSnapshot>,
 }
 
-impl TransformUpdate {
-    /// Interpolates between two snapshots at the given tick
-    fn interpolate(&self, other: &TransformUpdate, tick: f32) -> Self {
-        assert_eq!(self.identity, other.identity);
+#[derive(Clone, Copy, Default)]
+struct PhysicsSnapshot {
+    linear_velocity: Vec3,
+    angular_velocity: Vec3,
+}
 
+impl From<Velocity> for PhysicsSnapshot {
+    fn from(value: Velocity) -> Self {
+        Self {
+            linear_velocity: value.linvel,
+            angular_velocity: value.angvel,
+        }
+    }
+}
+
+impl TransformSnapshot {
+    fn from_full(update: TransformUpdateData) -> Option<Self> {
+        Some(Self {
+            sequence_number: update.sequence_number,
+            position: update.position?,
+            rotation: update.rotation?,
+            parent: update.parent?,
+            disabled: update.disabled,
+            physics: update.linear_velocity.zip(update.angular_velocity).map(
+                |(linear_velocity, angular_velocity)| PhysicsSnapshot {
+                    linear_velocity,
+                    angular_velocity,
+                },
+            ),
+        })
+    }
+
+    fn apply(&mut self, update: TransformUpdateData) {
+        debug_assert_eq!(Some(self.sequence_number), update.delta_from);
+
+        if let Some(position) = update.position {
+            self.position = position;
+        }
+        if let Some(rotation) = update.rotation {
+            self.rotation = rotation;
+        }
+        if let Some(linear_velocity) = update.linear_velocity {
+            self.physics
+                .get_or_insert_with(Default::default)
+                .linear_velocity = linear_velocity;
+        }
+        if let Some(angular_velocity) = update.angular_velocity {
+            self.physics
+                .get_or_insert_with(Default::default)
+                .angular_velocity = angular_velocity;
+        }
+        if let Some(parent) = update.parent {
+            self.parent = parent;
+        }
+        self.disabled = update.disabled;
+
+        self.sequence_number = update.sequence_number;
+    }
+
+    fn interpolate(from: &Self, to: &Self, tick: f32) -> Self {
         // Swap direction if necessary
-        let mut from = self;
-        let mut to = other;
+        let mut from = from;
+        let mut to = to;
         if from.sequence_number > to.sequence_number {
             std::mem::swap(&mut from, &mut to);
         }
 
         // Calculate at which time point we are between the updates
-        let distance = to.sequence_number - from.sequence_number;
-        let mut t = (tick - from.sequence_number as f32) / distance as f32;
-        debug_assert!((0.0..=1.0).contains(&t));
+        let mut t = SequenceNumber::between(from.sequence_number, to.sequence_number, tick);
 
         // Do not interpolate if the parent changed
         if let Some(new_parent) = to.parent {
@@ -68,56 +132,135 @@ impl TransformUpdate {
             }
         }
 
-        let position = Self::interpolate_component(from.position, to.position, t, Vec3::lerp);
-        let rotation = Self::interpolate_component(from.rotation, to.rotation, t, Quat::lerp);
-        let linear_velocity =
-            Self::interpolate_component(from.linear_velocity, to.linear_velocity, t, Vec3::lerp);
-        let angular_velocity =
-            Self::interpolate_component(from.angular_velocity, to.angular_velocity, t, Vec3::lerp);
-        let parent =
-            Self::interpolate_component(
-                from.parent,
-                to.parent,
-                t,
-                |from, to, t| if t > 0.5 { to } else { from },
-            );
+        let position = from.position.lerp(to.position, t);
+        let rotation = from.rotation.lerp(to.rotation, t);
+        let linear_velocity = interpolate_component(
+            from.physics.map(|p| p.linear_velocity),
+            to.physics.map(|p| p.linear_velocity),
+            t,
+            Vec3::lerp,
+        );
+        let angular_velocity = interpolate_component(
+            from.physics.map(|p| p.angular_velocity),
+            to.physics.map(|p| p.angular_velocity),
+            t,
+            Vec3::lerp,
+        );
+        let parent = if t > 0.5 { to.parent } else { from.parent };
+        let frozen = if t > 0.5 { to.disabled } else { from.disabled };
+        let physics =
+            linear_velocity
+                .zip(angular_velocity)
+                .map(|(linear_velocity, angular_velocity)| PhysicsSnapshot {
+                    angular_velocity,
+                    linear_velocity,
+                });
 
-        TransformUpdate {
-            identity: from.identity,
-            sequence_number: tick as u32,
+        Self {
+            sequence_number: SequenceNumber::from_tick(tick as u32),
             position,
             rotation,
-            linear_velocity,
-            angular_velocity,
             parent,
-            disabled: if t > 0.5 { to.disabled } else { from.disabled },
+            disabled: frozen,
+            physics,
         }
     }
+}
 
-    /// Interpolates two values
-    fn interpolate_component<T>(
-        from: Option<T>,
-        to: Option<T>,
-        t: f32,
-        lerp: impl Fn(T, T, f32) -> T,
-    ) -> Option<T> {
-        match from {
-            Some(from) => {
-                if let Some(to) = to {
-                    Some(lerp(from, to, t))
-                } else {
-                    Some(from)
-                }
+/// Interpolates two values
+fn interpolate_component<T>(
+    from: Option<T>,
+    to: Option<T>,
+    t: f32,
+    lerp: impl Fn(T, T, f32) -> T,
+) -> Option<T> {
+    match from {
+        Some(from) => {
+            if let Some(to) = to {
+                Some(lerp(from, to, t))
+            } else {
+                Some(from)
             }
-            None => to,
+        }
+        None => to,
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct Acknowledgment {
+    identity: NetworkIdentity,
+    sequence_number: SequenceNumber,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct TransformUpdate {
+    identity: NetworkIdentity,
+    data: TransformUpdateData,
+}
+
+// TODO: Add delta compression
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+struct TransformUpdateData {
+    sequence_number: SequenceNumber,
+    /// The sequence number of the snapshot this update is based on
+    delta_from: Option<SequenceNumber>,
+    position: Option<Vec3>,
+    rotation: Option<Quat>,
+    linear_velocity: Option<Vec3>,
+    angular_velocity: Option<Vec3>,
+    parent: Option<Option<NetworkIdentity>>,
+    disabled: bool,
+}
+
+impl TransformUpdateData {
+    fn full(snapshot: TransformSnapshot) -> Self {
+        Self {
+            sequence_number: snapshot.sequence_number,
+            delta_from: None,
+            position: Some(snapshot.position),
+            rotation: Some(snapshot.rotation),
+            linear_velocity: snapshot.physics.map(|p| p.linear_velocity),
+            angular_velocity: snapshot.physics.map(|p| p.angular_velocity),
+            parent: Some(snapshot.parent),
+            disabled: snapshot.disabled,
         }
     }
 
-    fn apply_snapshot(&mut self, snapshot: &TransformSnapshot) {
-        self.position = snapshot.position;
-        self.rotation = snapshot.rotation;
-        self.parent = snapshot.parent;
-        self.disabled = snapshot.frozen.unwrap_or_default();
+    fn diff(
+        base: TransformSnapshot,
+        new: TransformSnapshot,
+        thresholds: Thresholds,
+    ) -> Option<Self> {
+        let update_position = !new
+            .position
+            .abs_diff_eq(base.position, thresholds.position_threshold);
+
+        let update_rotation = !new
+            .rotation
+            .abs_diff_eq(base.rotation, thresholds.rotation_threshold);
+
+        let update_parent = new.parent != base.parent;
+
+        let update_frozen = new.disabled != base.disabled;
+
+        if !update_position && !update_rotation && !update_parent && !update_frozen {
+            return None;
+        }
+
+        Some(Self {
+            sequence_number: new.sequence_number,
+            delta_from: Some(base.sequence_number),
+            position: update_position.then_some(new.position),
+            rotation: update_rotation.then_some(new.rotation),
+            linear_velocity: new
+                .physics
+                .and_then(|p| update_position.then_some(p.linear_velocity)),
+            angular_velocity: new
+                .physics
+                .and_then(|p| update_rotation.then_some(p.angular_velocity)),
+            parent: update_parent.then_some(new.parent),
+            disabled: new.disabled,
+        })
     }
 }
 
@@ -130,20 +273,31 @@ pub(crate) enum TransformMessage {
 /// Stores per-client data regarding [`NetworkTransform`] synchronisation
 #[derive(Default)]
 struct ClientData {
-    /// The last time a network update was sent
-    last_sent: f32,
     /// The last time an ack was received
     last_ack: f32,
-    /// The sequence number of the last ack
-    last_sequence: u32,
+    // /// The sequence number we last sent this client
+    // sent_sequence: Option<SequenceNumber>,
+    /// The last sequence that was confirmed to have arrived
+    acked_sequence: Option<SequenceNumber>,
+    // /// The complete state the object was in at the last ack
+    // acked_state: Option<TransformSnapshot>,
 }
 
-#[derive(Default, Clone, Copy)]
-struct TransformSnapshot {
-    position: Option<Vec3>,
-    rotation: Option<Quat>,
-    parent: Option<Option<NetworkIdentity>>,
-    frozen: Option<bool>,
+#[derive(Reflect, Clone, Copy)]
+pub struct Thresholds {
+    /// How much the position needs to move to be considered changed
+    pub position_threshold: f32,
+    /// How much the rotation needs to change to be considered changed
+    pub rotation_threshold: f32,
+}
+
+impl Default for Thresholds {
+    fn default() -> Self {
+        Self {
+            position_threshold: 0.01,
+            rotation_threshold: 0.01,
+        }
+    }
 }
 
 /// Sends transform changes to clients
@@ -152,27 +306,17 @@ struct TransformSnapshot {
 pub struct NetworkTransform {
     /// How many times this transform is sent per second
     pub update_rate: f32,
-    /// How much the position needs to move to be considered changed
-    pub position_threshold: f32,
-    /// How much the rotation needs to change to be considered changed
-    pub rotation_threshold: f32,
+    pub thresholds: Thresholds,
     /// How long to wait for a position ack before retransmitting.
     /// This is a multiplicator, 1 = 1 x RTT.
     /// Retransmission is only necessary when the update rate is below RTT or the transform has stopped moving.
     pub retransmission_multiplicator: f32,
-    /// All changed information when it was last updated
+    /// Every recorded state of the transform
     #[reflect(ignore)]
-    sent_snapshot: TransformSnapshot,
-    /// All information when it was last updated
-    #[reflect(ignore)]
-    full_snapshot: TransformSnapshot,
-    #[reflect(ignore)]
-    sent_updates: VecDeque<TransformUpdate>,
-    sent_queue_length: usize,
+    snapshots: VecDeque<TransformSnapshot>,
+    snapshots_to_keep: usize,
     #[reflect(ignore)]
     client_data: HashMap<ConnectionId, ClientData>,
-    /// The sequence number that was last created
-    last_sequence: u32,
     last_update: f32,
     last_change: f32,
 }
@@ -181,15 +325,11 @@ impl Default for NetworkTransform {
     fn default() -> Self {
         Self {
             update_rate: 30.0,
-            position_threshold: 0.01,
-            rotation_threshold: 0.01,
+            thresholds: Default::default(),
             retransmission_multiplicator: 2.0,
-            sent_snapshot: Default::default(),
-            full_snapshot: Default::default(),
-            sent_updates: VecDeque::with_capacity(30),
-            sent_queue_length: 30,
+            snapshots: VecDeque::with_capacity(30),
+            snapshots_to_keep: 30,
             client_data: Default::default(),
-            last_sequence: Default::default(),
             last_update: Default::default(),
             last_change: Default::default(),
         }
@@ -197,19 +337,12 @@ impl Default for NetworkTransform {
 }
 
 impl NetworkTransform {
-    fn add_update(&mut self, update: TransformUpdate) {
-        if self.sent_updates.len() >= self.sent_queue_length {
-            self.sent_updates.pop_front();
+    fn add_snapshot(&mut self, snapshot: TransformSnapshot) {
+        if self.snapshots.len() >= self.snapshots_to_keep {
+            self.snapshots.pop_front();
         }
 
-        self.last_sequence = update.sequence_number;
-        self.sent_updates.push_back(update);
-    }
-
-    // How many updates have been skipped due to the transform not changing
-    fn updates_skipped(&self) -> f32 {
-        let update_diff = self.last_update - self.last_change;
-        update_diff / (1.0 / self.update_rate)
+        self.snapshots.push_back(snapshot);
     }
 }
 
@@ -239,177 +372,61 @@ fn update_transform(
 
         networked.last_update = seconds;
 
-        // Rarely send full update to recover from sync failures
-        let is_occasional_update = networked.last_change + TRANSFORM_STILL_RESYNC_WAIT < seconds;
+        let snapshot = TransformSnapshot {
+            sequence_number: SequenceNumber::from_tick(network_time.current_tick()),
+            position: transform.translation,
+            rotation: transform.rotation,
+            parent: parent
+                .and_then(|p| identity_query.get(p.get()).ok())
+                .copied(),
+            disabled: body.map(|b| *b == RigidBody::Fixed).unwrap_or_default(),
+            physics: velocity.map(|v| (*v).into()),
+        };
 
-        // Compare values to the one last sent
-        let last_position = networked.sent_snapshot.position;
-        let last_rotation = networked.sent_snapshot.rotation;
-        let last_parent = networked.sent_snapshot.parent;
-        let last_frozen = networked.sent_snapshot.frozen;
+        let last_snapshot = networked.snapshots.back();
+        // TODO: We shouldn't construct an entire diff just to check if it changed
+        if last_snapshot.is_none()
+            || TransformUpdateData::diff(*last_snapshot.unwrap(), snapshot, networked.thresholds)
+                .is_some()
+        {
+            networked.last_change = seconds;
+        }
 
-        let new_position: Vec3 = transform.translation;
-        let update_position = last_position.is_none()
-            || is_occasional_update
-            || !new_position.abs_diff_eq(last_position.unwrap(), networked.position_threshold);
+        networked.add_snapshot(snapshot);
 
-        let new_rotation: Quat = transform.rotation;
-        let update_rotation = last_rotation.is_none()
-            || is_occasional_update
-            || !new_rotation.abs_diff_eq(last_rotation.unwrap(), networked.rotation_threshold);
+        // Rarely send full update to recover from physics desync
+        // let is_occasional_update = body.is_some() && networked.last_change + TRANSFORM_STILL_RESYNC_WAIT < seconds;
 
-        let new_parent = parent
-            .and_then(|p| identity_query.get(p.get()).ok())
-            .copied();
-        let update_parent =
-            last_parent.is_none() || is_occasional_update || new_parent != last_parent.unwrap();
-
-        let new_frozen = body.map(|b| *b == RigidBody::Fixed).unwrap_or_default();
-        let update_frozen =
-            last_frozen.is_none() || is_occasional_update || last_frozen.unwrap() != new_frozen;
-
-        // Exit early if transform did not significantly change
-        if !update_position && !update_rotation && !update_parent && !update_frozen {
+        let Some(visibility) = visibilities.visibility.get(identity) else {
             continue;
-        }
-
-        // Update the sent snapshot if we're going to send the information
-        if update_position {
-            networked.sent_snapshot.position = Some(new_position);
-        }
-        if update_rotation {
-            networked.sent_snapshot.rotation = Some(new_rotation);
-        }
-        if update_parent {
-            networked.sent_snapshot.parent = Some(new_parent);
-        }
-        if update_frozen {
-            networked.sent_snapshot.frozen = Some(new_frozen);
-        }
-
-        // Update the full snapshot with everything
-        networked.full_snapshot.position = Some(new_position);
-        networked.full_snapshot.rotation = Some(new_rotation);
-        networked.full_snapshot.parent = Some(new_parent);
-        networked.full_snapshot.frozen = Some(new_frozen);
-
-        // Construct the update message
-        let update = TransformUpdate {
-            identity: *identity,
-            // TODO: Move this into a message at the start of a packet
-            sequence_number: network_time.current_tick(),
-            // TODO: Here we would need to do delta compression for each client, as they may have dropped the last packet
-            position: update_position.then_some(new_position),
-            rotation: update_rotation.then_some(new_rotation),
-            linear_velocity: velocity.map(|v| v.linvel),
-            angular_velocity: velocity.map(|v| v.angvel),
-            parent: update_parent.then_some(new_parent),
-            disabled: new_frozen,
-        };
-        networked.add_update(update.clone());
-
-        // Send to all observers
-        if let Some(visibility) = visibilities.visibility.get(identity) {
-            let message = TransformMessage::Update(update);
-            let serialized = serialize_once(&message);
-            for connection in visibility.observers() {
-                server.send_message(connection.0, Channel::Transforms.id(), serialized.clone());
-            }
-        }
-
-        networked.last_change = seconds;
-    }
-}
-
-/// Retransmits last update for dropped packets and new observers.
-/// This only happens when the transform is not moving, otherwise old updates can be dropped.
-fn handle_retransmission(
-    mut query: Query<(&mut NetworkTransform, &NetworkIdentity)>,
-    time: Res<Time>,
-    visibilities: Res<NetworkVisibilities>,
-    mut server: ResMut<RenetServer>,
-) {
-    let seconds = time.raw_elapsed_seconds();
-    for (mut networked, identity) in query.iter_mut() {
-        let networked: &mut NetworkTransform = &mut networked;
-
-        // We only repeat the last update if the transform has remained the same for two updates
-        if networked.updates_skipped() <= 2.0 {
-            continue;
-        }
-
-        // TODO: Use actual RTT
-        let time_offset = networked.retransmission_multiplicator * 0.1;
-
-        let visibility = match visibilities.visibility.get(identity) {
-            Some(v) => v,
-            None => continue,
-        };
-        let last_update = match networked.sent_updates.back() {
-            Some(u) => u,
-            None => continue,
         };
 
-        let serialized = serialize_once(&TransformMessage::Update(last_update.clone()));
-        // Retransmit for missed acks
-        for (connection, data) in networked.client_data.iter_mut() {
-            if data.last_sequence == networked.last_sequence {
-                continue;
-            }
-
-            if !visibility.has_observer(connection) {
-                // TODO: remove client data after some time
-                continue;
-            }
-
-            if data.last_ack + time_offset > seconds || data.last_sent + time_offset > seconds {
-                continue;
-            }
-
-            server.send_message(connection.0, Channel::Transforms.id(), serialized.clone());
-            data.last_sent = seconds;
-        }
-
-        // Transmit for new observers
+        // TODO: We could group clients by their acked sequence
         for connection in visibility.observers() {
-            let entry = networked.client_data.entry(*connection);
-            if let Entry::Vacant(entry) = entry {
-                entry.insert(ClientData {
-                    last_sent: seconds,
-                    ..Default::default()
-                });
-                server.send_message(connection.0, Channel::Transforms.id(), serialized.clone());
-            }
-        }
-    }
-}
-
-const TRANSFORM_STILL_RESYNC_WAIT: f32 = 5.0;
-
-/// Sends the newest position to clients that just had the object enter their visibility/was spawned.
-/// If we didn't do this, networked objects would appear at the world origin for a few milliseconds.
-fn handle_newly_spawned(
-    mut events: EventReader<ServerEntityEvent>,
-    query: Query<&NetworkTransform>,
-    mut server: ResMut<RenetServer>,
-) {
-    for event in events.iter() {
-        if let ServerEntityEvent::Spawned((entity, connection)) = event {
-            let transform = match query.get(*entity) {
-                Ok(e) => e,
-                Err(_) => continue,
+            let client_data = networked.client_data.entry(*connection).or_default();
+            // Get the snapshot the client last acknowledged
+            let base_snapshot = client_data.acked_sequence.and_then(|sequence| {
+                networked
+                    .snapshots
+                    .iter()
+                    .rev()
+                    .find(|s| s.sequence_number == sequence)
+                    .copied()
+            });
+            // Either create a diff or send a full copy
+            let data = base_snapshot
+                .map(|base| TransformUpdateData::diff(base, snapshot, networked.thresholds))
+                .unwrap_or_else(|| Some(TransformUpdateData::full(snapshot)));
+            let Some(data) = data else {
+                // Transform did not significantly change
+                continue;
             };
-            let mut last_update = match transform.sent_updates.back() {
-                Some(u) => u.clone(),
-                None => continue,
-            };
-
-            // Include all information in update, the client has no data yet
-            let full = transform.full_snapshot;
-            last_update.apply_snapshot(&full);
-
-            let serialized = serialize_once(&TransformMessage::Update(last_update));
-            server.send_message(connection.0, Channel::Transforms.id(), serialized);
+            let message = TransformMessage::Update(TransformUpdate {
+                identity: *identity,
+                data,
+            });
+            let serialized = serialize_once(&message);
+            server.send_message(connection.0, Channel::Transforms.id(), serialized.clone());
         }
     }
 }
@@ -456,8 +473,10 @@ fn handle_acks(
                         .client_data
                         .entry(ConnectionId(client_id))
                         .or_default();
-                    if data.last_sequence < ack.sequence_number {
-                        data.last_sequence = ack.sequence_number;
+                    if data.acked_sequence.is_none()
+                        || data.acked_sequence.unwrap() < ack.sequence_number
+                    {
+                        data.acked_sequence = Some(ack.sequence_number);
                         data.last_ack = seconds;
                     }
                 }
@@ -469,11 +488,14 @@ fn handle_acks(
     }
 }
 
+/// How many transform snapshots a client keeps
+const CLIENT_SNAPSHOT_BUFFER_SIZE: usize = 30;
+
 /// Receives transform updates from the network
 #[derive(Component, Default)]
 pub struct NetworkedTransform {
-    /// A series of transform updates
-    buffered_updates: VecDeque<TransformUpdate>,
+    /// A series of transform snapshots
+    snapshots: VecDeque<TransformSnapshot>,
     /// How much to offset this transform from the accurate physics simulation.
     /// We reduce this value over time to smooth physics corrections.
     // TODO: Actually use this
@@ -484,27 +506,37 @@ pub struct NetworkedTransform {
     /// Is `false` when newly created and set after the first update is applied.
     ever_applied: bool,
     disabled: bool,
+    /// The latest snapshot the server based it's updates on.
+    /// This should never decrease.
+    latest_base_sequence: Option<SequenceNumber>,
 }
 
 impl NetworkedTransform {
-    /// Gets the relevant transform updates for the given tick
-    fn relevant_updates(
+    fn add_snapshot(&mut self, snapshot: TransformSnapshot) {
+        if self.snapshots.len() >= CLIENT_SNAPSHOT_BUFFER_SIZE {
+            self.snapshots.pop_front();
+        }
+        self.snapshots.push_back(snapshot);
+    }
+
+    /// Gets the relevant transform snapshots for the given tick
+    fn relevant_snapshots(
         &mut self,
         tick: f32,
-    ) -> Option<(&TransformUpdate, Option<&TransformUpdate>)> {
-        // Find the next update to be interpolated to
+    ) -> Option<(&TransformSnapshot, Option<&TransformSnapshot>)> {
+        // Find the next snapshot to be interpolated to
         let next = self
-            .buffered_updates
+            .snapshots
             .iter()
             .enumerate()
-            .find(|(_, u)| u.sequence_number as f32 >= tick)
+            .find(|(_, u)| u.sequence_number.as_tick() >= tick)
             .map(|(i, _)| i);
         let next = match next {
             Some(n) => n,
             None => {
                 // Try to provide any update if never updated
                 if !self.ever_applied {
-                    return self.buffered_updates.front().map(|u| (u, None));
+                    return self.snapshots.back().map(|u| (u, None));
                 }
 
                 // No relevant update
@@ -513,18 +545,11 @@ impl NetworkedTransform {
         };
 
         let previous = if next > 0 { Some(next - 1) } else { None };
-        // Remove updates before previous, we will never need them again
-        if let Some(p) = previous {
-            self.buffered_updates.drain(..p);
-        }
 
-        Some(match previous {
-            Some(_) => (
-                self.buffered_updates.get(1).unwrap(),
-                self.buffered_updates.get(0),
-            ),
-            None => (self.buffered_updates.get(0).unwrap(), None),
-        })
+        Some((
+            self.snapshots.get(next).unwrap(),
+            previous.map(|p| self.snapshots.get(p).unwrap()),
+        ))
     }
 }
 
@@ -575,7 +600,7 @@ fn handle_transform_messages(
             TransformMessage::Update(update) => {
                 acknowledgments.push(Acknowledgment {
                     identity: update.identity,
-                    sequence_number: update.sequence_number,
+                    sequence_number: update.data.sequence_number,
                 });
                 buffer.add(update);
             }
@@ -608,7 +633,7 @@ fn apply_buffered_updates(
             None => return true,
         };
 
-        let (networked, client_controlled) = match query.get_mut(entity) {
+        let (mut networked, client_controlled) = match query.get_mut(entity) {
             Ok(n) => n,
             Err(_) => {
                 return true;
@@ -616,17 +641,44 @@ fn apply_buffered_updates(
         };
 
         // TODO: Remove `if` once movement is server authoritative
-        if client_controlled.is_none() {
-            if let Some(mut networked) = networked {
-                networked.buffered_updates.push_back(update.clone());
+        if client_controlled.is_some() {
+            return false;
+        }
+
+        let snapshot = if let Some(base_sequence) = update.data.delta_from {
+            // Construct an updated snapshot from the base snapshot and the update
+            if let Some(networked) = networked.as_mut() {
+                if let Ok(index) = networked.snapshots.binary_search_by_key(&base_sequence, |snapshot| snapshot.sequence_number) {
+                    networked.latest_base_sequence = Some(base_sequence);
+                    let mut base_snapshot = networked.snapshots.get(index).cloned().unwrap();
+                    base_snapshot.apply(update.data);
+                    base_snapshot
+                } else {
+                    warn!("Received delta-compressed transform update and we don't have the original snapshot");
+                    return false;
+                }
             } else {
-                // Add networked transform component if not present
-                let mut networked = NetworkedTransform::default();
-                networked.buffered_updates.push_back(update.clone());
-                commands
-                    .entity(entity)
-                    .insert((SpatialBundle::default(), networked));
+                warn!("Received delta-compressed transform update and client transform doesn't exist yet");
+                return false;
             }
+        } else {
+            // Construct a snapshot from the full update
+            let Some(snapshot) = TransformSnapshot::from_full(update.data) else {
+                warn!("Received full transform with missing fields, this shouldn't happen");
+                return false;
+            };
+            snapshot
+        };
+
+        if let Some(mut networked) = networked {
+            networked.add_snapshot(snapshot);
+        } else {
+            // Add networked transform component if not present
+            let mut networked = NetworkedTransform::default();
+            networked.add_snapshot(snapshot);
+            commands
+                .entity(entity)
+                .insert((SpatialBundle::default(), networked));
         }
 
         false
@@ -638,7 +690,7 @@ fn apply_buffered_updates(
             Entry::Occupied(mut o) => {
                 let existing = o.get();
                 // Replace if same identity and newer sequence number
-                if existing.sequence_number < update.sequence_number {
+                if existing.data.sequence_number < update.data.sequence_number {
                     o.insert(update);
                 }
             }
@@ -652,31 +704,28 @@ fn apply_buffered_updates(
         .extend(unique_updates.drain().map(|(_, u)| u));
 }
 
-/// Applies transform updates to entities without physics simulation
+/// Applies transform snapshots to entities without physics simulation
 fn sync_networked_transform(
     mut query: Query<(&mut NetworkedTransform, &mut Transform), Without<RigidBody>>,
     network_time: Res<ClientNetworkTime>,
 ) {
     let current_tick = network_time.interpolated_tick();
     for (mut networked, mut transform) in query.iter_mut() {
-        let (next_update, previous_update) = match networked.relevant_updates(current_tick) {
+        let (next_snapshot, previous_snapshot) = match networked.relevant_snapshots(current_tick) {
             Some(u) => u,
             None => continue,
         };
 
-        // Interpolate between updates if present
-        let update = match previous_update {
-            Some(previous) => next_update.interpolate(previous, current_tick),
-            None => next_update.clone(),
+        // Interpolate between snapshots if present
+        let snapshot = match previous_snapshot {
+            Some(previous_snapshot) => {
+                TransformSnapshot::interpolate(previous_snapshot, next_snapshot, current_tick)
+            }
+            None => *next_snapshot,
         };
 
-        if let Some(position) = update.position {
-            transform.translation = position;
-        }
-
-        if let Some(rotation) = update.rotation {
-            transform.rotation = rotation;
-        }
+        transform.translation = snapshot.position;
+        transform.rotation = snapshot.rotation;
     }
 }
 
@@ -687,15 +736,16 @@ fn sync_networked_transform_physics(
         &mut NetworkedTransform,
         &mut Transform,
         Option<&mut Velocity>,
+        Option<&Parent>,
     )>,
     identities: Res<NetworkIdentities>,
     network_time: Res<ClientNetworkTime>,
     mut commands: Commands,
 ) {
     let current_tick = network_time.interpolated_tick();
-    for (entity, mut networked_transform, mut transform, velocity) in query.iter_mut() {
-        let (next_update, previous_update) =
-            match networked_transform.relevant_updates(current_tick) {
+    for (entity, mut networked_transform, mut transform, velocity, parent) in query.iter_mut() {
+        let (next_snapshot, previous_snapshot) =
+            match networked_transform.relevant_snapshots(current_tick) {
                 Some(u) => u,
                 None => {
                     networked_transform.had_next = false;
@@ -703,22 +753,19 @@ fn sync_networked_transform_physics(
                 }
             };
 
-        // Interpolate between updates if present
-        let update = match previous_update {
-            Some(previous) => previous.interpolate(next_update, current_tick),
-            None => next_update.clone(),
+        // Interpolate between snapshots if present
+        let snapshot = match previous_snapshot {
+            Some(previous_snapshot) => {
+                TransformSnapshot::interpolate(previous_snapshot, next_snapshot, current_tick)
+            }
+            None => *next_snapshot,
         };
 
-        if let Some(position) = update.position {
-            transform.translation = position;
-        }
+        transform.translation = snapshot.position;
+        transform.rotation = snapshot.rotation;
 
-        if let Some(rotation) = update.rotation {
-            transform.rotation = rotation;
-        }
-
-        if let Some(parent) = update.parent {
-            if let Some(parent) = parent {
+        if snapshot.parent != parent.and_then(|p| identities.get_identity(p.get())) {
+            if let Some(parent) = snapshot.parent {
                 if let Some(parent_entity) = identities.get_entity(parent) {
                     commands.entity(entity).set_parent(parent_entity);
                 } else {
@@ -729,26 +776,29 @@ fn sync_networked_transform_physics(
             }
         }
 
-        let disabled = update.disabled;
+        let disabled = snapshot.disabled;
         if disabled != networked_transform.disabled {
             commands.entity(entity).set_physics(!disabled);
-            networked_transform.disabled = update.disabled;
+            networked_transform.disabled = snapshot.disabled;
         }
 
         match velocity {
             Some(mut v) => {
-                if let Some(linear_velocity) = update.linear_velocity {
-                    v.linvel = linear_velocity;
-                }
-
-                if let Some(angular_velocity) = update.angular_velocity {
-                    v.angvel = angular_velocity;
+                if let Some(physics) = snapshot.physics {
+                    v.linvel = physics.linear_velocity;
+                    v.angvel = physics.angular_velocity;
                 }
             }
             None => {
                 let velocity = Velocity {
-                    linvel: update.linear_velocity.unwrap_or_default(),
-                    angvel: update.angular_velocity.unwrap_or_default(),
+                    linvel: snapshot
+                        .physics
+                        .map(|p| p.linear_velocity)
+                        .unwrap_or_default(),
+                    angvel: snapshot
+                        .physics
+                        .map(|p| p.angular_velocity)
+                        .unwrap_or_default(),
                 };
                 commands.entity(entity).insert(velocity);
             }
@@ -785,9 +835,8 @@ impl Plugin for TransformPlugin {
                 SystemSet::new()
                     .after(SpawningSystems::Spawn)
                     .with_system(update_transform.after(TimeSystem::Tick))
-                    .with_system(handle_retransmission)
-                    .with_system(handle_acks)
-                    .with_system(handle_newly_spawned),
+                    // .with_system(handle_retransmission)
+                    .with_system(handle_acks),
             );
         } else {
             app.init_resource::<BufferedTransformUpdates>()

@@ -619,10 +619,7 @@ fn handle_transform_messages(
 /// Apply the buffered transform messages to the relevant entities
 fn apply_buffered_updates(
     mut buffer: ResMut<BufferedTransformUpdates>,
-    mut query: Query<
-        (Option<&mut NetworkedTransform>, Option<&ClientControlled>),
-        With<NetworkIdentity>,
-    >,
+    mut query: Query<Option<&mut NetworkedTransform>, With<NetworkIdentity>>,
     identities: Res<NetworkIdentities>,
     mut unique_updates: Local<HashMap<NetworkIdentity, TransformUpdate>>,
     mut commands: Commands,
@@ -633,17 +630,12 @@ fn apply_buffered_updates(
             None => return true,
         };
 
-        let (mut networked, client_controlled) = match query.get_mut(entity) {
+        let mut networked  = match query.get_mut(entity) {
             Ok(n) => n,
             Err(_) => {
                 return true;
             }
         };
-
-        // TODO: Remove `if` once movement is server authoritative
-        if client_controlled.is_some() {
-            return false;
-        }
 
         let snapshot = if let Some(base_sequence) = update.data.delta_from {
             // Construct an updated snapshot from the base snapshot and the update
@@ -706,7 +698,10 @@ fn apply_buffered_updates(
 
 /// Applies transform snapshots to entities without physics simulation
 fn sync_networked_transform(
-    mut query: Query<(&mut NetworkedTransform, &mut Transform), Without<RigidBody>>,
+    mut query: Query<
+        (&mut NetworkedTransform, &mut Transform),
+        (Without<RigidBody>, Without<ClientControlled>),
+    >,
     network_time: Res<ClientNetworkTime>,
 ) {
     let current_tick = network_time.interpolated_tick();
@@ -737,13 +732,16 @@ fn sync_networked_transform_physics(
         &mut Transform,
         Option<&mut Velocity>,
         Option<&Parent>,
+        Option<&ClientControlled>,
     )>,
     identities: Res<NetworkIdentities>,
     network_time: Res<ClientNetworkTime>,
     mut commands: Commands,
 ) {
     let current_tick = network_time.interpolated_tick();
-    for (entity, mut networked_transform, mut transform, velocity, parent) in query.iter_mut() {
+    for (entity, mut networked_transform, mut transform, velocity, parent, client_controlled) in
+        query.iter_mut()
+    {
         let (next_snapshot, previous_snapshot) =
             match networked_transform.relevant_snapshots(current_tick) {
                 Some(u) => u,
@@ -761,8 +759,10 @@ fn sync_networked_transform_physics(
             None => *next_snapshot,
         };
 
-        transform.translation = snapshot.position;
-        transform.rotation = snapshot.rotation;
+        if client_controlled.is_none() {
+            transform.translation = snapshot.position;
+            transform.rotation = snapshot.rotation;
+        }
 
         if snapshot.parent != parent.and_then(|p| identities.get_identity(p.get())) {
             if let Some(parent) = snapshot.parent {
@@ -782,25 +782,27 @@ fn sync_networked_transform_physics(
             networked_transform.disabled = snapshot.disabled;
         }
 
-        match velocity {
-            Some(mut v) => {
-                if let Some(physics) = snapshot.physics {
-                    v.linvel = physics.linear_velocity;
-                    v.angvel = physics.angular_velocity;
+        if client_controlled.is_none() {
+            match velocity {
+                Some(mut v) => {
+                    if let Some(physics) = snapshot.physics {
+                        v.linvel = physics.linear_velocity;
+                        v.angvel = physics.angular_velocity;
+                    }
                 }
-            }
-            None => {
-                let velocity = Velocity {
-                    linvel: snapshot
-                        .physics
-                        .map(|p| p.linear_velocity)
-                        .unwrap_or_default(),
-                    angvel: snapshot
-                        .physics
-                        .map(|p| p.angular_velocity)
-                        .unwrap_or_default(),
-                };
-                commands.entity(entity).insert(velocity);
+                None => {
+                    let velocity = Velocity {
+                        linvel: snapshot
+                            .physics
+                            .map(|p| p.linear_velocity)
+                            .unwrap_or_default(),
+                        angvel: snapshot
+                            .physics
+                            .map(|p| p.angular_velocity)
+                            .unwrap_or_default(),
+                    };
+                    commands.entity(entity).insert(velocity);
+                }
             }
         }
 

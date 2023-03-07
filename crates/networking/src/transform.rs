@@ -7,7 +7,7 @@ use bevy::{
     transform::TransformSystem,
     utils::{hashbrown::hash_map::Entry, HashMap},
 };
-use bevy_rapier3d::prelude::{RigidBody, Velocity};
+use bevy_rapier3d::prelude::{RigidBody, RigidBodyDisabled, Velocity};
 use bevy_renet::{
     renet::{RenetClient, RenetServer},
     run_if_client_connected,
@@ -353,7 +353,7 @@ fn update_transform(
         &NetworkIdentity,
         Option<&Velocity>,
         Option<&Parent>,
-        Option<&RigidBody>,
+        Option<&RigidBodyDisabled>,
     )>,
     identity_query: Query<&NetworkIdentity>,
     time: Res<Time>,
@@ -362,7 +362,7 @@ fn update_transform(
     network_time: Res<ServerNetworkTime>,
 ) {
     let seconds = time.raw_elapsed_seconds();
-    for (mut networked, transform, identity, velocity, parent, body) in query.iter_mut() {
+    for (mut networked, transform, identity, velocity, parent, disabled_body) in query.iter_mut() {
         let networked: &mut NetworkTransform = &mut networked;
 
         // Respect update rate
@@ -379,7 +379,7 @@ fn update_transform(
             parent: parent
                 .and_then(|p| identity_query.get(p.get()).ok())
                 .copied(),
-            disabled: body.map(|b| *b == RigidBody::Fixed).unwrap_or_default(),
+            disabled: disabled_body.is_some(),
             physics: velocity.map(|v| (*v).into()),
         };
 

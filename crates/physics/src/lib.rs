@@ -6,9 +6,9 @@ use bevy::{
     prelude::{App, Plugin},
     reflect::Reflect,
 };
-use bevy_rapier3d::prelude::Real;
+use bevy_rapier3d::prelude::Collider as RapierCollider;
 use bevy_rapier3d::prelude::RigidBody as RapierRigidBody;
-use bevy_rapier3d::prelude::{Collider as RapierCollider, Sensor};
+use bevy_rapier3d::prelude::{ColliderDisabled, Real, RigidBodyDisabled};
 use serde::{Deserialize, Serialize};
 
 pub struct PhysicsPlugin;
@@ -107,10 +107,6 @@ impl<'w, 's, 'a> PhysicsEntityCommands for EntityCommands<'w, 's, 'a> {
 
 #[derive(Component)]
 #[component(storage = "SparseSet")]
-struct OriginalRigidBody(RapierRigidBody);
-
-#[derive(Component)]
-#[component(storage = "SparseSet")]
 struct TemporarilySensor;
 
 struct SetPhysicsCommand {
@@ -123,15 +119,10 @@ impl Command for SetPhysicsCommand {
         let mut root = world.entity_mut(self.entity);
 
         // Freeze or unfreeze rigidbodies
-        if let Some(rigidbody) = root.get::<RapierRigidBody>().copied() {
-            if self.enabled {
-                if rigidbody == RapierRigidBody::Fixed {
-                    let original = root.remove::<OriginalRigidBody>().unwrap();
-                    root.insert(original.0);
-                }
-            } else if rigidbody != RapierRigidBody::Fixed {
-                root.insert((OriginalRigidBody(rigidbody), RapierRigidBody::Fixed));
-            }
+        if self.enabled {
+            root.remove::<RigidBodyDisabled>();
+        } else if !root.contains::<RigidBodyDisabled>() {
+            root.insert(RigidBodyDisabled);
         }
 
         // Disable colliders
@@ -143,9 +134,8 @@ impl Command for SetPhysicsCommand {
             .chain(std::iter::once(self.entity))
         {
             let child = world.entity(child_entity);
-            if self.enabled && child.contains::<TemporarilySensor>()
-                || !self.enabled && !child.contains::<Sensor>()
-            {
+            let is_enabled = !child.contains::<ColliderDisabled>();
+            if self.enabled != is_enabled {
                 to_change.push(child_entity);
             }
         }
@@ -153,9 +143,9 @@ impl Command for SetPhysicsCommand {
         for entity_id in to_change {
             let mut entity = world.entity_mut(entity_id);
             if self.enabled {
-                entity.remove::<(Sensor, TemporarilySensor)>();
+                entity.remove::<ColliderDisabled>();
             } else {
-                entity.insert((Sensor, TemporarilySensor));
+                entity.insert(ColliderDisabled);
             }
         }
     }

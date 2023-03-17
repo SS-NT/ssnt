@@ -41,9 +41,9 @@ pub trait NetworkedToClient {
     ///
     /// * `since_tick` - The tick to diff from. Is None if the full state should be serialized.
     ///
-    fn serialize<'w, 's>(
+    fn serialize(
         &self,
-        param: &mut <<Self::Param as SystemParam>::Fetch as SystemParamFetch<'w, 's>>::Item,
+        param: &mut <<Self::Param as SystemParam>::Fetch as SystemParamFetch>::Item,
         receiver: Option<ConnectionId>,
         since_tick: Option<u32>,
     ) -> Option<Bytes>;
@@ -69,9 +69,9 @@ pub trait NetworkedToClient {
 pub trait NetworkedFromServer: TypeUuid + Sized {
     type Param: SystemParam;
 
-    fn deserialize<'w, 's>(
+    fn deserialize(
         &mut self,
-        param: &mut <<Self::Param as SystemParam>::Fetch as SystemParamFetch<'w, 's>>::Item,
+        param: &mut <<Self::Param as SystemParam>::Fetch as SystemParamFetch>::Item,
         data: &[u8],
     );
 

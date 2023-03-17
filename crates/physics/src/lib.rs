@@ -13,14 +13,19 @@ use serde::{Deserialize, Serialize};
 
 pub struct PhysicsPlugin;
 
+pub enum PhsyicsSystem {
+    AddFromScene,
+}
+
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Collider>()
             .register_type::<ColliderType>()
             .register_type::<RigidBody>()
             .register_type::<RigidBodyType>()
-            .add_system(add_colliders)
-            .add_system(add_rigidbodies);
+            .register_type::<bevy_rapier3d::dynamics::ReadMassProperties>()
+            .add_system(add_colliders.at_start())
+            .add_system(add_rigidbodies.at_start());
     }
 }
 
@@ -37,6 +42,7 @@ struct Collider {
 #[reflect_value(Serialize, Deserialize)]
 enum ColliderType {
     Cuboid { hx: Real, hy: Real, hz: Real },
+    Capsule { hy: Real, r: Real },
 }
 
 impl Default for ColliderType {
@@ -53,6 +59,7 @@ fn add_colliders(query: Query<(Entity, &Collider), Added<Collider>>, mut command
     for (entity, loaded_collider) in query.iter() {
         let collider = match loaded_collider.kind {
             ColliderType::Cuboid { hx, hy, hz } => RapierCollider::cuboid(hx, hy, hz),
+            ColliderType::Capsule { hy, r } => RapierCollider::capsule_y(hy, r),
         };
         commands
             .entity(entity)

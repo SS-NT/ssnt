@@ -113,7 +113,7 @@ fn load_item_assets(
 fn client_initialize_spawned_items(
     new: Query<Entity, Added<Item>>,
     children_query: Query<&Children>,
-    existing_meshes: Query<(&Handle<Mesh>, Option<&Transform>)>,
+    existing_meshes: Query<(&Handle<Mesh>, Option<&Transform>), Without<Handle<StandardMaterial>>>,
     assets: Res<ItemAssets>,
     mut commands: Commands,
 ) {

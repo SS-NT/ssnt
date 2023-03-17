@@ -21,7 +21,7 @@ use networking::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    body::{Body, Hand, Hands},
+    body::{Hand, Hands},
     camera::MainCamera,
     event::*,
     items::containers::Container,
@@ -39,15 +39,8 @@ impl Plugin for InteractionPlugin {
             .add_event::<InteractionListOrder>();
 
         if is_server(app) {
-            app.register_type::<TestInteraction>();
             app.init_resource::<SentInteractionLists>()
                 .add_interceptable_event::<InteractionListEvent>()
-                .add_system(
-                    check_interaction_example
-                        .into_descriptor()
-                        .intercept::<InteractionListEvent>(),
-                )
-                .add_system(execute_interaction_example)
                 .add_system(begin_interaction_list.label(InteractionListEvent::start_label()))
                 .add_system(
                     handle_completed_interaction_list.label(InteractionListEvent::end_label()),
@@ -224,7 +217,7 @@ fn begin_interaction_list(
     identities: Res<NetworkIdentities>,
     players: Res<Players>,
     controls: Res<ClientControls>,
-    bodies: Query<(&Body, &Hands)>,
+    bodies: Query<&Hands>,
     hand_query: Query<(Entity, &Container), With<Hand>>,
 ) {
     for event in orders.iter() {
@@ -243,11 +236,10 @@ fn begin_interaction_list(
         };
 
         // Fetch the used hand and item once here, as it's used in many interactions
-        let hand = bodies.get(player_entity).ok().and_then(|(body, hands)| {
-            hand_query
-                .iter_many(&body.limbs)
-                .nth(hands.active_hand_index())
-        });
+        let hand = bodies
+            .get(player_entity)
+            .ok()
+            .and_then(|hands| hand_query.get(hands.active_hand()).ok());
         let item_in_hand =
             hand.and_then(|(_, container)| container.iter().next().map(|(_, item)| *item));
         let used_hand = hand.unzip().0;
@@ -630,49 +622,4 @@ fn client_progress_ui(
                 ui.spinner();
             }
         });
-}
-
-#[derive(Component, Reflect)]
-#[component(storage = "SparseSet")]
-#[reflect(Component)]
-struct TestInteraction {
-    first_run: bool,
-}
-
-impl TestInteraction {
-    fn new() -> Self {
-        Self { first_run: true }
-    }
-}
-
-// Dummy implementation for reflection
-impl FromWorld for TestInteraction {
-    fn from_world(_: &mut World) -> Self {
-        Self::new()
-    }
-}
-
-fn check_interaction_example(events: Res<InterceptableEvents<InteractionListEvent>>) {
-    for event in events.iter() {
-        event.add_interaction(InteractionOption {
-            text: "Test Interact".into(),
-            interaction: Box::new(TestInteraction::new()),
-            specificity: InteractionSpecificity::Generic,
-        });
-    }
-}
-
-fn execute_interaction_example(
-    mut query: Query<(&mut TestInteraction, &mut ActiveInteraction)>,
-    time: Res<Time>,
-) {
-    for (mut interaction, mut active) in query.iter_mut() {
-        if interaction.first_run {
-            interaction.first_run = false;
-        }
-
-        if active.started + 2.0 < time.elapsed_seconds() {
-            active.status = InteractionStatus::Completed;
-        }
-    }
 }

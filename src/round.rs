@@ -1,20 +1,24 @@
-use bevy::{prelude::*, reflect::TypeUuid};
+use bevy::{
+    prelude::*,
+    reflect::TypeUuid,
+    utils::{HashMap, Uuid},
+};
 use maps::TileMap;
 use networking::{
-    identity::EntityCommandsExt,
-    is_server,
+    is_client, is_server,
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     resource::AppExt as ResAppExt,
-    spawning::{ClientControls, PrefabPath},
+    spawning::ClientControls,
     time::ServerNetworkTime,
-    transform::NetworkTransform,
     variable::{NetworkVar, ServerVar},
     visibility::{NetworkObserver, NetworkObserverBundle},
-    ConnectionId, Networked, Player, Players,
+    Networked, Players,
 };
 use serde::{Deserialize, Serialize};
+use utils::order::*;
 
 use crate::{
+    body::{SpawnCreatureOrder, SpawnCreatureResult},
     job::{JobDefinition, SelectedJobs},
     movement::ForcePositionMessage,
 };
@@ -32,6 +36,7 @@ impl Plugin for RoundPlugin {
                     state: RoundState::Loading.into(),
                     start: None.into(),
                 })
+                .init_resource::<SpawnsInProgress>()
                 .add_system_set(SystemSet::on_enter(RoundState::Loading).with_system(load_map))
                 .add_system_set(SystemSet::on_update(RoundState::Loading).with_system(set_ready))
                 .add_system_set(
@@ -45,8 +50,19 @@ impl Plugin for RoundPlugin {
                 .add_system_set(
                     SystemSet::on_update(RoundState::Running).with_system(spawn_player_latejoin),
                 )
-                .add_system(update_round_data);
+                .add_system(update_round_data)
+                .add_system(finalise_player_spawn);
         }
+
+        let player_scene = app
+            .world
+            .resource::<AssetServer>()
+            .load("creatures/player.scn.ron");
+        app.insert_resource(PlayerAssets {
+            player_scene,
+            player_model: is_client(app)
+                .then(|| app.world.resource::<AssetServer>().load("models/human.glb")),
+        });
     }
 }
 
@@ -122,78 +138,37 @@ fn start_round_timer(mut round_data: ResMut<RoundData>, server_time: Res<ServerN
     *round_data.start = Some(server_time.current_tick());
 }
 
-fn spawn_player(
-    connection: ConnectionId,
-    player: &Player,
-    main_map: &TileMap,
-    job: &JobDefinition,
-    commands: &mut Commands,
-    controls: &mut ClientControls,
-    sender: &mut MessageSender,
-) {
-    let player_entity = crate::create_player(&mut commands.spawn_empty(), None);
-    // Get spawn position for job
-    let spawn_tile = main_map
-        .job_spawn_positions
-        .get(&job.id)
-        .map(|p| *p.first().unwrap()) // TODO: Use random selection
-        .unwrap_or_default();
-    let spawn_position = Vec3::new(spawn_tile.x as f32, 1.0, spawn_tile.y as f32);
-    // Insert server-only components
-    commands
-        .entity(player_entity)
-        .insert((
-            NetworkObserverBundle {
-                observer: NetworkObserver {
-                    range: 1,
-                    player_id: player.id,
-                },
-                cells: Default::default(),
-            },
-            PrefabPath("player".into()),
-            NetworkTransform::default(),
-            Transform::from_translation(spawn_position),
-        ))
-        .networked();
+#[derive(Resource)]
+struct PlayerAssets {
+    #[allow(dead_code)]
+    player_scene: Handle<DynamicScene>,
+    #[allow(dead_code)]
+    player_model: Option<Handle<Scene>>,
+}
 
-    controls.give_control(player.id, player_entity);
-    // Force client to accept new position (unless they cheat lol)
-    sender.send_with_priority(
-        &ForcePositionMessage {
-            position: spawn_position,
-            rotation: Quat::IDENTITY,
-        },
-        MessageReceivers::Single(connection),
-        10,
-    );
+#[derive(Resource, Default)]
+struct SpawnsInProgress {
+    orders: HashMap<OrderId<SpawnCreatureOrder>, Uuid>,
 }
 
 fn spawn_players_roundstart(
     selected_jobs: Res<SelectedJobs>,
     job_data: Res<Assets<JobDefinition>>,
     players: Res<Players>,
-    maps: Query<&TileMap>,
-    mut controls: ResMut<ClientControls>,
-    mut commands: Commands,
-    mut sender: MessageSender,
+    mut spawns: ResMut<SpawnsInProgress>,
+    mut spawning: Orderer<SpawnCreatureOrder>,
 ) {
-    // TODO: Support multiple maps
-    let main_map = maps.single();
-    for (connection, job) in selected_jobs.selected(&job_data) {
+    for (connection, _) in selected_jobs.selected(&job_data) {
         let player = match players.get(connection) {
             Some(p) => p,
             None => continue,
         };
 
-        spawn_player(
-            connection,
-            player,
-            main_map,
-            job,
-            &mut commands,
-            controls.as_mut(),
-            &mut sender,
-        );
+        let spawn_id = spawning.create(SpawnCreatureOrder {
+            archetype: "human".into(),
+        });
+
+        spawns.orders.insert(spawn_id, player.id);
     }
 }
 
@@ -206,36 +181,82 @@ fn spawn_player_latejoin(
     selected_jobs: Res<SelectedJobs>,
     job_data: Res<Assets<JobDefinition>>,
     players: Res<Players>,
+    mut spawns: ResMut<SpawnsInProgress>,
+    mut spawning: Orderer<SpawnCreatureOrder>,
+) {
+    for event in messages.iter() {
+        let Some(player) =  players.get(event.connection) else {
+            continue;
+        };
+
+        if selected_jobs.get(event.connection, &job_data).is_none() {
+            continue;
+        }
+
+        let spawn_id = spawning.create(SpawnCreatureOrder {
+            archetype: "human".into(),
+        });
+
+        spawns.orders.insert(spawn_id, player.id);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finalise_player_spawn(
+    players: Res<Players>,
     maps: Query<&TileMap>,
+    selected_jobs: Res<SelectedJobs>,
+    job_data: Res<Assets<JobDefinition>>,
+    mut spawns: ResMut<SpawnsInProgress>,
+    mut results: Results<SpawnCreatureOrder, SpawnCreatureResult>,
     mut controls: ResMut<ClientControls>,
     mut commands: Commands,
     mut sender: MessageSender,
 ) {
-    // TODO: Support multiple maps
-    let main_map = match maps.get_single() {
-        Ok(m) => m,
-        Err(_) => return,
-    };
-
-    for event in messages.iter() {
-        let player = match players.get(event.connection) {
-            Some(p) => p,
-            None => continue,
+    for result in results.iter() {
+        let Some(player_id) = spawns.orders.remove(&result.id) else {
+            continue;
         };
 
-        let job = match selected_jobs.get(event.connection, &job_data) {
-            Some(j) => j,
-            None => continue,
+        let Some(connection) = players.get_connection(&player_id) else {
+            continue;
         };
 
-        spawn_player(
-            event.connection,
-            player,
-            main_map,
-            job,
-            &mut commands,
-            controls.as_mut(),
-            &mut sender,
+        let Some(job) = selected_jobs.get(connection, &job_data) else {
+            continue;
+        };
+
+        // TODO: Support multiple maps
+        let main_map = match maps.get_single() {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+
+        let spawn_position = crate::job::get_spawn_position(main_map, job);
+
+        // Add some player specific components
+        let player_entity = result.data.root;
+        commands.entity(player_entity).insert((
+            NetworkObserverBundle {
+                observer: NetworkObserver {
+                    range: 1,
+                    player_id,
+                },
+                cells: Default::default(),
+            },
+            Transform::from_translation(spawn_position),
+        ));
+
+        controls.give_control(player_id, player_entity);
+
+        // Force client to accept new position (unless they cheat lol)
+        sender.send_with_priority(
+            &ForcePositionMessage {
+                position: spawn_position,
+                rotation: Quat::IDENTITY,
+            },
+            MessageReceivers::Single(connection),
+            10,
         );
     }
 }

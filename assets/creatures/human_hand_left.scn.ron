@@ -1,0 +1,40 @@
+(
+    entities: {
+        0: (
+            components: {
+                "bevy_transform::components::transform::Transform": (
+                ),
+                "networking::transform::NetworkTransform": (
+                ),
+                "ssnt::body::Limb": (
+                    attachment_position: (
+                        x: 0.240,
+                        y: 0,
+                        z: 0,
+                    ),
+                ),
+                "ssnt::items::Item": (
+                    name: "Human Hand Left"
+                ),
+                "ssnt::body::Hand": (
+                    side: Left
+                ),
+                "ssnt::items::containers::Container": (
+                    size: (x: 10, y: 10),
+                ),
+                "physics::RigidBody": (
+                    kind: Dynamic
+                ),
+                "physics::Collider": (
+                    kind: Cuboid (hx: 0.1, hy: 0.07, hz: 0.07)
+                ),
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
+                    id: "models/human.glb#Mesh7/Primitive0"
+                ),
+                "bevy_asset::handle::Handle<bevy_pbr::pbr_material::StandardMaterial>": (
+                    id: "models/human.glb#Material0"
+                ),
+            }
+        ),
+    }
+)

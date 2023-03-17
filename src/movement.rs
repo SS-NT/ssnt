@@ -154,20 +154,32 @@ fn handle_movement_message(
 // HACK: forces the client to be at a position
 // The code needs to die.
 fn handle_force_position_client(
-    mut query: Query<(Entity, &mut Transform), With<ClientControlled>>,
+    mut query: Query<Entity, (With<ClientControlled>, With<Transform>)>,
     mut messages: EventReader<MessageEvent<ForcePositionMessage>>,
-    mut current: Local<Option<ForcePositionMessage>>,
+    mut current: Local<Option<(u8, ForcePositionMessage)>>,
     mut commands: Commands,
 ) {
     if let Some(event) = messages.iter().last() {
-        *current = Some(event.message.clone());
+        *current = Some((0, event.message.clone()));
     }
 
-    if let Ok((entity, mut transform)) = query.get_single_mut() {
-        if let Some(message) = current.take() {
-            transform.translation = message.position;
-            transform.rotation = message.rotation;
-            commands.entity(entity).insert(ForcePositionReceived);
+    if let Ok(entity) = query.get_single_mut() {
+        if let Some((count, message)) = current.as_mut() {
+            // Mfw I can't be bothered to fix this properly
+            if *count >= 5 {
+                *current = None;
+                return;
+            }
+
+            commands.entity(entity).insert((
+                ForcePositionReceived,
+                Transform {
+                    translation: message.position,
+                    rotation: message.rotation,
+                    ..Default::default()
+                },
+            ));
+            *count += 1;
         }
     }
 }

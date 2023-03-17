@@ -1,4 +1,7 @@
-use bevy::{ecs::entity::EntityMap, prelude::*};
+use bevy::{
+    ecs::{entity::EntityMap, reflect::ReflectMapEntities},
+    prelude::*,
+};
 
 use crate::identity::NetworkIdentity;
 
@@ -71,7 +74,11 @@ fn queue_network_scenes(
 // Spawns loaded networked scenes into the world
 fn spawn_network_scenes(world: &mut World) {
     world.resource_scope(|world, mut spawner: Mut<NetworkSceneSpawner>| {
+        if spawner.scenes_to_spawn.is_empty() {
+            return;
+        }
         world.resource_scope(|world, scene_assets: Mut<Assets<DynamicScene>>| {
+            let registry = world.resource::<AppTypeRegistry>().clone();
             spawner.scenes_to_spawn.retain(|(entity, scene_handle)| {
                 let Some(scene) = scene_assets.get(scene_handle) else {
                     return true;
@@ -79,9 +86,37 @@ fn spawn_network_scenes(world: &mut World) {
 
                 // TODO: Verify scene only has one root entity
 
-                // Preserve some components that should not be overwritten
-                let existing_parent = world.get::<Parent>(*entity).map(|p| **p);
+                // Preserve transform so it doesn't get overwritten
                 let existing_transform = world.get::<Transform>(*entity).cloned();
+
+                // HACK: Remove and store components that would be remapped by the scene system
+                let mut temporary_world = World::new();
+                let temporary_entity = temporary_world.spawn_empty().id();
+                let read_registry = registry.read();
+                let problematic_components = world
+                    .entity(*entity)
+                    .archetype()
+                    .components()
+                    .filter_map(|c| {
+                        world
+                            .components()
+                            .get_info(c)
+                            .and_then(|info| info.type_id())
+                    })
+                    .filter(|id| {
+                        read_registry
+                            .get(*id)
+                            .and_then(|ty| ty.data::<ReflectMapEntities>())
+                            .is_some()
+                    })
+                    .collect::<Vec<_>>();
+                for type_id in problematic_components.iter() {
+                    let registration = read_registry.get(*type_id).unwrap();
+                    let reflect_component = registration.data::<ReflectComponent>().unwrap();
+                    reflect_component.copy(world, &mut temporary_world, *entity, temporary_entity);
+                    reflect_component.remove(world, *entity);
+                }
+                drop(read_registry);
 
                 // Make the scene entity #0 add components onto our existing entity
                 let mut entity_map = EntityMap::default();
@@ -92,15 +127,16 @@ fn spawn_network_scenes(world: &mut World) {
                     return false;
                 }
 
-                if let Some(parent_entity) = existing_parent {
-                    let mut parent = world.get_mut::<Parent>(*entity).unwrap();
-                    // Hack: Use reflection to set parent entity
-                    // Because people were messing up their hierarchies, we can't change the value in Parent components anymore.
-                    // Sucks for us. May get a new method with a scary name in the future.
-                    *parent.get_field_mut(0).unwrap() = parent_entity;
-                }
                 if let Some(transform) = existing_transform {
                     world.entity_mut(*entity).insert(transform);
+                }
+
+                // Add back the problematic components
+                let read_registry = registry.read();
+                for type_id in problematic_components.iter() {
+                    let registration = read_registry.get(*type_id).unwrap();
+                    let reflect_component = registration.data::<ReflectComponent>().unwrap();
+                    reflect_component.copy(&temporary_world, world, temporary_entity, *entity);
                 }
 
                 // Emit scene event

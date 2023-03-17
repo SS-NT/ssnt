@@ -21,7 +21,6 @@ use std::time::Duration;
 use admin::AdminPlugin;
 use bevy::app::ScheduleRunnerSettings;
 use bevy::asset::AssetPlugin;
-use bevy::ecs::system::EntityCommands;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::scene::ScenePlugin;
@@ -29,19 +28,14 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy_egui::EguiPlugin;
 use bevy_inspector_egui::{WorldInspectorParams, WorldInspectorPlugin};
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
-use bevy_rapier3d::prelude::{
-    Collider, ColliderMassProperties, Damping, LockedAxes, ReadMassProperties, RigidBody, Velocity,
-};
+use bevy_rapier3d::prelude::Collider;
 use byond::tgm::TgmLoader;
 use camera::TopDownCamera;
 use clap::{Parser, Subcommand};
 use futures_lite::future;
-use items::containers::{Container, DisplayContainer};
 use maps::TileMapData;
-use networking::identity::{EntityCommandsExt as NetworkingEntityCommandsExt, NetworkIdentities};
-use networking::scene::{NetworkSceneChildren, NetworkSceneIdentities};
-use networking::spawning::{ClientControlled, NetworkedEntityEvent, PrefabPath};
-use networking::transform::NetworkedTransform;
+use networking::identity::EntityCommandsExt as NetworkingEntityCommandsExt;
+use networking::spawning::ClientControlled;
 use networking::{ClientEvent, NetworkRole, NetworkingPlugin};
 
 /// How many ticks the server runs per second
@@ -77,6 +71,8 @@ fn main() {
     let networking_plugin = NetworkingPlugin { role };
 
     let mut app = App::new();
+    app.register_type::<Player>();
+
     match role {
         NetworkRole::Server => {
             match config::load_server_config() {
@@ -111,6 +107,8 @@ fn main() {
             .register_type::<bevy::render::primitives::CubemapFrusta>()
             .register_type::<bevy::render::view::Visibility>()
             .register_type::<bevy::render::view::ComputedVisibility>()
+            .register_type::<Handle<bevy::pbr::StandardMaterial>>()
+            .register_type::<Vec<Entity>>()
             .add_asset_loader(TgmLoader)
             .add_startup_system(setup_server)
             .add_startup_system(config::server_startup);
@@ -126,13 +124,13 @@ fn main() {
                 })
                 .add_plugin(WorldInspectorPlugin::new())
                 .add_plugin(ui::UiPlugin)
+                // .add_plugin(bevy_rapier3d::render::RapierDebugRenderPlugin::default())
                 .insert_resource(ClearColor(Color::rgb(
                     44.0 / 255.0,
                     68.0 / 255.0,
                     107.0 / 255.0,
                 )))
                 .add_startup_system(setup_client)
-                .add_system_to_stage(CoreStage::PostUpdate, handle_player_spawn)
                 .add_system(set_camera_target)
                 .add_system(clean_entities_on_disconnect)
                 .add_state(GameState::Splash);
@@ -144,15 +142,14 @@ fn main() {
         .add_plugin(movement::MovementPlugin)
         .add_plugin(maps::MapPlugin)
         .add_plugin(AdminPlugin)
+        .add_plugin(items::ItemPlugin)
+        .add_plugin(body::BodyPlugin)
         .add_plugin(round::RoundPlugin)
         .add_plugin(job::JobPlugin)
-        .add_plugin(items::ItemPlugin)
         .add_plugin(interaction::InteractionPlugin)
-        .add_plugin(body::BodyPlugin)
         .add_plugin(construction::ConstructionPlugin)
         .insert_resource(args)
         .add_startup_system(setup_shared)
-        .register_type::<Player>()
         // Temporary version of https://github.com/bevyengine/bevy/pull/6578
         .register_type::<smallvec::SmallVec<[Entity; 8]>>()
         // Types that bevy doesn't register yet
@@ -268,113 +265,6 @@ fn clean_entities_on_disconnect(
     // TODO: Optimize deletion?
     for entity in to_delete.iter() {
         commands.entity(entity).despawn_recursive();
-    }
-}
-
-// TODO: Replace completely, incredible spaghetti density
-fn create_player(
-    commands: &mut EntityCommands,
-    mut identities: Option<(&NetworkSceneIdentities, &mut ResMut<NetworkIdentities>)>,
-) -> Entity {
-    let player_rigid_body = (
-        RigidBody::Dynamic,
-        LockedAxes::ROTATION_LOCKED,
-        Damping {
-            linear_damping: 0.0,
-            angular_damping: 0.0,
-        },
-        Velocity::default(),
-    );
-    let player_collider = (
-        Collider::capsule(Vec3::ZERO, (0.0, 1.0, 0.0).into(), 0.2),
-        ColliderMassProperties::Density(5.0),
-        ReadMassProperties::default(),
-    );
-    let builder = commands.insert((
-        TransformBundle::from_transform(Transform::from_translation((0.0, 1.0, 0.0).into())),
-        Player::default(),
-        player_rigid_body,
-        player_collider,
-        body::Hands::default(),
-    ));
-
-    // Add hands
-    let identities = &mut identities;
-    let (left_hand, right_hand) = builder.add_children(|parent| {
-        let mut left_hand = parent.spawn((
-            SpatialBundle::from_transform(Transform::from_xyz(0.7, 1.1, 0.0)),
-            body::Hand {
-                side: body::LimbSide::Left,
-            },
-            Container::new((2, 2).into()),
-            DisplayContainer,
-        ));
-        if let Some((identities, identity_index)) = identities.as_mut() {
-            let left_hand_id = *identities.child_identities.get(0).unwrap();
-            left_hand.insert(left_hand_id);
-            identity_index.set_identity(left_hand.id(), left_hand_id);
-        } else {
-            left_hand.networked();
-        }
-        let left_hand = left_hand.id();
-        let mut right_hand = parent.spawn((
-            SpatialBundle::from_transform(Transform::from_xyz(-0.7, 1.1, 0.0)),
-            body::Hand {
-                side: body::LimbSide::Right,
-            },
-            Container::new((2, 2).into()),
-            DisplayContainer,
-        ));
-        if let Some((identities, identity_index)) = identities {
-            let right_hand_id = *identities.child_identities.get(1).unwrap();
-            right_hand.insert(right_hand_id);
-            identity_index.set_identity(right_hand.id(), right_hand_id);
-        } else {
-            right_hand.networked();
-        }
-        (left_hand, right_hand.id())
-    });
-
-    if identities.is_none() {
-        builder.insert(NetworkSceneChildren {
-            networked_children: vec![left_hand, right_hand],
-        });
-    }
-
-    builder.insert(body::Body {
-        limbs: vec![left_hand, right_hand],
-    });
-
-    builder.id()
-}
-
-// TODO: replace with spawning scene
-fn handle_player_spawn(
-    query: Query<(&PrefabPath, &NetworkSceneIdentities)>,
-    mut entity_events: EventReader<NetworkedEntityEvent>,
-    mut commands: Commands,
-    server: ResMut<AssetServer>,
-    mut identity_index: ResMut<NetworkIdentities>,
-) {
-    for event in entity_events.iter() {
-        if let NetworkedEntityEvent::Spawned(entity) = event {
-            if let Ok((prefab, identities)) = query.get(*entity) {
-                if prefab.0 == "player" {
-                    let player = create_player(
-                        &mut commands.entity(*entity),
-                        Some((identities, &mut identity_index)),
-                    );
-                    let player_model = server.load("models/human.glb#Scene0");
-                    commands.entity(player).insert((
-                        NetworkedTransform::default(),
-                        SceneBundle {
-                            scene: player_model,
-                            ..Default::default()
-                        },
-                    ));
-                }
-            }
-        }
     }
 }
 

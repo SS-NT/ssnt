@@ -63,18 +63,31 @@ fn job_ui(
     jobs: Res<Assets<JobDefinition>>,
     mut sender: MessageSender,
     mut selected_job: Local<Option<HandleId>>,
+    mut sorted_jobs: Local<Vec<Handle<JobDefinition>>>,
 ) {
     // Only show lobby UI if not controlling any entity
     if !client_controlled.is_empty() {
         return;
     }
 
+    if jobs.len() != sorted_jobs.len() {
+        let mut new_sorted: Vec<_> = jobs.iter().collect();
+        new_sorted.sort_unstable_by_key(|x| &x.1.name);
+        sorted_jobs.clear();
+        sorted_jobs.extend(
+            new_sorted
+                .into_iter()
+                .map(|x| Handle::<JobDefinition>::weak(x.0)),
+        );
+    }
+
     let previous_job = *selected_job;
     egui::Window::new("Jobs")
         .anchor(egui::Align2::RIGHT_CENTER, egui::vec2(-30.0, 0.0))
         .show(egui_context.ctx_mut(), |ui| {
-            for (id, job_definition) in jobs.iter() {
-                ui.radio_value(&mut *selected_job, Some(id), &job_definition.name);
+            for handle in sorted_jobs.iter() {
+                let job_definition = jobs.get(handle).unwrap();
+                ui.radio_value(&mut *selected_job, Some(handle.id()), &job_definition.name);
                 ui.label(&job_definition.description);
             }
         });

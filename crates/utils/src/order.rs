@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, num::NonZeroU32};
+use std::{hash::Hash, marker::PhantomData, num::NonZeroU32};
 
 use bevy::{
     ecs::{event::Event, system::SystemParam},
@@ -36,6 +36,12 @@ impl<T> Order<T> {
 pub struct OrderId<T: 'static> {
     id: NonZeroU32,
     phantom: PhantomData<fn() -> T>,
+}
+
+impl<T: 'static> Hash for OrderId<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
 }
 
 impl<T> Copy for OrderId<T> {}

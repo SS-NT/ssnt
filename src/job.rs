@@ -1,5 +1,6 @@
 use bevy::{asset::AssetPathId, prelude::*, reflect::TypeUuid, utils::HashMap};
 use bevy_common_assets::ron::RonAssetPlugin;
+use maps::TileMap;
 use networking::{
     is_server,
     messaging::{AppExt, MessageEvent},
@@ -105,4 +106,13 @@ fn handle_job_selection(
             }
         }
     }
+}
+
+pub fn get_spawn_position(map: &TileMap, job: &JobDefinition) -> Vec3 {
+    let spawn_tile = map
+        .job_spawn_positions
+        .get(&job.id)
+        .map(|p| *p.first().unwrap()) // TODO: Use random selection
+        .unwrap_or_default();
+    Vec3::new(spawn_tile.x as f32, 1.0, spawn_tile.y as f32)
 }

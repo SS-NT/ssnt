@@ -15,6 +15,7 @@ pub struct ContainerPlugin;
 
 impl Plugin for ContainerPlugin {
     fn build(&self, app: &mut App) {
+        app.register_type::<Container>();
         if is_server(app) {
             app.register_order::<MoveItemOrder, MoveItemResult>()
                 .add_system(do_item_move)
@@ -27,20 +28,26 @@ impl Plugin for ContainerPlugin {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Reflect)]
+#[reflect(Component)]
 pub struct Container {
     size: UVec2,
     items: HashMap<UVec2, Entity>,
+    /// What entity any items should be nested under. Defaults to the container entity if `None`.
+    pub attach_to: Option<Entity>,
+}
+
+impl FromWorld for Container {
+    fn from_world(_: &mut World) -> Self {
+        Container {
+            size: (1, 1).into(),
+            items: Default::default(),
+            attach_to: None,
+        }
+    }
 }
 
 impl Container {
-    pub fn new(size: UVec2) -> Self {
-        Self {
-            size,
-            items: Default::default(),
-        }
-    }
-
     pub fn insert_item_unchecked(&mut self, entity: Entity, position: UVec2) {
         self.items.insert(position, entity);
     }
@@ -166,7 +173,9 @@ fn do_item_move(
         results.send(order.complete(MoveItemResult { success: true }));
 
         // TODO: Do all containers nest their items? Probably...
-        commands.entity(container_entity).add_child(data.item);
+        commands
+            .entity(container.attach_to.unwrap_or(container_entity))
+            .add_child(data.item);
         // Freeze the item as a child
         commands
             .entity(item_entity)

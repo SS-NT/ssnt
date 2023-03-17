@@ -414,6 +414,10 @@ pub fn is_server(app: &App) -> bool {
     app.world.resource::<NetworkManager>().is_server()
 }
 
+pub fn is_client(app: &App) -> bool {
+    app.world.resource::<NetworkManager>().is_client()
+}
+
 pub struct NetworkingPlugin {
     pub role: NetworkRole,
 }

@@ -1,0 +1,34 @@
+(
+    entities: {
+        0: (
+            components: {
+                "bevy_transform::components::transform::Transform": (
+                ),
+                "networking::transform::NetworkTransform": (
+                ),
+                "ssnt::body::Limb": (
+                    attachment_position: (
+                        x: -0.418,
+                        y: 0.246,
+                        z: 0
+                    ),
+                ),
+                "ssnt::items::Item": (
+                    name: "Human Arm Right"
+                ),
+                "physics::RigidBody": (
+                    kind: Dynamic
+                ),
+                "physics::Collider": (
+                    kind: Cuboid (hx: 0.2, hy: 0.07, hz: 0.07)
+                ),
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
+                    id: "models/human.glb#Mesh2/Primitive0"
+                ),
+                "bevy_asset::handle::Handle<bevy_pbr::pbr_material::StandardMaterial>": (
+                    id: "models/human.glb#Material0"
+                ),
+            }
+        )
+    }
+)

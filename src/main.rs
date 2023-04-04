@@ -36,7 +36,7 @@ use futures_lite::future;
 use maps::TileMapData;
 use networking::identity::EntityCommandsExt as NetworkingEntityCommandsExt;
 use networking::spawning::ClientControlled;
-use networking::{ClientEvent, NetworkRole, NetworkingPlugin};
+use networking::{ClientEvent, NetworkRole, NetworkingPlugin, UserData};
 
 /// How many ticks the server runs per second
 const SERVER_TPS: u32 = 60;
@@ -59,7 +59,7 @@ enum ArgCommands {
         public_address: Option<IpAddr>,
     },
     /// join a game
-    Join { address: SocketAddr },
+    Join { address: SocketAddr, name: String },
 }
 
 fn main() {
@@ -243,9 +243,12 @@ fn setup_client(
         KeepOnServerChange,
     ));
 
-    if let Some(ArgCommands::Join { address }) = args.command {
+    if let Some(ArgCommands::Join { address, name }) = &args.command {
         state.overwrite_set(GameState::MainMenu).unwrap();
-        client_events.send(ClientEvent::Join(address));
+        client_events.send(ClientEvent::Join(*address));
+        commands.insert_resource(UserData {
+            username: name.clone(),
+        });
     }
 }
 

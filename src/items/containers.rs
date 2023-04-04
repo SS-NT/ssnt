@@ -15,7 +15,8 @@ pub struct ContainerPlugin;
 
 impl Plugin for ContainerPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<Container>();
+        app.register_type::<Container>()
+            .register_type::<DisplayContainer>();
         if is_server(app) {
             app.register_order::<MoveItemOrder, MoveItemResult>()
                 .add_system(do_item_move)
@@ -90,7 +91,8 @@ impl Container {
 }
 
 /// A component on containers which show their contents to everyone in the area.
-#[derive(Component)]
+#[derive(Component, Default, Reflect)]
+#[reflect(Component)]
 pub struct DisplayContainer;
 
 /// An event requesting to move an item from or into a container.

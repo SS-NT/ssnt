@@ -22,6 +22,8 @@
                 "ssnt::items::containers::Container": (
                     size: (x: 10, y: 10),
                 ),
+                "ssnt::items::containers::DisplayContainer": (
+                ),
                 "physics::RigidBody": (
                     kind: Dynamic
                 ),

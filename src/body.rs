@@ -51,6 +51,7 @@ impl Plugin for BodyPlugin {
 
         if is_server(app) {
             app.register_type::<PickupInteraction>()
+                .add_event::<LimbEvent>()
                 .add_system(pickup_interaction)
                 .add_system(
                     prepare_pickup_interaction
@@ -72,10 +73,12 @@ impl Plugin for BodyPlugin {
                         .intercept::<InteractionListEvent>(),
                 )
                 .add_system(handle_hand_modification)
+                .add_system(handle_hand_separation)
                 .add_system(handle_hand_change_request)
                 .register_order::<SpawnCreatureOrder, SpawnCreatureResult>()
                 .add_system(create_creature.after(process_new_limbs))
-                .add_system(process_new_limbs);
+                .add_system(process_new_limbs)
+                .add_system(process_limb_removal);
         } else {
             app.add_system(hand_ui).add_system(client_update_limbs);
         }
@@ -95,6 +98,7 @@ impl Plugin for BodyPlugin {
 pub struct Body {
     limbs: HashSet<Entity>,
     added_limbs: Vec<Entity>,
+    limbs_to_remove: Vec<Entity>,
 }
 
 impl MapEntities for Body {
@@ -141,41 +145,84 @@ impl FromWorld for Limb {
     }
 }
 
+struct LimbEvent {
+    limb_entity: Entity,
+    kind: LimbEventKind,
+}
+
+#[derive(PartialEq, Eq)]
+enum LimbEventKind {
+    Added,
+    Removed,
+}
+
 fn process_new_limbs(
     mut bodies: Query<&mut Body, Changed<Body>>,
     mut limbs: Query<(&Limb, &mut Transform)>,
+    mut writer: EventWriter<LimbEvent>,
     mut commands: Commands,
 ) {
     for mut body in bodies.iter_mut() {
-        for added in body.added_limbs.drain(..) {
-            let Ok((limb, mut transform)) = limbs.get_mut(added) else {
+        for limb_entity in body.added_limbs.drain(..) {
+            let Ok((limb, mut transform)) = limbs.get_mut(limb_entity) else {
                 continue;
             };
             transform.translation = limb.attachment_position;
-            commands.entity(added).disable_physics();
+            commands.entity(limb_entity).disable_physics();
+            writer.send(LimbEvent {
+                limb_entity,
+                kind: LimbEventKind::Added,
+            });
+        }
+    }
+}
+
+fn process_limb_removal(
+    mut bodies: Query<&mut Body, Changed<Body>>,
+    mut transforms: Query<(&mut Transform, &GlobalTransform)>,
+    mut writer: EventWriter<LimbEvent>,
+    mut commands: Commands,
+) {
+    for mut body in bodies.iter_mut() {
+        let body = body.as_mut();
+        for limb_entity in body.limbs_to_remove.drain(..) {
+            if !body.limbs.remove(&limb_entity) {
+                continue;
+            }
+            if let Ok((mut transform, global_transform)) = transforms.get_mut(limb_entity) {
+                *transform = global_transform.compute_transform();
+            }
+            commands
+                .entity(limb_entity)
+                .remove_parent()
+                .enable_physics();
+            writer.send(LimbEvent {
+                limb_entity,
+                kind: LimbEventKind::Removed,
+            });
         }
     }
 }
 
 fn client_update_limbs(
-    mut added_limbs: Query<
-        Entity,
-        (
-            With<Parent>,
-            Without<StoredItem>,
-            Or<(Added<Limb>, Changed<Parent>)>,
-        ),
-    >,
+    mut added_limbs: Query<(Entity, &Parent), (Or<(Added<Limb>, Changed<Parent>)>,)>,
     parents: Query<&Parent>,
+    hands: Query<(), With<Hand>>,
     mut bodies: Query<&mut Body, With<ClientControlled>>,
 ) {
-    for limb_entity in added_limbs.iter_mut() {
+    for (limb_entity, limb_parent) in added_limbs.iter_mut() {
+        // HACK: assume limb is handled as item if nested under hands
+        if hands.contains(limb_parent.get()) {
+            continue;
+        }
+
         let Some(body_entity) = parents.iter_ancestors(limb_entity).find(|&e| bodies.contains(e)) else {
             continue;
         };
         let mut body = bodies.get_mut(body_entity).unwrap();
         body.limbs.insert(limb_entity);
     }
+    // TODO: removed limbs
 }
 
 #[derive(Component, Reflect)]
@@ -249,6 +296,33 @@ fn handle_hand_modification(
         } else if let Some(&first_hand) = current_hands.iter().next() {
             commands.entity(body_entity).insert(Hands {
                 active_hand: first_hand.into(),
+            });
+        }
+    }
+}
+
+fn handle_hand_separation(
+    mut events: EventReader<LimbEvent>,
+    hands: Query<&Container, With<Hand>>,
+    mut move_orderer: Orderer<MoveItemOrder>,
+) {
+    for event in events.iter() {
+        if event.kind != LimbEventKind::Removed {
+            continue;
+        }
+        let Ok(container) = hands.get(event.limb_entity) else {
+            continue;
+        };
+        if container.is_empty() {
+            continue;
+        }
+        // Drop all items this hand is holding
+        // TODO: This should be handled in health system (ex. no nerve signal)
+        for item in container.iter().map(|(_, i)| *i) {
+            move_orderer.create(MoveItemOrder {
+                item,
+                container: None,
+                position: None,
             });
         }
     }
@@ -419,7 +493,11 @@ fn create_creature(
                     limbs
                 });
                 let added_limbs = limbs.iter().copied().collect();
-                creature.insert(Body { limbs, added_limbs });
+                creature.insert(Body {
+                    limbs,
+                    added_limbs,
+                    ..Default::default()
+                });
             }
             _ => todo!(),
         }
@@ -693,7 +771,11 @@ fn cut_interaction(
             continue;
         };
         commands.entity(active.target).disable_physics();
-        for limb_entity in body.limbs.drain() {
+
+        #[allow(clippy::needless_collect)]
+        let limbs: Vec<_> = body.limbs.iter().copied().collect();
+        body.limbs_to_remove.extend(limbs.into_iter());
+        for limb_entity in body.limbs.iter().copied() {
             if let Ok((mut transform, global_transform)) = transforms.get_mut(limb_entity) {
                 *transform = global_transform.compute_transform();
             }

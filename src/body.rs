@@ -80,7 +80,9 @@ impl Plugin for BodyPlugin {
                 .add_system(process_new_limbs)
                 .add_system(process_limb_removal);
         } else {
-            app.add_system(hand_ui).add_system(client_update_limbs);
+            app.add_system(hand_ui)
+                .add_system(client_update_limbs)
+                .add_system(client_hands_keybind);
         }
 
         app.insert_resource(BodyAssets {
@@ -372,6 +374,41 @@ fn hand_ui(
                 }
             }
         });
+}
+
+fn client_hands_keybind(
+    keyboard_input: Res<Input<KeyCode>>,
+    mut bodies: Query<(&Body, &mut HandsClient), With<ClientControlled>>,
+    hands: Query<&NetworkIdentity, With<Hand>>,
+    mut sender: MessageSender,
+) {
+    if !keyboard_input.just_pressed(KeyCode::X) {
+        return;
+    }
+
+    let Ok((body, hand_data)) = bodies.get_single_mut() else {
+        return;
+    };
+
+    let mut previous_was_active_hand = false;
+    for &identity in hands.iter_many(&body.limbs) {
+        if previous_was_active_hand {
+            sender.send_to_server(&ChangeHandRequest { identity });
+            return;
+        }
+
+        if *hand_data.active_hand == identity {
+            previous_was_active_hand = true;
+        }
+    }
+    // If we get here we haven't changed hands
+    // Try to just change to first hand
+    if let Some(&identity) = hands.iter_many(&body.limbs).next() {
+        if *hand_data.active_hand == identity {
+            return;
+        }
+        sender.send_to_server(&ChangeHandRequest { identity });
+    }
 }
 
 fn handle_hand_change_request(

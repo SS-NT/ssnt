@@ -166,6 +166,7 @@ fn send_networked_component_to_new<S: NetworkedToClient + Component, C: Networke
 #[allow(clippy::too_many_arguments)]
 fn receive_networked_component<C: NetworkedFromServer + Component>(
     mut events: EventReader<MessageEvent<NetworkedComponentMessage>>,
+    mut buffer: Local<Vec<NetworkedComponentMessage>>,
     mut components: Query<&mut C>,
     registry: Res<NetworkedComponentRegistry>,
     identities: Res<NetworkIdentities>,
@@ -181,29 +182,19 @@ fn receive_networked_component<C: NetworkedFromServer + Component>(
         if uuid != &C::TYPE_UUID {
             continue;
         }
+        // TODO: We should just consume network messages instead of cloning them
+        buffer.push(event.message.clone());
+    }
 
-        let target = event.message.identity;
-        let entity = match identities.get_entity(target) {
-            Some(e) => e,
-            None => {
-                let component = std::any::type_name::<C>();
-                warn!(
-                    identity = ?target,
-                    component,
-                    "Received component message for non-existent identity"
-                );
-                continue;
-            }
+    // TODO: add logging for long-retained messages (indicates BUG)
+    buffer.retain(|message| {
+        let Some(entity) = identities.get_entity(message.identity) else {
+            return true;
         };
 
-        apply_component_update(
-            entity,
-            &event.message,
-            &mut components,
-            &mut param,
-            &mut commands,
-        );
-    }
+        apply_component_update(entity, message, &mut components, &mut param, &mut commands);
+        false
+    });
 }
 
 fn apply_component_update<C: NetworkedFromServer + Component>(

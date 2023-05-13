@@ -266,9 +266,9 @@ impl Channel {
         vec![
             ChannelConfig::Reliable(ReliableChannelConfig {
                 channel_id: Self::Default.id(),
-                message_resend_time: Duration::ZERO,
                 message_send_queue_size: 8192,
                 message_receive_queue_size: 8192,
+                ordered: true,
                 ..Default::default()
             }),
             ChannelConfig::Unreliable(UnreliableChannelConfig {

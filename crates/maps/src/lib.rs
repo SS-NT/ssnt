@@ -728,8 +728,13 @@ fn client_update_adjacencies(
     for mut tilemap in tilemaps.iter_mut() {
         let tilemap = tilemap.as_mut();
         for (dirty_position, layer) in tilemap.dirty_tiles.drain() {
-            for direction in DIRECTIONS {
-                let position = dirty_position.as_ivec2() + IVec2::from(direction);
+            for direction in DIRECTIONS
+                .iter()
+                .copied()
+                .map(IVec2::from)
+                .chain(std::iter::once(IVec2::ZERO))
+            {
+                let position = dirty_position.as_ivec2() + direction;
                 // Check for out-of-bounds
                 if position.min_element() < 0 {
                     continue;

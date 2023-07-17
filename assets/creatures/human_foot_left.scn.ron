@@ -20,7 +20,7 @@
                     kind: Dynamic
                 ),
                 "physics::Collider": (
-                    kind: Cuboid (hx: 0.1, hy: 0.1, hz: 0.1)
+                    kind: Cuboid (hx: 0.1, hy: 0.07, hz: 0.1)
                 ),
                 "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
                     id: "models/human.glb#Mesh5/Primitive0"

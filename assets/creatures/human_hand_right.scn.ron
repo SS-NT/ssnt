@@ -17,7 +17,8 @@
                     name: "Human Hand Right"
                 ),
                 "ssnt::body::Hand": (
-                    side: Right
+                    side: Right,
+                    order: 1,
                 ),
                 "ssnt::items::containers::Container": (
                     size: (x: 10, y: 10),

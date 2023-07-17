@@ -231,12 +231,14 @@ fn client_update_limbs(
 #[reflect(Component)]
 pub struct Hand {
     pub side: LimbSide,
+    order: u32,
 }
 
 impl FromWorld for Hand {
     fn from_world(_: &mut World) -> Self {
         Self {
             side: LimbSide::Left,
+            order: 0,
         }
     }
 }
@@ -338,8 +340,9 @@ struct ChangeHandRequest {
 fn hand_ui(
     mut egui_context: ResMut<EguiContext>,
     mut bodies: Query<(&Body, &mut HandsClient), With<ClientControlled>>,
-    hands: Query<(&NetworkIdentity, &Hand, Option<&Children>)>,
+    hands: Query<(Entity, &NetworkIdentity, &Hand, Option<&Children>)>,
     items: Query<(&Item, &NetworkIdentity)>,
+    mut ordered_hands: Local<Vec<(Entity, u32)>>,
     mut sender: MessageSender,
 ) {
     let Ok((body, hand_data)) = bodies.get_single_mut() else {
@@ -351,28 +354,41 @@ fn hand_ui(
         .anchor(egui::Align2::CENTER_BOTTOM, egui::Vec2::ZERO)
         .resizable(false)
         .show(egui_context.ctx_mut(), |ui| {
-            for (&identity, hand, children) in hands.iter_many(&body.limbs) {
-                let mut held_item_name = None;
-                let mut held_item_id = None;
-                if let Some(children) = children {
-                    if let Some((item, identity)) = items.iter_many(children).next() {
-                        held_item_name = Some(item.name.as_str());
-                        held_item_id = Some(*identity);
-                    }
-                }
-                let label = ui.selectable_label(
-                    identity == *hand_data.active_hand,
-                    format!("{}: {}", hand.side, held_item_name.unwrap_or("empty")),
+            ui.horizontal_wrapped(|ui| {
+                // Order hands for display
+                ordered_hands.clear();
+                ordered_hands.extend(
+                    hands
+                        .iter_many(&body.limbs)
+                        .map(|(entity, .., hand, _)| (entity, hand.order)),
                 );
-                if label.clicked() {
-                    sender.send_to_server(&ChangeHandRequest { identity });
-                } else if label.clicked_by(egui::PointerButton::Secondary) {
-                    // Request interaction list on right-click
-                    if let Some(target) = held_item_id {
-                        sender.send_to_server(&InteractionListRequest { target });
+                ordered_hands.sort_unstable_by_key(|(_, k)| *k);
+
+                for (_, &identity, hand, children) in
+                    hands.iter_many(ordered_hands.iter().map(|(e, _)| e))
+                {
+                    let mut held_item_name = None;
+                    let mut held_item_id = None;
+                    if let Some(children) = children {
+                        if let Some((item, identity)) = items.iter_many(children).next() {
+                            held_item_name = Some(item.name.as_str());
+                            held_item_id = Some(*identity);
+                        }
+                    }
+                    let label = ui.selectable_label(
+                        identity == *hand_data.active_hand,
+                        format!("{}: {}", hand.side, held_item_name.unwrap_or("empty")),
+                    );
+                    if label.clicked() {
+                        sender.send_to_server(&ChangeHandRequest { identity });
+                    } else if label.clicked_by(egui::PointerButton::Secondary) {
+                        // Request interaction list on right-click
+                        if let Some(target) = held_item_id {
+                            sender.send_to_server(&InteractionListRequest { target });
+                        }
                     }
                 }
-            }
+            });
         });
 }
 

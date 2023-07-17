@@ -6,6 +6,8 @@
                 ),
                 "networking::transform::NetworkTransform": (
                 ),
+                "ssnt::body::health::OrganicBodyPart": (
+                ),
                 "ssnt::body::Limb": (
                     attachment_position: (
                         x: 0,

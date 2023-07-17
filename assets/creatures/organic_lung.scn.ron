@@ -1,0 +1,13 @@
+(
+    entities: {
+        0: (
+            components: {
+                "ssnt::body::health::OrganicBodyPart": (
+                    oxygen_capacity: 0.005,
+                ),
+                "ssnt::body::health::OrganicLung": (
+                ),
+            }
+        )
+    }
+)

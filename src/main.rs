@@ -3,6 +3,7 @@
 mod admin;
 mod body;
 mod camera;
+mod combat;
 mod components;
 mod config;
 mod construction;
@@ -143,6 +144,7 @@ fn main() {
         .add_plugin(job::JobPlugin)
         .add_plugin(interaction::InteractionPlugin)
         .add_plugin(construction::ConstructionPlugin)
+        .add_plugin(combat::CombatPlugin)
         .insert_resource(args)
         .add_startup_system(setup_shared)
         // Temporary version of https://github.com/bevyengine/bevy/pull/6578

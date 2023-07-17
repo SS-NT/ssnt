@@ -21,7 +21,7 @@ use networking::{
     variable::{NetworkVar, ServerVar},
     Networked, Players,
 };
-use physics::PhysicsEntityCommands;
+use physics::{ColliderGroup, PhysicsEntityCommands};
 use serde::{Deserialize, Serialize};
 use utils::order::*;
 
@@ -36,6 +36,8 @@ use crate::{
         Item, StoredItem,
     },
 };
+
+mod health;
 
 pub struct BodyPlugin;
 
@@ -84,6 +86,8 @@ impl Plugin for BodyPlugin {
                 .add_system(client_update_limbs)
                 .add_system(client_hands_keybind);
         }
+
+        app.add_plugin(health::HealthPlugin);
 
         app.insert_resource(BodyAssets {
             scenes: app
@@ -135,7 +139,7 @@ impl fmt::Display for LimbSide {
 
 #[derive(Component, Reflect)]
 #[reflect(Component)]
-struct Limb {
+pub struct Limb {
     attachment_position: Vec3,
 }
 
@@ -165,17 +169,20 @@ fn process_new_limbs(
     mut commands: Commands,
 ) {
     for mut body in bodies.iter_mut() {
-        for limb_entity in body.added_limbs.drain(..) {
+        body.added_limbs.retain(|&limb_entity| {
             let Ok((limb, mut transform)) = limbs.get_mut(limb_entity) else {
-                continue;
+                return true;
             };
             transform.translation = limb.attachment_position;
-            commands.entity(limb_entity).disable_physics();
+            commands
+                .entity(limb_entity)
+                .freeze(Some(ColliderGroup::AttachedLimbs));
             writer.send(LimbEvent {
                 limb_entity,
                 kind: LimbEventKind::Added,
             });
-        }
+            false
+        });
     }
 }
 
@@ -197,7 +204,7 @@ fn process_limb_removal(
             commands
                 .entity(limb_entity)
                 .remove_parent()
-                .enable_physics();
+                .unfreeze(Some(ColliderGroup::Default));
             writer.send(LimbEvent {
                 limb_entity,
                 kind: LimbEventKind::Removed,
@@ -498,7 +505,13 @@ fn create_creature(
                     let torso = spawn_limb(builder, server.as_ref(), "human_torso")
                         .with_children(|builder| {
                             // Head
-                            let head = spawn_limb(builder, server.as_ref(), "human_head").id();
+                            let head = spawn_limb(builder, server.as_ref(), "human_head")
+                                .with_children(|builder| {
+                                    let brain =
+                                        spawn_limb(builder, server.as_ref(), "organic_brain").id();
+                                    limbs.insert(brain);
+                                })
+                                .id();
                             limbs.insert(head);
 
                             // Arms
@@ -522,24 +535,29 @@ fn create_creature(
                             limbs.insert(arm_right);
 
                             // Legs
-                            let arm_left = spawn_limb(builder, server.as_ref(), "human_leg_left")
+                            let leg_left = spawn_limb(builder, server.as_ref(), "human_leg_left")
                                 .with_children(|builder| {
-                                    let hand_left =
+                                    let foot_left =
                                         spawn_limb(builder, server.as_ref(), "human_foot_left")
                                             .id();
-                                    limbs.insert(hand_left);
+                                    limbs.insert(foot_left);
                                 })
                                 .id();
-                            limbs.insert(arm_left);
-                            let arm_right = spawn_limb(builder, server.as_ref(), "human_leg_right")
+                            limbs.insert(leg_left);
+                            let leg_right = spawn_limb(builder, server.as_ref(), "human_leg_right")
                                 .with_children(|builder| {
-                                    let hand_right =
+                                    let foot_right =
                                         spawn_limb(builder, server.as_ref(), "human_foot_right")
                                             .id();
-                                    limbs.insert(hand_right);
+                                    limbs.insert(foot_right);
                                 })
                                 .id();
-                            limbs.insert(arm_right);
+                            limbs.insert(leg_right);
+
+                            let heart = spawn_limb(builder, server.as_ref(), "organic_heart").id();
+                            limbs.insert(heart);
+                            let lung = spawn_limb(builder, server.as_ref(), "organic_lung").id();
+                            limbs.insert(lung);
                         })
                         .id();
                     limbs.insert(torso);

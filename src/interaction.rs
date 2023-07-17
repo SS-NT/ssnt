@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     body::{Hand, Hands},
     camera::MainCamera,
+    combat::ClientCombatModeStatus,
     event::*,
     items::containers::Container,
 };
@@ -458,11 +459,18 @@ fn client_request_interaction_list(
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     parents: Query<&Parent>,
     identities: Res<NetworkIdentities>,
+    combat_status: ClientCombatModeStatus,
     mut sender: MessageSender,
 ) {
     let execute_default = buttons.just_pressed(MouseButton::Left);
     let request_list = buttons.just_pressed(MouseButton::Right);
     if !execute_default && !request_list {
+        return;
+    }
+
+    // We prevent interaction with the world while fighting
+    // so we can reuse the same mouse buttons for attacking
+    if combat_status.is_enabled() {
         return;
     }
 

@@ -1,5 +1,6 @@
 use crate::{
     camera::{MainCamera, TopDownCamera},
+    combat::{ClientCombatModeStatus, CombatModeClient},
     Player,
 };
 use bevy::{math::Vec3Swizzles, prelude::*, time::FixedTimestep};
@@ -82,24 +83,54 @@ pub fn movement_system(
     }
 }
 
+const NORMAL_ROTATION_RADIANS_PER_SECOND: f32 = 5.0;
+const COMBAT_ROTATION_RADIANS_PER_SECOND: f32 = 10.0;
+
 fn character_rotation_system(
     time: Res<Time>,
-    mut query: Query<(&Player, &mut Transform), With<Player>>,
+    mut query: Query<(&Player, &mut Transform, Option<&CombatModeClient>), With<ClientControlled>>,
+    combat_mode: ClientCombatModeStatus,
 ) {
-    for (player, mut transform) in query.iter_mut() {
-        let mut target_direction: Vec2 = player.target_direction;
-        if target_direction.length() < 0.01 {
-            continue;
-        }
-        target_direction = target_direction.normalize();
+    let is_combat = combat_mode.is_enabled();
+    for (player, mut transform, combat) in query.iter_mut() {
+        let target_direction = match (is_combat, combat) {
+            (true, Some(combat)) => {
+                let position = combat.aim.target_position;
+                let origin = combat.aim.origin;
+                (position.xz() - origin.xz()).normalize_or_zero()
+            }
+            _ => {
+                let direction = player.target_direction;
+                if direction.length() < 0.01 {
+                    continue;
+                }
+                direction.normalize()
+            }
+        };
 
         let current_rotation = transform.rotation;
         let target_rotation = Quat::from_rotation_arc(
             Vec3::Z,
             Vec3::new(target_direction.x, 0.0, target_direction.y),
         );
-        let final_rotation = current_rotation.lerp(target_rotation, time.delta_seconds() * 5.0);
-        transform.rotation = final_rotation;
+
+        let angle = target_rotation.angle_between(current_rotation);
+        if angle == 0.0 {
+            continue;
+        }
+
+        // Max rotation depends on if combat is enabled
+        let max_angle = if is_combat {
+            COMBAT_ROTATION_RADIANS_PER_SECOND
+        } else {
+            NORMAL_ROTATION_RADIANS_PER_SECOND
+        };
+
+        // Linearly move towards target rotation
+        transform.rotation = current_rotation.slerp(
+            target_rotation,
+            1f32.min(time.delta_seconds() * max_angle / angle),
+        );
     }
 }
 

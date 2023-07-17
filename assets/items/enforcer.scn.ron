@@ -6,26 +6,21 @@
                 ),
                 "networking::transform::NetworkTransform": (
                 ),
-                "ssnt::Player": (),
-                "ssnt::body::Body": (
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
+                    id: "models/items/enforcer.glb#Mesh0/Primitive0"
                 ),
-                "ssnt::body::health::OrganicBody": (
+                "ssnt::items::Item": (
+                    name: "Enforcer Handgun"
+                ),
+                "ssnt::combat::ranged::Gun": (
                 ),
                 "physics::RigidBody": (
                     kind: Dynamic
                 ),
-                "bevy_rapier3d::dynamics::rigid_body::ReadMassProperties": (()),
-                "bevy_rapier3d::dynamics::rigid_body::Velocity": (),
-                "bevy_rapier3d::dynamics::rigid_body::LockedAxes": (
-                    bits: 56
-                ),
-                "bevy_hierarchy::components::children::Children": ([
-                    (index: 1, generation: 0),
-                ]),
+                "bevy_hierarchy::components::children::Children": ([(index: 1, generation: 0)]),
             }
         ),
-        // Basic collider
-       1: (
+        1: (
             components: {
                 "bevy_hierarchy::components::parent::Parent": (
                     ( index: 0, generation: 0 )
@@ -33,15 +28,14 @@
                 "bevy_transform::components::transform::Transform": (
                     translation: (
                         x: 0.0,
-                        y: 0.65,
-                        z: 0.0,
+                        y: 0.09,
+                        z: -0.03,
                     ),
                 ),
                 "physics::Collider": (
-                    kind: Capsule (hy: 0.5, r: 0.18),
-                    group: CharacterColliders,
+                    kind: Cuboid (hx: 0.03, hy: 0.17, hz: 0.1)
                 )
             }
-        ),
+        )
     }
 )

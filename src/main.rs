@@ -6,6 +6,7 @@ mod camera;
 mod components;
 mod config;
 mod construction;
+mod debug;
 mod event;
 mod interaction;
 mod items;
@@ -26,7 +27,6 @@ use bevy::prelude::*;
 use bevy::scene::ScenePlugin;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy_egui::EguiPlugin;
-use bevy_inspector_egui::{WorldInspectorParams, WorldInspectorPlugin};
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::Collider;
 use byond::tgm::TgmLoader;
@@ -118,13 +118,8 @@ fn main() {
                 .add_plugin(networking_plugin)
                 .add_plugin(camera::CameraPlugin)
                 .add_plugin(EguiPlugin)
-                .insert_resource(WorldInspectorParams {
-                    enabled: true,
-                    ..Default::default()
-                })
-                .add_plugin(WorldInspectorPlugin::new())
                 .add_plugin(ui::UiPlugin)
-                // .add_plugin(bevy_rapier3d::render::RapierDebugRenderPlugin::default())
+                .add_plugin(debug::DebugPlugin)
                 .insert_resource(ClearColor(Color::rgb(
                     44.0 / 255.0,
                     68.0 / 255.0,

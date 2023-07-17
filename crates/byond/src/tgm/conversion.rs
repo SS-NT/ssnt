@@ -1,7 +1,7 @@
 use bevy::{asset::AssetPathId, math::UVec2, utils::HashMap};
 
 use super::{Tile, TileMap, Value};
-use maps::{Direction, TileData, TileMapData};
+use maps::{Direction, TileData, TileMapData, DIRECTIONS};
 
 pub fn to_map_data(tilemap: &TileMap) -> TileMapData {
     let size = tilemap.size();
@@ -32,6 +32,35 @@ pub fn to_map_data(tilemap: &TileMap) -> TileMapData {
                 .entry_ref(job_name)
                 .or_default()
                 .push(UVec2::new(position.x, position.z));
+        }
+    }
+
+    for index in 0..temporary_tiles.len() {
+        let Some(tile) = temporary_tiles.get_mut(index).unwrap() else {
+            continue;
+        };
+        let mounts = std::mem::take(&mut tile.high_mounts);
+        for (mount_index, mount) in mounts.iter().enumerate() {
+            let Some(mount) = mount else {
+                continue;
+            };
+
+            let direction = DIRECTIONS[mount_index];
+            let target_index = match direction {
+                Direction::North => index - size.x as usize,
+                Direction::East => index + 1,
+                Direction::South => index + size.x as usize,
+                Direction::West => index - 1,
+            };
+
+            let Some(target_tile) = temporary_tiles.get_mut(target_index) else {
+                continue;
+            };
+
+            let Some(target_tile) = target_tile else {
+                continue;
+            };
+            target_tile.high_mounts[(-direction) as usize] = Some(*mount);
         }
     }
 

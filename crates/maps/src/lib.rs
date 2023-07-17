@@ -1,3 +1,5 @@
+use std::ops::Neg;
+
 use adjacency::{AdjacencyInformation, TilemapAdjacency};
 use arrayvec::ArrayVec;
 use bevy::{
@@ -221,8 +223,8 @@ impl Direction {
 
 pub const DIRECTIONS: [Direction; 4] = [
     Direction::North,
-    Direction::South,
     Direction::East,
+    Direction::South,
     Direction::West,
 ];
 
@@ -265,6 +267,19 @@ impl TryFrom<usize> for Direction {
     }
 }
 
+impl Neg for Direction {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        match self {
+            Self::North => Self::South,
+            Self::East => Self::West,
+            Self::South => Self::North,
+            Self::West => Self::East,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TileLayer {
@@ -277,7 +292,7 @@ impl TileLayer {
     fn default_offset(&self) -> Vec3 {
         match self {
             TileLayer::Furniture | TileLayer::Turf => Vec3::ZERO,
-            TileLayer::HighMount => Vec3::new(0.0, 2.0, 0.0),
+            TileLayer::HighMount => Vec3::new(0.5, 2.0, 0.0),
         }
     }
 }
@@ -486,7 +501,8 @@ fn spawn_from_data(
                                         scene: scene.into(),
                                         transform: Transform {
                                             translation: Vec3::new(x as f32, 0.0, y as f32)
-                                                + layer.default_offset(),
+                                                + direction.rotate_around(Vec3::Y)
+                                                    * layer.default_offset(),
                                             rotation: direction.rotate_around(Vec3::Y),
                                             ..Default::default()
                                         },

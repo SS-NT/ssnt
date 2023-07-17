@@ -61,17 +61,23 @@ async fn load_tgm<'a, 'b>(
         definitions,
         chunks
             .iter()
+            .rev()
             .flat_map(|chunk| {
-                chunk.1.split('\n').enumerate().map(move |(offset, mut s)| {
-                    if s.ends_with('\r') {
-                        let mut chars = s.chars();
-                        chars.next_back();
-                        s = chars.as_str();
-                    }
-                    let mut position = chunk.0;
-                    position.z += offset as u32;
-                    (position, s)
-                })
+                chunk
+                    .1
+                    .split('\n')
+                    .rev()
+                    .enumerate()
+                    .map(move |(offset, mut s)| {
+                        if s.ends_with('\r') {
+                            let mut chars = s.chars();
+                            chars.next_back();
+                            s = chars.as_str();
+                        }
+                        let mut position = chunk.0;
+                        position.z += offset as u32;
+                        (position, s)
+                    })
             })
             .collect(),
     );

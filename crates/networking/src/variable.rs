@@ -106,13 +106,24 @@ pub(crate) fn assert_compatible<
 }
 
 /// A variable that is networked to clients.
-#[derive(Default)]
 pub struct NetworkVar<T> {
     value: T,
     /// The value before the last change to `value`.
     /// Used to diff the most recent change.
     last_value: Option<T>,
     change_state: ChangeState,
+}
+
+impl<T: Default> Default for NetworkVar<T> {
+    fn default() -> Self {
+        Self {
+            value: Default::default(),
+            last_value: Default::default(),
+            change_state: ChangeState::Clean {
+                last_changed_tick: 0,
+            },
+        }
+    }
 }
 
 impl<T> NetworkVar<T> {
@@ -132,6 +143,19 @@ impl<T> NetworkVar<T> {
             true
         } else {
             false
+        }
+    }
+
+    /// Creates a network variable from a default value to avoid the need for an initial sync.
+    /// The client [`ServerVar`] must be created with the same value to avoid desync.
+    pub fn from_default(default: T) -> Self {
+        Self {
+            value: default,
+            last_value: None,
+            // TODO: Do we need another state for "never changed"
+            change_state: ChangeState::Clean {
+                last_changed_tick: 0,
+            },
         }
     }
 }
@@ -183,6 +207,12 @@ pub struct ServerVar<T> {
 }
 
 impl<T> ServerVar<T> {
+    pub fn from_default(default: T) -> Self {
+        Self {
+            value: Some(default),
+        }
+    }
+
     pub fn set(&mut self, value: T) {
         self.value = Some(value);
     }

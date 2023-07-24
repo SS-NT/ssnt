@@ -14,10 +14,10 @@ use networking::{
     component::AppExt,
     identity::{EntityCommandsExt, NetworkIdentities, NetworkIdentity},
     scene::NetworkSceneBundle,
-    spawning::{NetworkedEntityEvent, SpawningSystems},
+    spawning::{NetworkedEntityEvent, SpawningSet},
     transform::NetworkTransform,
     variable::{NetworkVar, ServerVar},
-    visibility::{GridAabb, VisibilitySystem, GLOBAL_GRID_CELL_SIZE},
+    visibility::{GridAabb, GLOBAL_GRID_CELL_SIZE},
     NetworkManager, Networked,
 };
 use serde::{Deserialize, Serialize};
@@ -494,33 +494,33 @@ fn spawn_from_data(
                 let mut spawn_object =
                     |asset_path, index_in_layer, direction: Direction| -> Entity {
                         let scene = server.get_handle(asset_path);
-                        commands.entity(map_entity).add_children(|builder| {
-                            builder
-                                .spawn((
-                                    NetworkSceneBundle {
-                                        scene: scene.into(),
-                                        transform: Transform {
-                                            translation: Vec3::new(x as f32, 0.0, y as f32)
-                                                + direction.rotate_around(Vec3::Y)
-                                                    * layer.default_offset(),
-                                            rotation: direction.rotate_around(Vec3::Y),
-                                            ..Default::default()
-                                        },
+                        let tile = commands
+                            .spawn((
+                                NetworkSceneBundle {
+                                    scene: scene.into(),
+                                    transform: Transform {
+                                        translation: Vec3::new(x as f32, 0.0, y as f32)
+                                            + direction.rotate_around(Vec3::Y)
+                                                * layer.default_offset(),
+                                        rotation: direction.rotate_around(Vec3::Y),
                                         ..Default::default()
                                     },
-                                    TileEntity {
-                                        tilemap: map_entity.into(),
-                                        path: TileEntityPath {
-                                            position: UVec2::new(x, y),
-                                            layer,
-                                            index_in_layer,
-                                        }
-                                        .into(),
-                                    },
-                                ))
-                                .networked()
-                                .id()
-                        })
+                                    ..Default::default()
+                                },
+                                TileEntity {
+                                    tilemap: map_entity.into(),
+                                    path: TileEntityPath {
+                                        position: UVec2::new(x, y),
+                                        layer,
+                                        index_in_layer,
+                                    }
+                                    .into(),
+                                },
+                            ))
+                            .networked()
+                            .id();
+                        commands.entity(map_entity).add_child(tile);
+                        tile
                     };
 
                 match layer_data {
@@ -588,8 +588,8 @@ struct DespawnTileEntityCommand {
 }
 
 impl Command for DespawnTileEntityCommand {
-    fn write(self, world: &mut World) {
-        if let Some(tile) = world.entity_mut(self.entity).remove::<TileEntity>() {
+    fn apply(self, world: &mut World) {
+        if let Some(tile) = world.entity_mut(self.entity).take::<TileEntity>() {
             let path = *tile.path;
             if let Some(mut map) = world.get_mut::<TileMap>(*tile.tilemap) {
                 if let Some(reference) = map.tile_mut(path.position) {
@@ -840,7 +840,7 @@ pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
-        app.add_startup_system(load_tilemap_assets)
+        app.add_systems(Startup, load_tilemap_assets)
             .register_type::<TilemapAdjacency>()
             .register_type::<adjacency::AdjacencyVariants<Handle<Mesh>>>()
             .add_networked_component::<TileEntity, TileEntityClient>()
@@ -852,15 +852,23 @@ impl Plugin for MapPlugin {
             .unwrap()
             .is_client()
         {
-            app.add_system_to_stage(CoreStage::PostUpdate, client_initialize_tile_objects)
-                .add_system(client_update_tile_entities)
-                .add_system(client_mark_deleted_tile_entities.after(SpawningSystems::Spawn))
-                .add_system_to_stage(CoreStage::PostUpdate, client_update_adjacencies);
-        } else {
-            app.add_system(spawn_from_data).add_system_to_stage(
-                CoreStage::PostUpdate,
-                update_grid_aabb.before(VisibilitySystem::UpdateGrid),
+            app.add_systems(
+                PreUpdate,
+                client_mark_deleted_tile_entities.in_set(SpawningSet::BeforeDespawn),
+            )
+            .add_systems(
+                Update,
+                (
+                    client_initialize_tile_objects,
+                    client_update_tile_entities,
+                    apply_deferred,
+                    client_update_adjacencies,
+                )
+                    .chain(),
             );
+        } else {
+            app.add_systems(Update, spawn_from_data)
+                .add_systems(PostUpdate, update_grid_aabb);
         }
     }
 }

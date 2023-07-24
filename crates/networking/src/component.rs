@@ -5,14 +5,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
-    messaging::{
-        AppExt as MessagingAppExt, MessageEvent, MessageReceivers, MessageSender, MessagingSystem,
-    },
-    spawning::SpawningSystems,
+    messaging::{AppExt as MessagingAppExt, MessageEvent, MessageReceivers, MessageSender},
     time::ServerNetworkTime,
     variable::*,
     visibility::NetworkVisibilities,
-    NetworkManager, NetworkSystem,
+    NetworkManager, NetworkSet,
 };
 
 /// A message that contains data for a component.
@@ -224,7 +221,7 @@ fn apply_component_update<C: NetworkedFromServer + Component>(
 }
 
 fn send_networked_component_removed<S: NetworkedToClient + Component, C: NetworkedFromServer>(
-    removed_from: RemovedComponents<S>,
+    mut removed_from: RemovedComponents<S>,
     entities: Query<()>,
     identities: Res<NetworkIdentities>,
     visibilities: Res<NetworkVisibilities>,
@@ -309,36 +306,30 @@ impl AppExt for App {
             panic!("Client component was already registered");
         }
         if self.world.resource::<NetworkManager>().is_server() {
-            self.add_system(
-                send_networked_component_to_new::<S, C>
-                    .before(MessagingSystem::SendOutbound)
-                    .after(NetworkSystem::Visibility)
-                    .after(SpawningSystems::Spawn),
-            )
-            .add_system(
-                send_networked_component_changed::<S, C>
-                    .before(MessagingSystem::SendOutbound)
-                    .before(NetworkSystem::Visibility),
-            )
-            .add_system_to_stage(
-                CoreStage::PostUpdate,
-                send_networked_component_removed::<S, C>,
+            self.add_systems(
+                PostUpdate,
+                (
+                    send_networked_component_to_new::<S, C>,
+                    send_networked_component_changed::<S, C>,
+                    send_networked_component_removed::<S, C>,
+                )
+                    .in_set(NetworkSet::ServerWrite),
             );
         } else {
-            self.add_system(
-                receive_networked_component::<C>
-                    .before(NetworkSystem::ReadNetworkMessages)
-                    .label(ComponentSystem::Apply),
-            )
-            .add_system(
-                client_handle_component_removal::<C>.after(NetworkSystem::ReadNetworkMessages),
+            self.add_systems(
+                PreUpdate,
+                (
+                    receive_networked_component::<C>,
+                    client_handle_component_removal::<C>,
+                )
+                    .in_set(NetworkSet::ClientApply),
             );
         }
         self
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemSet)]
 pub enum ComponentSystem {
     Apply,
 }

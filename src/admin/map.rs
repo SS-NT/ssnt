@@ -16,8 +16,8 @@ struct ChangeMapMessage {
     name: String,
 }
 
-fn client_map_selection_ui(mut egui_context: ResMut<EguiContext>, mut sender: MessageSender) {
-    egui::Window::new("Load map").show(egui_context.ctx_mut(), |ui| {
+fn client_map_selection_ui(mut contexts: EguiContexts, mut sender: MessageSender) {
+    egui::Window::new("Load map").show(contexts.ctx_mut(), |ui| {
         for &map_name in ["DeltaStation2", "BoxStation", "MetaStation"].iter() {
             if ui.button(map_name).clicked() {
                 sender.send_to_server(&ChangeMapMessage {
@@ -34,10 +34,7 @@ fn map_loader_system(
     server: Res<AssetServer>,
     tilemaps: Query<Entity, With<TileMap>>,
 ) {
-    let message = match messages.iter().last() {
-        Some(m) => &m.message,
-        None => return,
-    };
+    let message = &messages.iter().last().unwrap().message;
 
     // Delete existing maps
     for entity in tilemaps.iter() {
@@ -65,10 +62,14 @@ impl Plugin for MapManagementPlugin {
             .unwrap()
             .is_server()
         {
-            app.add_system(map_loader_system);
+            app.add_systems(
+                Update,
+                map_loader_system.run_if(on_event::<MessageEvent<ChangeMapMessage>>()),
+            );
         } else {
-            app.add_system_set(
-                SystemSet::on_update(GameState::Game).with_system(client_map_selection_ui),
+            app.add_systems(
+                Update,
+                client_map_selection_ui.run_if(in_state(GameState::Game)),
             );
         }
     }

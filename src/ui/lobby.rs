@@ -4,7 +4,7 @@ use crate::{
     GameState,
 };
 use bevy::{asset::HandleId, prelude::*};
-use bevy_egui::EguiContext;
+use bevy_egui::EguiContexts;
 use bevy_inspector_egui::egui;
 use networking::{messaging::MessageSender, spawning::ClientControlled};
 
@@ -12,16 +12,12 @@ pub struct LobbyPlugin;
 
 impl Plugin for LobbyPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system_set(
-            SystemSet::on_update(GameState::Game)
-                .with_system(ui)
-                .with_system(job_ui),
-        );
+        app.add_systems(Update, (ui, job_ui).run_if(in_state(GameState::Game)));
     }
 }
 
 fn ui(
-    mut egui_context: ResMut<EguiContext>,
+    mut contexts: EguiContexts,
     round_data: Option<Res<RoundDataClient>>,
     client_controlled: Query<(), With<ClientControlled>>,
     mut sender: MessageSender,
@@ -33,7 +29,7 @@ fn ui(
 
     egui::Window::new("Lobby")
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(egui_context.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut(), |ui| {
             if let Some(data) = round_data {
                 ui.label(format!("Round state: {:?}", data.state()));
 
@@ -58,7 +54,7 @@ fn ui(
 }
 
 fn job_ui(
-    mut egui_context: ResMut<EguiContext>,
+    mut contexts: EguiContexts,
     client_controlled: Query<(), With<ClientControlled>>,
     jobs: Res<Assets<JobDefinition>>,
     mut sender: MessageSender,
@@ -84,7 +80,7 @@ fn job_ui(
     let previous_job = *selected_job;
     egui::Window::new("Jobs")
         .anchor(egui::Align2::RIGHT_CENTER, egui::vec2(-30.0, 0.0))
-        .show(egui_context.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut(), |ui| {
             for handle in sorted_jobs.iter() {
                 let job_definition = jobs.get(handle).unwrap();
                 ui.radio_value(&mut *selected_job, Some(handle.id()), &job_definition.name);

@@ -25,8 +25,7 @@ impl Plugin for PhysicsPlugin {
             .register_type::<RigidBody>()
             .register_type::<RigidBodyType>()
             .register_type::<bevy_rapier3d::dynamics::ReadMassProperties>()
-            .add_system(add_colliders.at_start())
-            .add_system(add_rigidbodies.at_start());
+            .add_systems(Update, (add_colliders, add_rigidbodies));
     }
 }
 
@@ -180,12 +179,12 @@ struct SetPhysicsCommand {
 }
 
 impl Command for SetPhysicsCommand {
-    fn write(self, world: &mut World) {
+    fn apply(self, world: &mut World) {
         let mut root = world.entity_mut(self.entity);
 
         if self.enabled {
             root.remove::<RigidBodyDisabled>();
-        } else if root.contains::<RapierRigidBody>() && !root.contains::<RigidBodyDisabled>() {
+        } else if !root.contains::<RigidBodyDisabled>() {
             root.insert(RigidBodyDisabled);
         }
 

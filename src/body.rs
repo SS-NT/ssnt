@@ -2,7 +2,7 @@ use std::fmt;
 
 use bevy::{
     ecs::{
-        entity::{EntityMap, MapEntities},
+        entity::{EntityMapper, MapEntities},
         reflect::ReflectMapEntities,
         system::EntityCommands,
     },
@@ -10,7 +10,7 @@ use bevy::{
     reflect::TypeUuid,
     utils::HashSet,
 };
-use bevy_egui::{egui, EguiContext};
+use bevy_egui::{egui, EguiContexts};
 use networking::{
     component::AppExt as ComponentAppExt,
     identity::{EntityCommandsExt, NetworkIdentities, NetworkIdentity},
@@ -26,10 +26,9 @@ use serde::{Deserialize, Serialize};
 use utils::order::*;
 
 use crate::{
-    event::*,
     interaction::{
-        ActiveInteraction, InteractionListEvent, InteractionListRequest, InteractionOption,
-        InteractionSpecificity, InteractionStatus,
+        ActiveInteraction, GenerateInteractionList, InteractionListEvents, InteractionListRequest,
+        InteractionOption, InteractionSpecificity, InteractionStatus,
     },
     items::{
         containers::{Container, MoveItemOrder, MoveItemResult},
@@ -53,41 +52,36 @@ impl Plugin for BodyPlugin {
 
         if is_server(app) {
             app.register_type::<PickupInteraction>()
-                .add_event::<LimbEvent>()
-                .add_system(pickup_interaction)
-                .add_system(
-                    prepare_pickup_interaction
-                        .into_descriptor()
-                        .intercept::<InteractionListEvent>(),
-                )
                 .register_type::<DropInteraction>()
-                .add_system(drop_interaction)
-                .add_system(
-                    prepare_drop_interaction
-                        .into_descriptor()
-                        .intercept::<InteractionListEvent>(),
-                )
                 .register_type::<CutInteraction>()
-                .add_system(cut_interaction)
-                .add_system(
-                    prepare_cut_interaction
-                        .into_descriptor()
-                        .intercept::<InteractionListEvent>(),
-                )
-                .add_system(handle_hand_modification)
-                .add_system(handle_hand_separation)
-                .add_system(handle_hand_change_request)
+                .add_event::<LimbEvent>()
                 .register_order::<SpawnCreatureOrder, SpawnCreatureResult>()
-                .add_system(create_creature.after(process_new_limbs))
-                .add_system(process_new_limbs)
-                .add_system(process_limb_removal);
+                .add_systems(
+                    Update,
+                    (
+                        pickup_interaction,
+                        drop_interaction,
+                        cut_interaction,
+                        (
+                            prepare_pickup_interaction,
+                            prepare_drop_interaction,
+                            prepare_cut_interaction,
+                        )
+                            .in_set(GenerateInteractionList),
+                        handle_hand_modification,
+                        handle_hand_separation,
+                        handle_hand_change_request,
+                        (process_new_limbs, process_limb_removal, create_creature).chain(),
+                    ),
+                );
         } else {
-            app.add_system(hand_ui)
-                .add_system(client_update_limbs)
-                .add_system(client_hands_keybind);
+            app.add_systems(
+                Update,
+                ((client_update_limbs, hand_ui).chain(), client_hands_keybind),
+            );
         }
 
-        app.add_plugin(health::HealthPlugin);
+        app.add_plugins(health::HealthPlugin);
 
         app.insert_resource(BodyAssets {
             scenes: app
@@ -108,17 +102,12 @@ pub struct Body {
 }
 
 impl MapEntities for Body {
-    fn map_entities(
-        &mut self,
-        entity_map: &EntityMap,
-    ) -> Result<(), bevy::ecs::entity::MapEntitiesError> {
+    fn map_entities(&mut self, entity_mapper: &mut EntityMapper) {
         self.limbs = self
             .limbs
             .iter()
-            .map(|e| entity_map.get(*e))
-            .collect::<Result<_, _>>()?;
-
-        Ok(())
+            .map(|e| entity_mapper.get_or_reserve(*e))
+            .collect();
     }
 }
 
@@ -151,6 +140,7 @@ impl FromWorld for Limb {
     }
 }
 
+#[derive(Event)]
 struct LimbEvent {
     limb_entity: Entity,
     kind: LimbEventKind,
@@ -294,7 +284,7 @@ fn handle_hand_modification(
             .collect();
         if let Some(mut hands) = existing_hands {
             // We still have the hand that's currently active, nothing to change
-            if current_hands.contains(&hands.active_hand) {
+            if current_hands.contains(&*((&hands).active_hand)) {
                 continue;
             }
             // If we lost that hand, choose a random one or remove hands entirely
@@ -345,7 +335,7 @@ struct ChangeHandRequest {
 }
 
 fn hand_ui(
-    mut egui_context: ResMut<EguiContext>,
+    mut contexts: EguiContexts,
     mut bodies: Query<(&Body, &mut HandsClient), With<ClientControlled>>,
     hands: Query<(Entity, &NetworkIdentity, &Hand, Option<&Children>)>,
     items: Query<(&Item, &NetworkIdentity)>,
@@ -360,7 +350,7 @@ fn hand_ui(
         .title_bar(false)
         .anchor(egui::Align2::CENTER_BOTTOM, egui::Vec2::ZERO)
         .resizable(false)
-        .show(egui_context.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut(), |ui| {
             ui.horizontal_wrapped(|ui| {
                 // Order hands for display
                 ordered_hands.clear();
@@ -464,10 +454,12 @@ struct BodyAssets {
 }
 
 /// An order to create the body of a given creature archetype
+#[derive(Event)]
 pub struct SpawnCreatureOrder {
     pub archetype: String,
 }
 
+#[derive(Event)]
 pub struct SpawnCreatureResult {
     pub root: Entity,
 }
@@ -500,8 +492,8 @@ fn create_creature(
         // TODO: Replace with species configuration in assets
         match data.archetype.as_str() {
             "human" => {
-                let limbs = creature.add_children(|builder| {
-                    let mut limbs = HashSet::default();
+                let mut limbs = HashSet::default();
+                creature.with_children(|builder| {
                     let torso = spawn_limb(builder, server.as_ref(), "human_torso")
                         .with_children(|builder| {
                             // Head
@@ -561,7 +553,6 @@ fn create_creature(
                         })
                         .id();
                     limbs.insert(torso);
-                    limbs
                 });
                 let added_limbs = limbs.iter().copied().collect();
                 creature.insert(Body {
@@ -602,12 +593,12 @@ impl FromWorld for PickupInteraction {
 }
 
 fn prepare_pickup_interaction(
-    events: Res<InterceptableEvents<InteractionListEvent>>,
+    interaction_lists: Res<InteractionListEvents>,
     items: Query<&Item>,
     bodies: Query<(&Body, &Hands)>,
     hand_query: Query<(&Hand, &Container)>,
 ) {
-    for event in events.iter() {
+    for event in interaction_lists.events.iter() {
         let Ok(_) = items.get(event.target) else {
             continue;
         };
@@ -717,12 +708,12 @@ impl FromWorld for DropInteraction {
 }
 
 fn prepare_drop_interaction(
-    events: Res<InterceptableEvents<InteractionListEvent>>,
+    interaction_list: Res<InteractionListEvents>,
     items: Query<&StoredItem>,
     bodies: Query<&Body>,
     hand_query: Query<Entity, With<Hand>>,
 ) {
-    for event in events.iter() {
+    for event in interaction_list.events.iter() {
         let Ok(stored) = items.get(event.target) else {
             continue;
         };
@@ -810,10 +801,10 @@ struct Cutting {}
 struct CutInteraction {}
 
 fn prepare_cut_interaction(
-    events: Res<InterceptableEvents<InteractionListEvent>>,
+    interaction_list: Res<InteractionListEvents>,
     cutting_items: Query<(), (With<Item>, With<Cutting>)>,
 ) {
-    for event in events.iter() {
+    for event in interaction_list.events.iter() {
         let Some(item) = event.item_in_hand else {
             continue;
         };

@@ -1,5 +1,4 @@
 use bevy::{
-    asset::AssetStage,
     prelude::*,
     scene::{DynamicEntity, DynamicScene},
 };
@@ -56,7 +55,10 @@ pub struct ScenePlugin;
 
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_system_to_stage(AssetStage::AssetEvents, modify_loaded_scenes.at_end());
+        app.add_systems(
+            Update,
+            modify_loaded_scenes.after(bevy::asset::update_asset_storage_system::<DynamicScene>),
+        );
 
         if is_client(app) {
             app.insert_resource(ClientSceneAssets {

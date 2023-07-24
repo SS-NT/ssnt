@@ -1,9 +1,6 @@
 use bevy::{
     ecs::system::{Command, EntityCommands},
-    prelude::{
-        error, App, Component, CoreStage, Entity, FromWorld, IntoSystemDescriptor, Plugin,
-        ReflectComponent, RemovedComponents, ResMut, Resource, SystemLabel,
-    },
+    prelude::*,
     reflect::Reflect,
     utils::HashMap,
 };
@@ -60,7 +57,7 @@ struct NetworkCommand {
 }
 
 impl Command for NetworkCommand {
-    fn write(self, world: &mut bevy::prelude::World) {
+    fn apply(self, world: &mut World) {
         let manager = world
             .get_resource::<NetworkManager>()
             .expect("Network manager must exist for networked entities");
@@ -99,7 +96,7 @@ impl EntityCommandsExt for EntityCommands<'_, '_, '_> {
     }
 }
 
-#[derive(SystemLabel)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemSet)]
 pub(crate) enum IdentitySystem {
     ClearRemoved,
 }
@@ -110,16 +107,15 @@ impl Plugin for IdentityPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<NetworkIdentity>()
             .init_resource::<NetworkIdentities>()
-            .add_system_to_stage(
-                // TODO: Run this directly before trackers are cleared. Blocked on Bevy ECS changes.
-                CoreStage::PostUpdate,
-                unregister_deleted_entities.label(IdentitySystem::ClearRemoved),
+            .add_systems(
+                PostUpdate,
+                unregister_deleted_entities.in_set(IdentitySystem::ClearRemoved),
             );
     }
 }
 
 fn unregister_deleted_entities(
-    removed: RemovedComponents<NetworkIdentity>,
+    mut removed: RemovedComponents<NetworkIdentity>,
     mut identities: ResMut<NetworkIdentities>,
 ) {
     for entity in removed.iter() {

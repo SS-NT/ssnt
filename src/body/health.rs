@@ -17,14 +17,18 @@ impl Plugin for HealthPlugin {
             .register_type::<OrganicHeart>()
             .register_type::<OrganicBrain>();
         if is_server(app) {
-            app.add_event::<HeartBeat>()
-                .add_system(heart_beat)
-                .add_system(breathing)
-                .add_system(lung_gas_exchange)
-                .add_system(receive_damage)
-                .add_system(brain_live);
+            app.add_event::<HeartBeat>().add_systems(
+                Update,
+                (
+                    heart_beat,
+                    breathing,
+                    lung_gas_exchange,
+                    receive_damage,
+                    brain_live,
+                ),
+            );
         }
-        app.add_plugin(scanner::HealthScannerPlugin);
+        app.add_plugins(scanner::HealthScannerPlugin);
     }
 }
 
@@ -136,6 +140,7 @@ impl Default for OrganicHeart {
     }
 }
 
+#[derive(Event)]
 struct HeartBeat {
     body: Entity,
     blood_amount: f32,

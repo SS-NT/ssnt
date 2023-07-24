@@ -9,8 +9,8 @@ edition = "2021"
 networking_derive = { version = "0.1.0", path = "./networking_derive" }
 physics = { path = "../physics" }
 bevy = { workspace = true }
-bevy_renet = "0.0.6"
-bytes = "1.2.1"
+bevy_renet = "0.0.9"
+bytes = { version = "1.4.0", features = ["serde"] }
 serde = { version = "*", features = ["derive"] }
 bincode = "1.3.3"
 bevy_rapier3d = { workspace = true }

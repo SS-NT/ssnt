@@ -17,12 +17,12 @@ impl Plugin for ItemPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Item>()
             .add_networked_component::<StoredItem, StoredItemClient>()
-            .add_startup_system(load_item_assets);
+            .add_systems(Startup, load_item_assets);
 
         if !is_server(app) {
-            app.add_system(client_initialize_spawned_items);
+            app.add_systems(Update, client_initialize_spawned_items);
         }
-        app.add_plugin(ContainerPlugin);
+        app.add_plugins(ContainerPlugin);
     }
 }
 

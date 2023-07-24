@@ -5,6 +5,7 @@ use bevy::{
     prelude::{App, EventReader, EventWriter, ResMut, Resource},
 };
 
+#[derive(Event)]
 pub struct Order<T: 'static> {
     id: OrderId<T>,
     data: T,
@@ -84,6 +85,7 @@ impl<T> InternalOrderRes<T> {
     }
 }
 
+#[derive(Event)]
 pub struct OrderResult<O: 'static, R> {
     pub id: OrderId<O>,
     pub data: R,
@@ -116,12 +118,12 @@ impl OrderAppExt for App {
 
 /// System param used to create orders that will be completed by another system.
 #[derive(SystemParam)]
-pub struct Orderer<'w, 's, T: Event> {
-    writer: EventWriter<'w, 's, Order<T>>,
+pub struct Orderer<'w, T: Event> {
+    writer: EventWriter<'w, Order<T>>,
     res: ResMut<'w, InternalOrderRes<T>>,
 }
 
-impl<'w, 's, T: Event> Orderer<'w, 's, T> {
+impl<'w, T: Event> Orderer<'w, T> {
     /// Creates an order and returns the id used to retrieve the result.
     pub fn create(&mut self, order: T) -> OrderId<T> {
         let id = self.res.next_id();
@@ -145,7 +147,7 @@ impl<'w, 's, O: 'static, R: Event> Results<'w, 's, O, R> {
 
     pub fn iter(
         &mut self,
-    ) -> impl DoubleEndedIterator<Item = &OrderResult<O, R>> + ExactSizeIterator<Item = &OrderResult<O, R>>
+    ) -> impl Iterator<Item = &OrderResult<O, R>> + ExactSizeIterator<Item = &OrderResult<O, R>>
     {
         self.reader.iter()
     }

@@ -1,5 +1,5 @@
-use bevy::{ecs::system::SystemParam, prelude::*, reflect::TypeUuid};
-use bevy_egui::{egui, EguiContext};
+use bevy::{ecs::system::SystemParam, prelude::*, reflect::TypeUuid, window::PrimaryWindow};
+use bevy_egui::{egui, EguiContexts};
 use bevy_rapier3d::prelude::RapierContext;
 use networking::{
     component::AppExt,
@@ -30,15 +30,21 @@ impl Plugin for CombatPlugin {
             .add_networked_component::<CombatMode, CombatModeClient>();
         if is_server(app) {
             app.add_event::<CombatInputEvent>()
-                .add_system(receive_combat_mode_request)
-                .add_system(handle_attack_request);
+                .add_systems(Update, (receive_combat_mode_request, handle_attack_request));
         } else {
-            app.add_system(client_combat_mode_ui)
-                .add_system(client_toggle_combat_mode)
-                .add_system(client_calculate_aim)
-                .add_system(client_combat_input);
+            app.add_systems(
+                Update,
+                (
+                    client_toggle_combat_mode,
+                    (
+                        (client_calculate_aim, client_combat_input).chain(),
+                        client_combat_mode_ui,
+                    ),
+                )
+                    .chain(),
+            );
         }
-        app.add_plugin(RangedPlugin);
+        app.add_plugins(RangedPlugin);
     }
 }
 
@@ -105,19 +111,18 @@ fn receive_combat_mode_request(
     }
 }
 
-fn client_combat_mode_ui(mut egui_context: ResMut<EguiContext>, status: ClientCombatModeStatus) {
+fn client_combat_mode_ui(mut contexts: EguiContexts, status: ClientCombatModeStatus) {
     // Show UI only if combat mode is enabled
     if !status.is_enabled() {
         return;
     }
-
     egui::Area::new("combat_mode_indicator")
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 0.0))
-        .show(egui_context.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut(), |ui| {
             ui.vertical_centered_justified(|ui| {
                 ui.label(
                     egui::RichText::new("COMBAT MODE")
-                        .color(egui::color::Rgba::RED)
+                        .color(egui::Rgba::RED)
                         .size(21.0),
                 );
             });
@@ -149,7 +154,7 @@ pub struct Aim {
 
 fn client_calculate_aim(
     mut players: Query<(&mut CombatModeClient, &GlobalTransform), With<ClientControlled>>,
-    windows: Res<Windows>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     rapier_context: Res<RapierContext>,
 ) {
@@ -157,7 +162,7 @@ fn client_calculate_aim(
         return;
     }
 
-    let Some(window) = windows.get_primary() else {
+    let Ok(window) = windows.get_single() else {
         return;
     };
     let Some((camera, camera_transform)) = cameras.iter().next() else {
@@ -215,6 +220,7 @@ fn client_combat_input(
     });
 }
 
+#[derive(Event)]
 struct CombatInputEvent {
     actor: Entity,
     input: CombatInput,

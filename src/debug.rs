@@ -1,42 +1,46 @@
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContext};
-use bevy_inspector_egui::{WorldInspectorParams, WorldInspectorPlugin};
+use bevy_egui::{egui, EguiContexts};
+use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_rapier3d::render::DebugRenderContext;
 
 pub(crate) struct DebugPlugin;
 
+#[derive(Resource, Default)]
+struct DebugState {
+    inspector_enabled: bool,
+}
+
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(bevy_rapier3d::render::RapierDebugRenderPlugin::default().disabled())
-            .insert_resource(WorldInspectorParams {
-                enabled: false,
-                ..Default::default()
-            })
-            .add_plugin(WorldInspectorPlugin::new())
-            .add_system(debug_menu)
-            .add_system(debug_watermark);
+        app.init_resource::<DebugState>()
+            .add_plugins((
+                bevy_rapier3d::render::RapierDebugRenderPlugin::default().disabled(),
+                WorldInspectorPlugin::new()
+                    .run_if(|state: Res<DebugState>| state.inspector_enabled),
+            ))
+            .add_systems(Update, (debug_menu, debug_watermark));
     }
 }
 
 fn debug_menu(
-    mut egui_context: ResMut<EguiContext>,
+    mut contexts: EguiContexts,
     mut rapier_debug: ResMut<DebugRenderContext>,
-    mut inspector: ResMut<WorldInspectorParams>,
+    mut state: ResMut<DebugState>,
 ) {
-    egui::Window::new("Debug Menu").show(egui_context.ctx_mut(), |ui| {
-        ui.checkbox(&mut inspector.enabled, "World inspector");
+    egui::Window::new("Debug Menu").show(contexts.ctx_mut(), |ui| {
+        ui.checkbox(&mut state.inspector_enabled, "World inspector");
         ui.checkbox(&mut rapier_debug.enabled, "Show physics objects");
     });
 }
 
-fn debug_watermark(mut egui_context: ResMut<EguiContext>) {
+fn debug_watermark(mut contexts: EguiContexts) {
     egui::Area::new("watermark")
-        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(0.0, 0.0))
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-50.0, 0.0))
         .order(egui::Order::Foreground)
-        .show(egui_context.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut(), |ui| {
             ui.label(
                 egui::RichText::new("SSNT Dev Build")
-                    .color(egui::color::Rgba::WHITE)
+                    .color(egui::Rgba::WHITE)
                     .size(21.0),
             );
         });

@@ -1,20 +1,10 @@
 use std::collections::VecDeque;
 
-use bevy::{
-    app::ScheduleRunnerSettings,
-    prelude::{
-        warn, App, IntoSystemDescriptor, Plugin, Res, ResMut, Resource, SystemLabel, SystemSet,
-        Time,
-    },
-    utils::HashMap,
-};
-use bevy_renet::{
-    renet::{RenetClient, RenetServer},
-    run_if_client_connected,
-};
+use bevy::{app::ScheduleRunnerPlugin, prelude::*, utils::HashMap};
+use bevy_renet::renet::{RenetClient, RenetServer};
 use serde::{Deserialize, Serialize};
 
-use crate::{messaging::Channel, ConnectionId, NetworkManager, Players};
+use crate::{messaging::Channel, ConnectionId, NetworkManager, NetworkSet, Players};
 
 /// Timing data of the server.
 #[derive(Resource)]
@@ -301,12 +291,6 @@ fn update_interpolated_tick(mut network_time: ResMut<ClientNetworkTime>, time: R
     network_time.tick_speed = speed;
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
-pub(crate) enum TimeSystem {
-    Tick,
-    Interpolate,
-}
-
 pub(crate) struct TimePlugin;
 
 impl Plugin for TimePlugin {
@@ -318,36 +302,31 @@ impl Plugin for TimePlugin {
             .is_server();
 
         if is_server {
-            let runner_settings = app.world.get_resource::<ScheduleRunnerSettings>().unwrap();
-            let tick = if let bevy::app::RunMode::Loop { wait } = runner_settings.run_mode {
+            let runners = app.get_added_plugins::<ScheduleRunnerPlugin>();
+            let runner_plugin = runners.first().unwrap();
+            let tick = if let bevy::app::RunMode::Loop { wait } = runner_plugin.run_mode {
                 wait
             } else {
-                panic!()
+                panic!("Server must run with a fixed tick rate")
             };
             app.insert_resource(ServerNetworkTime {
                 server_tick: 0,
                 server_tick_seconds: tick.unwrap().as_secs_f64(),
             })
             .init_resource::<ClientTimes>()
-            .add_system(update_server_tick.label(TimeSystem::Tick))
-            .add_system_set(
-                SystemSet::new()
-                    .after(TimeSystem::Tick)
-                    .with_system(send_server_tick)
-                    .with_system(server_handle_response),
+            .add_systems(
+                PreUpdate,
+                (update_server_tick, send_server_tick, server_handle_response)
+                    .chain()
+                    .in_set(NetworkSet::UpdateTick),
             );
         } else {
-            app.init_resource::<ClientNetworkTime>()
-                .add_system(
-                    receive_server_tick
-                        .label(TimeSystem::Tick)
-                        .with_run_criteria(run_if_client_connected),
-                )
-                .add_system(
-                    update_interpolated_tick
-                        .label(TimeSystem::Interpolate)
-                        .after(TimeSystem::Tick),
-                );
+            app.init_resource::<ClientNetworkTime>().add_systems(
+                PreUpdate,
+                (receive_server_tick, update_interpolated_tick)
+                    .chain()
+                    .in_set(NetworkSet::UpdateTick),
+            );
         }
     }
 }

@@ -6,11 +6,9 @@ pub struct SplashPlugin;
 
 impl Plugin for SplashPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system_set(SystemSet::on_enter(GameState::Splash).with_system(splash_setup))
-            .add_system_set(SystemSet::on_update(GameState::Splash).with_system(countdown))
-            .add_system_set(
-                SystemSet::on_exit(GameState::Splash).with_system(despawn_with::<OnSplashScreen>),
-            );
+        app.add_systems(OnEnter(GameState::Splash), splash_setup)
+            .add_systems(Update, countdown.run_if(in_state(GameState::Splash)))
+            .add_systems(OnExit(GameState::Splash), despawn_with::<OnSplashScreen>);
     }
 }
 
@@ -35,10 +33,11 @@ fn splash_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 style: Style {
                     // This will center the logo
                     margin: UiRect::all(Val::Auto),
-                    size: Size::new(Val::Percent(100.0), Val::Percent(100.0)),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
                     ..default()
                 },
-                image: UiImage(background),
+                image: UiImage::new(background),
                 ..default()
             },
             OnSplashScreen,
@@ -49,7 +48,7 @@ fn splash_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     margin: UiRect::all(Val::Auto),
                     ..default()
                 },
-                image: UiImage(logo),
+                image: UiImage::new(logo),
                 ..default()
             });
             fade = Some(
@@ -57,7 +56,8 @@ fn splash_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     .spawn(NodeBundle {
                         style: Style {
                             position_type: PositionType::Absolute,
-                            size: Size::new(Val::Percent(100.0), Val::Percent(100.0)),
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
                             ..default()
                         },
                         background_color: Color::rgba(0.0, 0.0, 0.0, 0.0).into(),
@@ -73,7 +73,7 @@ fn splash_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 // Tick the timer, and change state when finished
 fn countdown(
-    mut game_state: ResMut<State<GameState>>,
+    mut game_state: ResMut<NextState<GameState>>,
     time: Res<Time>,
     mut timer: ResMut<SplashTimer>,
     fade_element: Res<SplashFadeElement>,
@@ -83,7 +83,7 @@ fn countdown(
     const FADE_TO_TIME: f32 = 0.90;
 
     if timer.tick(time.delta()).finished() {
-        game_state.set(GameState::MainMenu).unwrap();
+        game_state.set(GameState::MainMenu);
     }
 
     // Fade out

@@ -8,7 +8,6 @@ mod components;
 mod config;
 mod construction;
 mod debug;
-mod event;
 mod interaction;
 mod items;
 mod job;
@@ -21,7 +20,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 
 use admin::AdminPlugin;
-use bevy::app::ScheduleRunnerSettings;
+use bevy::app::ScheduleRunnerPlugin;
 use bevy::asset::AssetPlugin;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
@@ -84,20 +83,17 @@ fn main() {
                 }
             };
 
-            app.insert_resource(ScheduleRunnerSettings {
-                run_mode: bevy::app::RunMode::Loop {
-                    wait: Some(Duration::from_secs_f64(1f64 / SERVER_TPS as f64)),
-                },
-            })
-            .add_plugins(MinimalPlugins)
-            .add_plugin(TransformPlugin)
-            .add_plugin(AssetPlugin::default())
-            .add_plugin(LogPlugin::default())
-            .add_plugin(ScenePlugin)
-            .add_plugin(HierarchyPlugin)
-            .add_plugin(networking_plugin)
-            .add_system(convert_tgm_map)
-            .add_system(create_tilemap_from_converted)
+            let runner =
+                ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1f64 / SERVER_TPS as f64));
+            app.add_plugins((
+                MinimalPlugins.set(runner),
+                TransformPlugin,
+                AssetPlugin::default(),
+                LogPlugin::default(),
+                ScenePlugin,
+                HierarchyPlugin,
+                networking_plugin,
+            ))
             .add_asset::<byond::tgm::TileMap>()
             .add_asset::<Mesh>() // TODO: remove once no longer needed by rapier
             .add_asset::<Scene>() // TODO: remove once no longer needed by rapier
@@ -109,53 +105,54 @@ fn main() {
             .register_type::<bevy::render::view::Visibility>()
             .register_type::<bevy::render::view::ComputedVisibility>()
             .register_type::<Handle<bevy::pbr::StandardMaterial>>()
+            .register_type::<bevy::pbr::NotShadowCaster>()
             .register_type::<Vec<Entity>>()
             .add_asset_loader(TgmLoader)
-            .add_startup_system(setup_server)
-            .add_startup_system(config::server_startup);
+            .add_systems(Startup, (setup_server, config::server_startup))
+            .add_systems(Update, (convert_tgm_map, create_tilemap_from_converted));
         }
         NetworkRole::Client => {
-            app.add_plugins(DefaultPlugins)
-                .add_plugin(networking_plugin)
-                .add_plugin(camera::CameraPlugin)
-                .add_plugin(EguiPlugin)
-                .add_plugin(ui::UiPlugin)
-                .add_plugin(debug::DebugPlugin)
-                .insert_resource(ClearColor(Color::rgb(
-                    44.0 / 255.0,
-                    68.0 / 255.0,
-                    107.0 / 255.0,
-                )))
-                .add_startup_system(setup_client)
-                .add_system(set_camera_target)
-                .add_system(clean_entities_on_disconnect)
-                .add_state(GameState::Splash);
+            app.add_plugins((
+                DefaultPlugins,
+                networking_plugin,
+                camera::CameraPlugin,
+                EguiPlugin,
+                ui::UiPlugin,
+                debug::DebugPlugin,
+            ))
+            .insert_resource(ClearColor(Color::rgb(
+                44.0 / 255.0,
+                68.0 / 255.0,
+                107.0 / 255.0,
+            )))
+            .add_systems(Startup, setup_client)
+            .add_systems(Update, (set_camera_target, clean_entities_on_disconnect))
+            .add_state::<GameState>();
         }
     };
-    app.add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
-        .add_plugin(physics::PhysicsPlugin)
-        .add_plugin(scene::ScenePlugin)
-        .add_plugin(movement::MovementPlugin)
-        .add_plugin(maps::MapPlugin)
-        .add_plugin(AdminPlugin)
-        .add_plugin(items::ItemPlugin)
-        .add_plugin(body::BodyPlugin)
-        .add_plugin(round::RoundPlugin)
-        .add_plugin(job::JobPlugin)
-        .add_plugin(interaction::InteractionPlugin)
-        .add_plugin(construction::ConstructionPlugin)
-        .add_plugin(combat::CombatPlugin)
-        .insert_resource(args)
-        .add_startup_system(setup_shared)
-        // Temporary version of https://github.com/bevyengine/bevy/pull/6578
-        .register_type::<smallvec::SmallVec<[Entity; 8]>>()
-        // Types that bevy doesn't register yet
-        .register_type::<bevy::pbr::NotShadowCaster>()
-        .run();
+    app.add_plugins((
+        RapierPhysicsPlugin::<NoUserData>::default(),
+        physics::PhysicsPlugin,
+        scene::ScenePlugin,
+        movement::MovementPlugin,
+        maps::MapPlugin,
+        AdminPlugin,
+        items::ItemPlugin,
+        body::BodyPlugin,
+        round::RoundPlugin,
+        job::JobPlugin,
+        interaction::InteractionPlugin,
+        construction::ConstructionPlugin,
+        combat::CombatPlugin,
+    ))
+    .insert_resource(args)
+    .add_systems(Startup, setup_shared)
+    .run();
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(Clone, Eq, PartialEq, Debug, Default, Hash, States)]
 enum GameState {
+    #[default]
     Splash,
     MainMenu,
     Joining,
@@ -210,7 +207,9 @@ fn setup_server(args: Res<Args>, mut commands: Commands) {
             bind_address,
             public_address,
         } => {
-            commands.insert_resource(networking::create_server(bind_address, public_address));
+            let (server, transport) = networking::create_server(bind_address, public_address);
+            commands.insert_resource(server);
+            commands.insert_resource(transport);
         }
         _ => panic!("Missing commandline argument"),
     };
@@ -220,7 +219,7 @@ fn setup_client(
     mut commands: Commands,
     args: Res<Args>,
     mut client_events: EventWriter<ClientEvent>,
-    mut state: ResMut<State<GameState>>,
+    mut state: ResMut<NextState<GameState>>,
 ) {
     // TODO: Replace with on-station lights
     commands.insert_resource(AmbientLight {
@@ -241,7 +240,7 @@ fn setup_client(
     ));
 
     if let Some(ArgCommands::Join { address, name }) = &args.command {
-        state.overwrite_set(GameState::MainMenu).unwrap();
+        state.set(GameState::MainMenu);
         client_events.send(ClientEvent::Join(*address));
         commands.insert_resource(UserData {
             username: name.clone(),

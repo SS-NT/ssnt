@@ -1,5 +1,5 @@
 use bevy::{prelude::*, reflect::TypeUuid};
-use bevy_egui::{egui, EguiContext};
+use bevy_egui::{egui, EguiContexts};
 use networking::{
     component::AppExt as ComponentExt,
     identity::{NetworkIdentities, NetworkIdentity},
@@ -13,10 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     body::Body,
-    event::{EventSystemExt, InterceptableEvents},
     interaction::{
-        ActiveInteraction, InteractionListEvent, InteractionOption, InteractionSpecificity,
-        InteractionStatus,
+        ActiveInteraction, GenerateInteractionList, InteractionListEvents, InteractionOption,
+        InteractionSpecificity, InteractionStatus,
     },
 };
 
@@ -30,16 +29,16 @@ impl Plugin for HealthScannerPlugin {
             .add_networked_component::<HealthScanner, HealthScannerClient>()
             .add_network_message::<OpenHealthScannerMessage>();
         if is_server(app) {
-            app.add_system(collect_vitals)
-                .register_type::<HealthScanInteraction>()
-                .add_system(health_scan_interaction)
-                .add_system(
-                    prepare_scan_interaction
-                        .into_descriptor()
-                        .intercept::<InteractionListEvent>(),
-                );
+            app.register_type::<HealthScanInteraction>().add_systems(
+                Update,
+                (
+                    collect_vitals,
+                    health_scan_interaction,
+                    prepare_scan_interaction.in_set(GenerateInteractionList),
+                ),
+            );
         } else {
-            app.add_system(health_scanner_ui);
+            app.add_systems(Update, health_scanner_ui);
         }
     }
 }
@@ -119,7 +118,7 @@ fn collect_vitals(
 }
 
 fn health_scanner_ui(
-    mut egui_context: ResMut<EguiContext>,
+    mut contexts: EguiContexts,
     mut scanners: Query<(Entity, &mut HealthScannerClient)>,
     identities: Res<NetworkIdentities>,
     mut open_messages: EventReader<MessageEvent<OpenHealthScannerMessage>>,
@@ -146,7 +145,7 @@ fn health_scanner_ui(
         egui::Window::new("Health Scanner")
             .id(egui::Id::new(("health scanner", entity)))
             .open(&mut keep_open)
-            .show(egui_context.ctx_mut(), |ui| {
+            .show(contexts.ctx_mut(), |ui| {
                 if let Some(target) = *scanner.target {
                     if let Some(vitals) = &*scanner.vitals {
                         ui.label(format!("BPM: {}", vitals.bpm));
@@ -200,11 +199,11 @@ impl FromWorld for HealthScanInteraction {
 }
 
 fn prepare_scan_interaction(
-    events: Res<InterceptableEvents<InteractionListEvent>>,
+    interaction_list: Res<InteractionListEvents>,
     scanners: Query<(), With<HealthScanner>>,
     bodies: Query<(), With<Body>>,
 ) {
-    for event in events.iter() {
+    for event in interaction_list.events.iter() {
         let Some(item) = event.item_in_hand else {
             continue;
         };

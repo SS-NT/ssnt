@@ -6,7 +6,7 @@ use std::{
 };
 
 use bevy::{
-    ecs::system::{SystemParam, SystemParamFetch},
+    ecs::system::{StaticSystemParam, SystemParam},
     prelude::Resource,
     reflect::TypeUuid,
     utils::Uuid,
@@ -43,7 +43,7 @@ pub trait NetworkedToClient {
     ///
     fn serialize(
         &self,
-        param: &mut <<Self::Param as SystemParam>::Fetch as SystemParamFetch>::Item,
+        param: &mut StaticSystemParam<Self::Param>,
         receiver: Option<ConnectionId>,
         since_tick: Option<u32>,
     ) -> Option<Bytes>;
@@ -69,11 +69,7 @@ pub trait NetworkedToClient {
 pub trait NetworkedFromServer: TypeUuid + Sized {
     type Param: SystemParam;
 
-    fn deserialize(
-        &mut self,
-        param: &mut <<Self::Param as SystemParam>::Fetch as SystemParamFetch>::Item,
-        data: &[u8],
-    );
+    fn deserialize(&mut self, param: &mut StaticSystemParam<Self::Param>, data: &[u8]);
 
     /// The initial value used if the component is not already present.
     /// Returns `None` if the component should not be added automatically.

@@ -1,15 +1,12 @@
 use bevy::{
     math::{IVec2, Vec2, Vec3Swizzles},
-    prelude::{
-        Added, App, Bundle, Changed, Component, CoreStage, Entity, GlobalTransform,
-        IntoSystemDescriptor, Or, Plugin, Query, Res, ResMut, Resource, SystemLabel, UVec2,
-    },
+    prelude::*,
     time::Time,
     transform::TransformSystem,
     utils::{HashMap, HashSet, Uuid},
 };
 
-use crate::{identity::NetworkIdentity, ConnectionId, NetworkManager, NetworkSystem, Players};
+use crate::{identity::NetworkIdentity, ConnectionId, NetworkManager, NetworkSet, Players};
 
 /// Allows players to observe networked objects in range
 #[derive(Component)]
@@ -246,7 +243,7 @@ struct NetworkObserverCell {
 }
 
 /// How long a grid cell stays observed after it is out of range.
-const OBSERVER_CELL_TIMEOUT_SECONDS: f32 = 1.0;
+const OBSERVER_CELL_TIMEOUT_SECONDS: f32 = 3.0;
 
 fn global_grid_update(
     mut grid: ResMut<GlobalGrid>,
@@ -332,10 +329,9 @@ fn update_visibility(mut visibilities: ResMut<NetworkVisibilities>) {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemSet)]
 pub enum VisibilitySystem {
     UpdateGrid,
-    UpdateVisibility,
     GridVisibility,
 }
 
@@ -354,19 +350,20 @@ impl Plugin for VisibilityPlugin {
                     cell_size: GLOBAL_GRID_CELL_SIZE,
                     ..Default::default()
                 })
-                .add_system_to_stage(
-                    CoreStage::PostUpdate,
-                    global_grid_update
-                        .label(VisibilitySystem::UpdateGrid)
-                        .after(TransformSystem::TransformPropagate),
+                .add_systems(
+                    PreUpdate,
+                    (
+                        update_visibility,
+                        grid_visibility.in_set(VisibilitySystem::GridVisibility),
+                    )
+                        .chain()
+                        .in_set(NetworkSet::ServerVisibility),
                 )
-                .add_system(update_visibility.label(VisibilitySystem::UpdateVisibility))
-                .add_system(
-                    grid_visibility
-                        .label(VisibilitySystem::GridVisibility)
-                        .label(NetworkSystem::Visibility)
-                        .after(VisibilitySystem::UpdateGrid)
-                        .after(VisibilitySystem::UpdateVisibility),
+                .add_systems(
+                    PostUpdate,
+                    global_grid_update
+                        .in_set(VisibilitySystem::UpdateGrid)
+                        .after(TransformSystem::TransformPropagate),
                 );
         }
     }

@@ -1,7 +1,7 @@
 use bevy::{
     math::{UVec2, UVec3},
     prelude::{AddAsset, App, Plugin},
-    reflect::TypeUuid,
+    reflect::{TypePath, TypeUuid},
     utils::HashMap,
 };
 
@@ -20,7 +20,7 @@ impl Plugin for TgmPlugin {
     }
 }
 
-#[derive(Clone, TypeUuid)]
+#[derive(Clone, TypeUuid, TypePath)]
 #[uuid = "b4bcacfa-c562-432a-807a-43a2974cc2d6"]
 pub struct TileMap {
     definitions: Vec<Tile>,

@@ -21,7 +21,7 @@ impl Plugin for RangedPlugin {
             .add_networked_component::<Gun, GunClient>();
 
         if is_server(app) {
-            app.add_system(shoot_gun);
+            app.add_systems(Update, shoot_gun);
         }
     }
 }

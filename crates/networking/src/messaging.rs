@@ -1,24 +1,16 @@
-use std::any::TypeId;
+use std::{any::TypeId, time::Duration};
 
 use bevy::{
     ecs::system::SystemParam,
-    prelude::{
-        trace, warn, App, EventReader, EventWriter, IntoSystemDescriptor, Local, Plugin, Res,
-        ResMut, Resource, SystemLabel,
-    },
+    prelude::*,
     utils::{HashMap, HashSet},
 };
-use bevy_renet::{
-    renet::{
-        ChannelConfig, ReliableChannelConfig, RenetClient, RenetServer, UnreliableChannelConfig,
-    },
-    run_if_client_connected,
-};
+use bevy_renet::renet::{ChannelConfig, RenetClient, RenetServer, SendType};
 use bincode::Options;
 use bytes::{BufMut, Bytes};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::{ConnectionId, NetworkManager, NetworkSystem, Players};
+use crate::{ConnectionId, NetworkManager, NetworkSet, Players};
 
 /// Serialize data once and allow it to be shared in multiple places without reallocating.
 pub(crate) fn serialize_once<T: Serialize>(data: &T) -> Bytes {
@@ -63,6 +55,7 @@ enum MessageKind {
 }
 
 /// A message received from a peer
+#[derive(Event)]
 struct IncomingMessage {
     connection: ConnectionId,
     type_id: u16,
@@ -95,7 +88,6 @@ pub struct OutboundMessage {
 struct NetworkMessage {
     /// The id registered in [`MessageTypes`]
     type_id: u16,
-    // TODO: Use serde_bytes for optimization
     /// The serialized content of the message
     content: Bytes,
 }
@@ -114,7 +106,7 @@ impl From<OutboundMessage> for NetworkMessage {
 struct UnreliableNetworkMessage(pub NetworkMessage);
 
 // A typed event sent for every received message
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Event)]
 pub struct MessageEvent<T> {
     pub message: T,
     pub connection: ConnectionId,
@@ -147,6 +139,7 @@ impl AppExt for App {
             move |mut raw_events: EventReader<IncomingMessage>,
                   mut events: EventWriter<MessageEvent<T>>| {
                 for event in raw_events.iter() {
+                    // TODO: don't run a system for every kind of message
                     if event.type_id != type_id {
                         continue;
                     }
@@ -169,11 +162,8 @@ impl AppExt for App {
                 }
             };
 
-        self.add_event::<MessageEvent<T>>().add_system(
-            packet_reader
-                .label(NetworkSystem::ReadNetworkMessages)
-                .after(MessagingSystem::ReadRaw),
-        )
+        self.add_event::<MessageEvent<T>>()
+            .add_systems(PreUpdate, packet_reader.in_set(ReadMessagesSet::EmitEvents))
     }
 }
 
@@ -264,25 +254,28 @@ impl Channel {
 
     pub fn channels_config() -> Vec<ChannelConfig> {
         vec![
-            ChannelConfig::Reliable(ReliableChannelConfig {
+            ChannelConfig {
                 channel_id: Self::Default.id(),
-                message_send_queue_size: 8192,
-                message_receive_queue_size: 8192,
-                ordered: true,
-                ..Default::default()
-            }),
-            ChannelConfig::Unreliable(UnreliableChannelConfig {
+                send_type: SendType::ReliableOrdered {
+                    resend_time: Duration::from_millis(300),
+                },
+                max_memory_usage_bytes: 5 * 1024 * 1024,
+            },
+            ChannelConfig {
                 channel_id: Self::DefaultUnreliable.id(),
-                ..Default::default()
-            }),
-            ChannelConfig::Unreliable(UnreliableChannelConfig {
+                send_type: SendType::Unreliable,
+                max_memory_usage_bytes: 5 * 1024 * 1024,
+            },
+            ChannelConfig {
                 channel_id: Self::Timing.id(),
-                ..Default::default()
-            }),
-            ChannelConfig::Unreliable(UnreliableChannelConfig {
+                send_type: SendType::Unreliable,
+                max_memory_usage_bytes: 5 * 1024 * 1024,
+            },
+            ChannelConfig {
                 channel_id: Self::Transforms.id(),
-                ..Default::default()
-            }),
+                send_type: SendType::Unreliable,
+                max_memory_usage_bytes: 5 * 1024 * 1024,
+            },
         ]
     }
 }
@@ -401,10 +394,12 @@ fn send_outbound_messages_client(
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
-pub(crate) enum MessagingSystem {
-    ReadRaw,
-    SendOutbound,
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemSet)]
+pub(crate) enum ReadMessagesSet {
+    /// Read network messages from the underlying transport
+    ReadChannel,
+    /// Emit network messages as events for other systems to consume
+    EmitEvents,
 }
 
 pub(crate) struct MessagingPlugin;
@@ -415,7 +410,17 @@ impl Plugin for MessagingPlugin {
 
         app.init_resource::<MessageTypes>()
             .insert_resource(InternalSenderRes { sender: tx })
-            .add_event::<IncomingMessage>();
+            .add_event::<IncomingMessage>()
+            .configure_sets(
+                PreUpdate,
+                (
+                    ReadMessagesSet::ReadChannel
+                        .after(bevy_renet::RenetClientPlugin::update_system),
+                    ReadMessagesSet::EmitEvents,
+                )
+                    .chain()
+                    .in_set(NetworkSet::ReadIncoming),
+            );
 
         if app
             .world
@@ -426,20 +431,22 @@ impl Plugin for MessagingPlugin {
             let outbound = move |client: ResMut<RenetClient>| {
                 send_outbound_messages_client(&rx, client);
             };
-            app.add_system(outbound.with_run_criteria(run_if_client_connected))
-                .add_system(
-                    read_channel_client
-                        .label(MessagingSystem::ReadRaw)
-                        .with_run_criteria(run_if_client_connected),
-                );
+            app.add_systems(
+                PreUpdate,
+                read_channel_client.in_set(ReadMessagesSet::ReadChannel),
+            )
+            .add_systems(PostUpdate, outbound.in_set(NetworkSet::SendOutgoing));
         } else {
             let outbound = move |server: ResMut<RenetServer>,
                                  players: Res<Players>,
                                  buffer: Local<Vec<OutboundMessage>>| {
                 send_outbound_messages_server(&rx, server, players, buffer);
             };
-            app.add_system(outbound.label(MessagingSystem::SendOutbound))
-                .add_system(read_channel_server.label(MessagingSystem::ReadRaw));
+            app.add_systems(
+                PreUpdate,
+                read_channel_server.in_set(ReadMessagesSet::ReadChannel),
+            )
+            .add_systems(PostUpdate, outbound.in_set(NetworkSet::SendOutgoing));
         }
     }
 }

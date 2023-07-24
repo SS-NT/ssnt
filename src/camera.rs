@@ -71,20 +71,17 @@ pub fn top_down_camera_update_system(
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
-enum CameraSystem {
-    Input,
-}
-
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system(top_down_camera_input_system.label(CameraSystem::Input))
-            .add_system(
-                top_down_camera_update_system
-                    .after(CameraSystem::Input)
-                    .after(MovementSystem::Update),
-            );
+        app.add_systems(
+            Update,
+            (
+                top_down_camera_input_system,
+                top_down_camera_update_system.after(MovementSystem::Update),
+            )
+                .chain(),
+        );
     }
 }

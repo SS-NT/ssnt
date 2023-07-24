@@ -1,13 +1,13 @@
 use std::{sync::Mutex, time::Duration};
 
 use bevy::{
-    ecs::{query::QuerySingleError, schedule::SystemLabelId, system::SystemState},
+    ecs::{query::QuerySingleError, system::SystemState},
     prelude::*,
     reflect::TypeUuid,
     utils::HashMap,
+    window::PrimaryWindow,
 };
-use bevy_egui::{egui::Window, EguiContext};
-use bevy_inspector_egui::egui;
+use bevy_egui::{egui, EguiContexts};
 use bevy_rapier3d::prelude::RapierContext;
 use networking::{
     component::AppExt as ComponentAppExt,
@@ -16,7 +16,7 @@ use networking::{
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     spawning::{ClientControlled, ClientControls},
     variable::{NetworkVar, ServerVar},
-    ConnectionId, NetworkSystem, Networked, Players,
+    ConnectionId, Networked, Players,
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +24,6 @@ use crate::{
     body::{Hand, Hands},
     camera::MainCamera,
     combat::ClientCombatModeStatus,
-    event::*,
     items::containers::Container,
 };
 
@@ -41,44 +40,51 @@ impl Plugin for InteractionPlugin {
 
         if is_server(app) {
             app.init_resource::<SentInteractionLists>()
-                .add_interceptable_event::<InteractionListEvent>()
-                .add_system(begin_interaction_list.label(InteractionListEvent::start_label()))
-                .add_system(
-                    handle_completed_interaction_list.label(InteractionListEvent::end_label()),
+                .init_resource::<InteractionListEvents>()
+                .configure_sets(
+                    Update,
+                    (GenerateInteractionList
+                        .run_if(|interactions: Res<InteractionListEvents>| {
+                            !interactions.events.is_empty()
+                        })
+                        .after(begin_interaction_list)
+                        .before(handle_completed_interaction_list),),
                 )
-                .add_system(
-                    handle_interaction_list_request
-                        .before(InteractionListEvent::start_label())
-                        .after(NetworkSystem::ReadNetworkMessages),
-                )
-                .add_system(
-                    handle_default_interaction_request
-                        .before(InteractionListEvent::start_label())
-                        .after(NetworkSystem::ReadNetworkMessages),
-                )
-                .add_system(
-                    handle_default_interaction_request_execution
-                        .after(InteractionListEvent::end_label())
-                        .before(handle_interaction_execute_request),
-                )
-                .add_system(handle_interaction_execute_request)
-                .add_system(clear_completed_interactions);
+                .add_systems(
+                    Update,
+                    (
+                        (
+                            handle_interaction_list_request,
+                            handle_default_interaction_request,
+                        ),
+                        begin_interaction_list,
+                        handle_completed_interaction_list,
+                        handle_default_interaction_request_execution,
+                        handle_interaction_execute_request,
+                        clear_completed_interactions,
+                    )
+                        .chain(),
+                );
         } else {
-            app.init_resource::<ClientInteractionUi>()
-                .add_system(client_request_interaction_list.label(InteractionSystem::Input))
-                .add_system(client_receive_interactions)
-                .add_system(client_interaction_selection_ui.after(client_receive_interactions))
-                .add_system(client_progress_ui);
+            app.init_resource::<ClientInteractionUi>().add_systems(
+                Update,
+                (
+                    client_request_interaction_list.in_set(InteractionSystem::Input),
+                    (client_receive_interactions, client_interaction_selection_ui).chain(),
+                    client_progress_ui,
+                ),
+            );
         }
     }
 }
 
-#[derive(SystemLabel)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemSet)]
 pub enum InteractionSystem {
     Input,
 }
 
 /// Event to order the creation of an interaction list
+#[derive(Event)]
 struct InteractionListOrder {
     connection: ConnectionId,
     target: NetworkIdentity,
@@ -103,21 +109,14 @@ impl InteractionListEvent {
     }
 }
 
-#[derive(SystemLabel)]
-enum InteractionListEventLabel {
-    Start,
-    End,
+#[derive(Resource, Default)]
+pub struct InteractionListEvents {
+    pub events: Vec<InteractionListEvent>,
 }
 
-impl InterceptableEvent for InteractionListEvent {
-    fn start_label() -> SystemLabelId {
-        InteractionListEventLabel::Start.as_label()
-    }
-
-    fn end_label() -> SystemLabelId {
-        InteractionListEventLabel::End.as_label()
-    }
-}
+/// The set in which all systems that generate interactions run.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemSet)]
+pub struct GenerateInteractionList;
 
 pub struct InteractionOption {
     /// Displayed to a player when selecting an interaction.
@@ -214,7 +213,7 @@ struct ActiveInteractionClient {
 
 fn begin_interaction_list(
     mut orders: EventReader<InteractionListOrder>,
-    mut events: ResMut<InterceptableEvents<InteractionListEvent>>,
+    mut interaction_lists: ResMut<InteractionListEvents>,
     identities: Res<NetworkIdentities>,
     players: Res<Players>,
     controls: Res<ClientControls>,
@@ -245,7 +244,7 @@ fn begin_interaction_list(
             hand.and_then(|(_, container)| container.iter().next().map(|(_, item)| *item));
         let used_hand = hand.unzip().0;
 
-        events.push(InteractionListEvent {
+        interaction_lists.events.push(InteractionListEvent {
             send_to_client: event.send_to_client,
             connection,
             source: player_entity,
@@ -260,12 +259,12 @@ fn begin_interaction_list(
 }
 
 fn handle_completed_interaction_list(
-    mut events: ResMut<InterceptableEvents<InteractionListEvent>>,
+    mut interaction_lists: ResMut<InteractionListEvents>,
     mut sent: ResMut<SentInteractionLists>,
     identities: Res<NetworkIdentities>,
     mut sender: MessageSender,
 ) {
-    for event in events.drain(..) {
+    for event in interaction_lists.events.drain(..) {
         let mut interactions = event.interactions.into_inner().unwrap();
         // Sort interactions by specificity and name
         // TODO: Add another criteria to sort by (name is probably not a good criteria)
@@ -412,7 +411,10 @@ fn handle_interaction_execute_request(
         let reflect_component = registration
             .data::<ReflectComponent>()
             .expect("Interaction must #[reflect(Component)]");
-        reflect_component.insert(world, player_entity, option.interaction.as_ref());
+        reflect_component.insert(
+            &mut world.entity_mut(player_entity),
+            option.interaction.as_ref(),
+        );
 
         // Record active interaction
         world.entity_mut(player_entity).insert(ActiveInteraction {
@@ -444,18 +446,20 @@ fn clear_completed_interactions(
     for entity in to_clear.into_iter() {
         let active = world
             .entity_mut(entity)
-            .remove::<ActiveInteraction>()
+            .take::<ActiveInteraction>()
             .unwrap();
-        active.reflect_component.remove(world, entity);
+        active
+            .reflect_component
+            .remove(&mut world.entity_mut(entity));
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn client_request_interaction_list(
     buttons: Res<Input<MouseButton>>,
-    mut context: ResMut<EguiContext>,
+    mut contexts: EguiContexts,
     rapier_context: Res<RapierContext>,
-    windows: Res<Windows>,
+    windows: Query<(Entity, &Window), With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     parents: Query<&Parent>,
     identities: Res<NetworkIdentities>,
@@ -474,13 +478,12 @@ fn client_request_interaction_list(
         return;
     }
 
-    let window = match windows.get_primary() {
-        Some(w) => w,
-        None => return,
+    let Ok((window_entity, window)) = windows.get_single() else {
+        return;
     };
 
-    if context
-        .try_ctx_for_window_mut(window.id())
+    if contexts
+        .try_ctx_for_window_mut(window_entity)
         .map(|c| c.is_pointer_over_area())
         == Some(true)
     {
@@ -544,9 +547,9 @@ fn client_receive_interactions(
 }
 
 fn client_interaction_selection_ui(
-    mut egui_context: ResMut<EguiContext>,
+    mut contexts: EguiContexts,
     mut state: ResMut<ClientInteractionUi>,
-    windows: Res<Windows>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     mut sender: MessageSender,
 ) {
     let Some(list) = &state.current else {
@@ -555,17 +558,19 @@ fn client_interaction_selection_ui(
 
     let mut clear = false;
 
-    let mut ui_window = Window::new("Interact").resizable(false).collapsible(false);
+    let mut ui_window = egui::Window::new("Interact")
+        .resizable(false)
+        .collapsible(false);
     if state.is_changed() {
         // Position window at cursor
-        if let Some(window) = windows.get_primary() {
+        if let Ok(window) = windows.get_single() {
             if let Some(pos) = window.cursor_position() {
                 ui_window = ui_window.current_pos(egui::pos2(pos.x, window.height() - pos.y));
             }
         }
     }
 
-    ui_window.show(egui_context.ctx_mut(), |ui| {
+    ui_window.show(contexts.ctx_mut(), |ui| {
         for (index, interaction) in list.interactions.iter().enumerate() {
             if ui.button(&interaction.text).clicked() {
                 sender.send_to_server(&InteractionExecuteRequest { index });
@@ -580,12 +585,12 @@ fn client_interaction_selection_ui(
 }
 
 fn client_progress_ui(
-    mut egui_context: ResMut<EguiContext>,
+    mut contexts: EguiContexts,
     mut interactions: Query<
         (&mut ActiveInteractionClient, &GlobalTransform),
         With<ClientControlled>,
     >,
-    windows: Res<Windows>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     time: Res<Time>,
 ) {
@@ -598,9 +603,8 @@ fn client_progress_ui(
         _ => return,
     };
 
-    let window = match windows.get_primary() {
-        Some(w) => w,
-        None => return,
+    let Ok(window) = windows.get_single() else {
+        return;
     };
 
     let Some((camera, camera_transform)) = cameras.iter().next() else {
@@ -621,7 +625,7 @@ fn client_progress_ui(
             screen_position.x,
             window.height() - screen_position.y,
         ))
-        .show(egui_context.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut(), |ui| {
             if let Some(estimate) = *interaction.estimate_duration {
                 let remaining = estimate + interaction.started.unwrap() - time.elapsed_seconds();
                 let t = (estimate - remaining) / estimate;

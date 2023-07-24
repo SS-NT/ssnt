@@ -12,7 +12,7 @@ use crate::{
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     scene::{NetworkScene, NetworkSceneBundle, NetworkSceneChildren, NetworkSceneIdentities},
     visibility::NetworkVisibilities,
-    ConnectionId, NetworkManager, NetworkSystem, Players, ServerEvent,
+    ConnectionId, NetworkManager, NetworkSet, Players, ServerEvent,
 };
 
 /// A message that instructs the client to spawn a specific entity.
@@ -47,6 +47,7 @@ enum SpawnMessage {
 pub struct PrefabPath(pub String);
 
 /// Events related to networked entities on the server
+#[derive(Event)]
 pub enum ServerEntityEvent {
     /// A spawn message has been sent to a connection
     Spawned((Entity, ConnectionId)),
@@ -57,6 +58,7 @@ pub enum ServerEntityEvent {
 const DESPAWN_MESSAGE_PRIORITY: i16 = -10;
 
 /// Events related to networked entities on the client
+#[derive(Event)]
 pub enum NetworkedEntityEvent {
     /// A networked entity has been spawned
     Spawned(Entity),
@@ -177,7 +179,7 @@ fn send_spawn_messages(
 
 /// Sends despawn messages for entities that were deleted on the server.
 fn network_deleted_entities(
-    removed: RemovedComponents<NetworkIdentity>,
+    mut removed: RemovedComponents<NetworkIdentity>,
     identities: Res<NetworkIdentities>,
     visibilities: Res<NetworkVisibilities>,
     mut sender: MessageSender,
@@ -401,10 +403,11 @@ fn receive_control_updates(
 #[derive(Component)]
 pub struct ClientControlled;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
-pub enum SpawningSystems {
-    Spawn,
-    ClientControl,
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemSet)]
+pub enum SpawningSet {
+    SpawnEmpty,
+    BeforeDespawn,
+    SpawnScenes,
 }
 
 pub(crate) struct SpawningPlugin;
@@ -422,40 +425,35 @@ impl Plugin for SpawningPlugin {
         {
             app.add_event::<ServerEntityEvent>()
                 .init_resource::<ClientControls>()
-                .add_system_set(
-                    SystemSet::new()
-                        .after(NetworkSystem::ReadNetworkMessages)
-                        .with_system(
-                            send_spawn_messages
-                                .label(SpawningSystems::Spawn)
-                                .after(NetworkSystem::Visibility),
-                        )
-                        .with_system(
-                            send_control_updates
-                                .label(SpawningSystems::ClientControl)
-                                .after(SpawningSystems::Spawn),
-                        )
-                        .with_system(
-                            send_control_updates_to_rejoined
-                                .label(SpawningSystems::ClientControl)
-                                .after(SpawningSystems::Spawn),
-                        ),
-                )
-                .add_system_to_stage(
-                    CoreStage::PostUpdate,
-                    network_deleted_entities.before(IdentitySystem::ClearRemoved),
+                .add_systems(
+                    PostUpdate,
+                    (
+                        send_spawn_messages,
+                        send_control_updates,
+                        send_control_updates_to_rejoined,
+                        network_deleted_entities.before(IdentitySystem::ClearRemoved),
+                    )
+                        .in_set(NetworkSet::ServerWrite),
                 );
         } else {
-            app.add_event::<NetworkedEntityEvent>().add_system_set(
-                SystemSet::new()
-                    .after(NetworkSystem::ReadNetworkMessages)
-                    .with_system(receive_spawn.label(SpawningSystems::Spawn))
-                    .with_system(
-                        receive_control_updates
-                            .label(SpawningSystems::ClientControl)
-                            .after(SpawningSystems::Spawn),
+            app.add_event::<NetworkedEntityEvent>()
+                .configure_sets(
+                    PreUpdate,
+                    (
+                        SpawningSet::SpawnEmpty,
+                        SpawningSet::BeforeDespawn,
+                        SpawningSet::SpawnScenes,
+                    )
+                        .chain()
+                        .in_set(NetworkSet::ClientSpawn),
+                )
+                .add_systems(
+                    PreUpdate,
+                    (
+                        receive_spawn.in_set(SpawningSet::SpawnEmpty),
+                        receive_control_updates.in_set(NetworkSet::ClientApply),
                     ),
-            );
+                );
         }
     }
 }

@@ -9,8 +9,8 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.dependencies]
-bevy = "0.9"
-bevy_rapier3d = "0.20.0"
+bevy = "0.11"
+bevy_rapier3d = "0.22.0"
 
 
 [dependencies]
@@ -20,10 +20,10 @@ networking = { path = "crates/networking" }
 physics = { path = "crates/physics" }
 utils = { path = "crates/utils" }
 bevy = { workspace = true, features = ["bevy_gltf"] }
-bevy_egui = "0.17.1"
-bevy-inspector-egui = "0.14.0"
+bevy_egui = "0.21.0"
+bevy-inspector-egui = "0.19.0"
 bevy_rapier3d = { workspace = true, features = ["simd-stable"] }
-bevy_common_assets = { version = "0.4.0", features = ["ron"] }
+bevy_common_assets = { version = "0.7.0", features = ["ron"] }
 cfg-if = "1.0.0"
 futures-lite = "1.4.0"
 log = "0.4.8"
@@ -39,8 +39,44 @@ smallvec = "*"
 
 [patch.crates-io]
 bevy = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_a11y = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_animation = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_app = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_asset = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_audio = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_core = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_core_pipeline = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_derive = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_diagnostic = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
 bevy_ecs = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
-# bevy = { path = "../bevy" }
+bevy_encase_derive = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_gilrs = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_gizmos = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_gltf = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_hierarchy = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_input = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_internal = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_log = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_macro_utils = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_math = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_mikktspace = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_pbr = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_ptr = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_reflect = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_render = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_scene = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_sprite = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_tasks = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_text = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_time = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_transform = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_ui = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_utils = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_window = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+bevy_winit = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
+
+bevy_rapier3d = { path = "../bevy_rapier/bevy_rapier3d" }
+rapier3d = { path = "../rapier/crates/rapier3d" }
 
 [profile.dev.package."*"]
 opt-level = 3

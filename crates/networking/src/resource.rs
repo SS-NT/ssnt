@@ -4,12 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     is_server,
-    messaging::{
-        AppExt as MessageAppExt, MessageEvent, MessageReceivers, MessageSender, MessagingSystem,
-    },
+    messaging::{AppExt as MessageAppExt, MessageEvent, MessageReceivers, MessageSender},
     time::ServerNetworkTime,
     variable::{self, NetworkRegistry, NetworkedFromServer, NetworkedToClient},
-    NetworkSystem, Players, ServerEvent,
+    NetworkSet, Players, ServerEvent,
 };
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -181,15 +179,18 @@ impl AppExt for App {
             panic!("Client resource was already registered");
         }
         if is_server(self) {
-            self.add_system(
-                send_networked_resource_to_new::<S, C>.before(MessagingSystem::SendOutbound),
-            )
-            .add_system(
-                send_changed_networked_resource::<S, C>.before(MessagingSystem::SendOutbound),
+            self.add_systems(
+                PostUpdate,
+                (
+                    send_networked_resource_to_new::<S, C>,
+                    send_changed_networked_resource::<S, C>,
+                )
+                    .in_set(NetworkSet::ServerWrite),
             );
         } else {
-            self.add_system(
-                receive_networked_resource::<C>.after(NetworkSystem::ReadNetworkMessages),
+            self.add_systems(
+                PreUpdate,
+                (receive_networked_resource::<C>,).in_set(NetworkSet::ClientApply),
             );
         }
         self

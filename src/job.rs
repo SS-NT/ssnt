@@ -1,4 +1,9 @@
-use bevy::{asset::AssetPathId, prelude::*, reflect::TypeUuid, utils::HashMap};
+use bevy::{
+    asset::AssetPathId,
+    prelude::*,
+    reflect::{TypePath, TypeUuid},
+    utils::HashMap,
+};
 use bevy_common_assets::ron::RonAssetPlugin;
 use maps::TileMap;
 use networking::{
@@ -13,17 +18,17 @@ pub struct JobPlugin;
 
 impl Plugin for JobPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(RonAssetPlugin::<JobDefinition>::new(&["job.ron"]))
+        app.add_plugins(RonAssetPlugin::<JobDefinition>::new(&["job.ron"]))
             .add_network_message::<SelectJobMessage>()
-            .add_startup_system(load_assets);
+            .add_systems(Startup, load_assets);
         if is_server(app) {
             app.init_resource::<SelectedJobs>()
-                .add_system(handle_job_selection);
+                .add_systems(Update, handle_job_selection);
         }
     }
 }
 
-#[derive(Deserialize, TypeUuid)]
+#[derive(Deserialize, TypeUuid, TypePath)]
 #[uuid = "17e73665-dcec-4791-ad92-a2fb83c82767"]
 pub struct JobDefinition {
     pub id: String,

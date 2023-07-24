@@ -4,7 +4,7 @@ use networking::{
     is_server,
     spawning::ClientControls,
     visibility::{NetworkVisibilities, VisibilitySystem},
-    NetworkSystem, Players,
+    NetworkSet, Players,
 };
 use physics::PhysicsEntityCommands;
 use utils::order::{Order, OrderAppExt, OrderResult};
@@ -19,12 +19,13 @@ impl Plugin for ContainerPlugin {
             .register_type::<DisplayContainer>();
         if is_server(app) {
             app.register_order::<MoveItemOrder, MoveItemResult>()
-                .add_system(do_item_move)
-                .add_system(
+                .add_systems(
+                    PreUpdate,
                     item_in_container_visibility
-                        .after(VisibilitySystem::GridVisibility)
-                        .label(NetworkSystem::Visibility),
-                );
+                        .in_set(NetworkSet::ServerVisibility)
+                        .after(VisibilitySystem::GridVisibility),
+                )
+                .add_systems(Update, do_item_move);
         }
     }
 }
@@ -96,12 +97,14 @@ impl Container {
 pub struct DisplayContainer;
 
 /// An event requesting to move an item from or into a container.
+#[derive(Event)]
 pub struct MoveItemOrder {
     pub item: Entity,
     pub container: Option<Entity>,
     pub position: Option<UVec2>,
 }
 
+#[derive(Event)]
 pub struct MoveItemResult {
     success: bool,
 }

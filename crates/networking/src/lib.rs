@@ -15,9 +15,13 @@ pub use networking_derive::Networked;
 
 use bevy_renet::{
     renet::{
-        ClientAuthentication, NetcodeError, RechannelError, RenetClient, RenetConnectionConfig,
-        RenetError, RenetServer, ServerAuthentication, ServerConfig,
+        transport::{
+            ClientAuthentication, NetcodeClientTransport, NetcodeError, NetcodeServerTransport,
+            NetcodeTransportError, ServerAuthentication, ServerConfig,
+        },
+        ConnectionConfig, RenetClient, RenetServer,
     },
+    transport::{NetcodeClientPlugin, NetcodeServerPlugin},
     RenetClientPlugin, RenetServerPlugin,
 };
 use component::ComponentPlugin;
@@ -35,10 +39,8 @@ use std::{
 
 use bevy::{
     app::AppExit,
-    prelude::{
-        error, info, warn, App, Commands, EventReader, EventWriter, IntoSystemDescriptor, Local,
-        Plugin, Res, ResMut, Resource, State, SystemLabel,
-    },
+    ecs::schedule::ScheduleLabel,
+    prelude::*,
     utils::{HashMap, Uuid},
 };
 use identity::IdentityPlugin;
@@ -72,15 +74,16 @@ impl NetworkManager {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 #[non_exhaustive]
 pub enum ClientState {
+    #[default]
     Initial,
-    Joining(SocketAddr),
+    Joining,
     Connected,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Event, Debug, Clone, Eq, PartialEq, Hash)]
 pub enum ClientEvent {
     Join(SocketAddr),
     Joined,
@@ -88,12 +91,12 @@ pub enum ClientEvent {
     Disconnected(String),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Event, Debug, Clone, Eq, PartialEq, Hash)]
 pub enum ClientOrder {
     Leave,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Event, Debug, Clone, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum ServerEvent {
     PlayerConnected(ConnectionId),
@@ -120,50 +123,52 @@ struct ServerInfo {
     tick_duration_seconds: f32,
 }
 
-pub fn create_server(listen_address: SocketAddr, public_address: Option<IpAddr>) -> RenetServer {
+pub fn create_server(
+    listen_address: SocketAddr,
+    public_address: Option<IpAddr>,
+) -> (RenetServer, NetcodeServerTransport) {
     let socket = UdpSocket::bind(listen_address).unwrap();
-    let connection_config = RenetConnectionConfig {
-        // TODO: Split channels for server and client
-        send_channels_config: Channel::channels_config(),
-        receive_channels_config: Channel::channels_config(),
-        ..Default::default()
-    };
-    let server_config = ServerConfig::new(
-        64,
-        PROTOCOL_ID,
-        public_address
+    let server_config = ServerConfig {
+        max_clients: 64,
+        protocol_id: PROTOCOL_ID,
+        public_addr: public_address
             .map(|p| SocketAddr::from((p, listen_address.port())))
             .unwrap_or(listen_address),
-        ServerAuthentication::Unsecure,
-    );
+        authentication: ServerAuthentication::Unsecure,
+    };
     let current_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap();
-    RenetServer::new(current_time, server_config, connection_config, socket).unwrap()
+    let transport = NetcodeServerTransport::new(current_time, server_config, socket).unwrap();
+    let server = RenetServer::new(connection_config());
+    (server, transport)
+}
+
+fn connection_config() -> ConnectionConfig {
+    ConnectionConfig {
+        client_channels_config: Channel::channels_config(),
+        server_channels_config: Channel::channels_config(),
+        ..Default::default()
+    }
 }
 
 fn handle_joining_server(
     mut events: EventReader<ClientEvent>,
-    mut state: ResMut<State<ClientState>>,
+    state: ResMut<State<ClientState>>,
+    mut next_state: ResMut<NextState<ClientState>>,
     mut commands: Commands,
 ) {
     for event in events.iter() {
         if let ClientEvent::Join(address) = event {
-            match state.current() {
-                ClientState::Joining(_) | ClientState::Connected => {
+            match state.get() {
+                ClientState::Joining | ClientState::Connected => {
                     warn!("Client tried to join server while already joined or connected");
                 }
                 _ => {
-                    state.overwrite_set(ClientState::Joining(*address)).unwrap();
+                    next_state.set(ClientState::Joining);
                     info!("Joining server {}", address);
 
                     let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
-                    let connection_config = RenetConnectionConfig {
-                        // TODO: Split channels for server and client
-                        send_channels_config: Channel::channels_config(),
-                        receive_channels_config: Channel::channels_config(),
-                        ..Default::default()
-                    };
                     let current_time = SystemTime::now()
                         .duration_since(SystemTime::UNIX_EPOCH)
                         .unwrap();
@@ -175,9 +180,11 @@ fn handle_joining_server(
                         server_addr: *address,
                         user_data: None,
                     };
-                    let client =
-                        RenetClient::new(current_time, socket, connection_config, auth).unwrap();
+                    let client = RenetClient::new(connection_config());
                     commands.insert_resource(client);
+                    let transport =
+                        NetcodeClientTransport::new(current_time, auth, socket).unwrap();
+                    commands.insert_resource(transport);
                 }
             }
         }
@@ -185,17 +192,12 @@ fn handle_joining_server(
 }
 
 fn client_send_hello(
-    client: Option<Res<RenetClient>>,
+    transport: Res<NetcodeClientTransport>,
     data: Option<Res<UserData>>,
     mut sender: MessageSender,
     mut last_state: Local<bool>,
 ) {
-    let client = match client {
-        Some(c) => c,
-        None => return,
-    };
-
-    match (client.is_connected(), *last_state) {
+    match (transport.is_connected(), *last_state) {
         // Connected
         (true, false) => *last_state = true,
         // Disconnected
@@ -228,11 +230,11 @@ fn client_send_hello(
 fn client_joined_server(
     mut server_infos: EventReader<MessageEvent<ServerInfo>>,
     mut client_events: EventWriter<ClientEvent>,
-    mut state: ResMut<State<ClientState>>,
+    mut next_state: ResMut<NextState<ClientState>>,
     mut network_time: ResMut<ClientNetworkTime>,
 ) {
     for event in server_infos.iter() {
-        state.set(ClientState::Connected).unwrap();
+        next_state.set(ClientState::Connected);
         client_events.send(ClientEvent::Joined);
         let tick_duration = event.message.tick_duration_seconds;
         network_time.server_tick_seconds = Some(tick_duration);
@@ -241,45 +243,31 @@ fn client_joined_server(
 }
 
 fn client_handle_join_error(
-    mut events: EventReader<RenetError>,
+    mut events: EventReader<NetcodeTransportError>,
     mut client_events: EventWriter<ClientEvent>,
-    mut state: ResMut<State<ClientState>>,
+    mut next_state: ResMut<NextState<ClientState>>,
     mut commands: Commands,
 ) {
-    if !matches!(state.current(), ClientState::Joining(_)) {
-        return;
-    }
-
-    let err = match events.iter().last() {
-        Some(err) => err,
-        None => return,
-    };
+    let err = events.iter().last().unwrap();
     // For now we return to the menu on any network error while joining
-    state.set(ClientState::Initial).unwrap();
+    next_state.set(ClientState::Initial);
     client_events.send(ClientEvent::JoinFailed(err.to_string()));
     commands.remove_resource::<RenetClient>();
 }
 
 fn client_handle_disconnect(
-    mut events: EventReader<RenetError>,
+    mut events: EventReader<NetcodeTransportError>,
     mut client_events: EventWriter<ClientEvent>,
-    mut state: ResMut<State<ClientState>>,
+    mut next_state: ResMut<NextState<ClientState>>,
     mut commands: Commands,
 ) {
-    if !matches!(state.current(), ClientState::Connected) {
-        return;
-    }
-
-    let reason = match events.iter().last() {
-        Some(RenetError::Netcode(NetcodeError::Disconnected(reason))) => reason.to_string(),
-        Some(RenetError::Rechannel(RechannelError::ClientDisconnected(reason))) => {
-            reason.to_string()
-        }
-        Some(RenetError::IO(err)) => err.to_string(),
+    let reason = match events.iter().last().unwrap() {
+        NetcodeTransportError::Netcode(NetcodeError::Disconnected(reason)) => reason.to_string(),
+        NetcodeTransportError::IO(err) => err.to_string(),
         _ => return,
     };
 
-    state.set(ClientState::Initial).unwrap();
+    next_state.set(ClientState::Initial);
     client_events.send(ClientEvent::Disconnected(reason));
     commands.remove_resource::<RenetClient>();
 }
@@ -380,7 +368,7 @@ fn server_handle_disconnect(
     mut server_events: EventWriter<ServerEvent>,
 ) {
     for event in renet_events.iter() {
-        if let bevy_renet::renet::ServerEvent::ClientDisconnected(id) = event {
+        if let bevy_renet::renet::ServerEvent::ClientDisconnected { client_id: id, .. } = event {
             let connection = ConnectionId(*id);
             if let Some(player) = players.remove(connection) {
                 let uuid = player.id.to_string();
@@ -391,22 +379,18 @@ fn server_handle_disconnect(
     }
 }
 
-fn report_errors(mut events: EventReader<RenetError>) {
+fn report_errors(mut events: EventReader<NetcodeTransportError>) {
     for error in events.iter() {
         error!(?error, "Network error");
     }
 }
 
 fn client_disconnect_on_exit(
-    mut events: EventReader<AppExit>,
-    client: Option<ResMut<RenetClient>>,
+    mut client: ResMut<RenetClient>,
+    transport: ResMut<NetcodeClientTransport>,
 ) {
-    if events.iter().last().is_some() {
-        if let Some(mut client) = client {
-            if client.is_connected() {
-                client.disconnect();
-            }
-        }
+    if transport.is_connected() {
+        client.disconnect();
     }
 }
 
@@ -418,53 +402,109 @@ pub fn is_client(app: &App) -> bool {
     app.world.resource::<NetworkManager>().is_client()
 }
 
+pub fn has_client() -> impl FnMut(Option<Res<RenetClient>>) -> bool {
+    resource_exists::<RenetClient>()
+}
+
 pub struct NetworkingPlugin {
     pub role: NetworkRole,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
-pub enum NetworkSystem {
-    ReadNetworkMessages,
-    Visibility,
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemSet)]
+pub enum NetworkSet {
+    ReadIncoming,
+    UpdateTick,
+    ServerVisibility,
+    ClientSpawn,
+    ClientApply,
+    ServerWrite,
+    SendOutgoing,
+    ServerSyncPhysics,
 }
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, ScheduleLabel)]
+struct NetworkUpdate;
 
 impl Plugin for NetworkingPlugin {
     fn build(&self, app: &mut App) {
         match self.role {
-            NetworkRole::Server => app.add_plugin(RenetServerPlugin::default()),
-            NetworkRole::Client => app.add_plugin(RenetClientPlugin::default()),
+            NetworkRole::Server => app.add_plugins((RenetServerPlugin, NetcodeServerPlugin)),
+            NetworkRole::Client => app.add_plugins((RenetClientPlugin, NetcodeClientPlugin)),
         };
 
         app.insert_resource(NetworkManager { role: self.role })
-            .add_plugin(MessagingPlugin)
+            .configure_sets(
+                PreUpdate,
+                (
+                    NetworkSet::ReadIncoming,
+                    NetworkSet::UpdateTick,
+                    NetworkSet::ServerVisibility,
+                    NetworkSet::ClientSpawn,
+                    NetworkSet::ClientApply,
+                )
+                    .chain(),
+            )
+            .configure_sets(
+                PostUpdate,
+                (
+                    NetworkSet::ServerWrite,
+                    NetworkSet::SendOutgoing,
+                    NetworkSet::ServerSyncPhysics,
+                )
+                    .chain(),
+            )
+            .add_plugins(MessagingPlugin)
             .add_network_message::<ClientHello>()
             .add_network_message::<ServerInfo>()
-            .add_plugin(TimePlugin)
-            .add_plugin(IdentityPlugin)
-            .add_plugin(VisibilityPlugin)
-            .add_plugin(SpawningPlugin)
-            .add_plugin(ComponentPlugin)
-            .add_plugin(ResourcePlugin)
-            .add_plugin(TransformPlugin)
-            .add_plugin(ScenePlugin)
-            .add_system(report_errors);
+            .add_plugins((
+                TimePlugin,
+                IdentityPlugin,
+                VisibilityPlugin,
+                SpawningPlugin,
+                ComponentPlugin,
+                ResourcePlugin,
+                TransformPlugin,
+                ScenePlugin,
+            ))
+            .add_systems(
+                Update,
+                report_errors.run_if(on_event::<NetcodeTransportError>()),
+            );
 
         if self.role == NetworkRole::Client {
-            app.add_state(ClientState::Initial)
+            app.add_state::<ClientState>()
                 .add_event::<ClientEvent>()
                 .add_event::<ClientOrder>()
-                .add_system(handle_joining_server)
-                .add_system(client_joined_server.after(NetworkSystem::ReadNetworkMessages))
-                .add_system(client_send_hello)
-                .add_system(client_handle_join_error)
-                .add_system(client_handle_disconnect)
-                .add_system(client_handle_orders)
-                .add_system(client_disconnect_on_exit);
+                .configure_sets(
+                    PreUpdate,
+                    (
+                        NetworkSet::ReadIncoming.run_if(has_client()),
+                        NetworkSet::UpdateTick.run_if(has_client()),
+                        NetworkSet::ClientSpawn.run_if(has_client()),
+                        NetworkSet::ClientApply.run_if(has_client()),
+                    ),
+                )
+                .add_systems(
+                    Update,
+                    (
+                        handle_joining_server,
+                        client_joined_server,
+                        client_send_hello.run_if(resource_exists::<NetcodeClientTransport>()),
+                        (
+                            client_handle_join_error.run_if(in_state(ClientState::Joining)),
+                            client_handle_disconnect.run_if(in_state(ClientState::Connected)),
+                        )
+                            .run_if(on_event::<NetcodeTransportError>()),
+                        client_handle_orders.run_if(on_event::<ClientOrder>()),
+                        client_disconnect_on_exit
+                            .run_if(on_event::<AppExit>())
+                            .run_if(resource_exists::<NetcodeClientTransport>()),
+                    ),
+                );
         } else {
             app.add_event::<ServerEvent>()
                 .init_resource::<Players>()
-                .add_system(server_handle_connect.after(NetworkSystem::ReadNetworkMessages))
-                .add_system(server_handle_disconnect);
+                .add_systems(Update, (server_handle_connect, server_handle_disconnect));
         }
     }
 }

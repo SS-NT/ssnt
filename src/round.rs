@@ -31,27 +31,27 @@ impl Plugin for RoundPlugin {
             .add_network_message::<RequestJoin>()
             .add_networked_resource::<RoundData, RoundDataClient>();
         if is_server(app) {
-            app.add_state(RoundState::Loading)
+            app.add_state::<RoundState>()
                 .insert_resource(RoundData {
                     state: RoundState::Loading.into(),
                     start: None.into(),
                 })
                 .init_resource::<SpawnsInProgress>()
-                .add_system_set(SystemSet::on_enter(RoundState::Loading).with_system(load_map))
-                .add_system_set(SystemSet::on_update(RoundState::Loading).with_system(set_ready))
-                .add_system_set(
-                    SystemSet::on_update(RoundState::Ready).with_system(handle_start_round_request),
+                .add_systems(OnEnter(RoundState::Loading), load_map)
+                .add_systems(
+                    OnEnter(RoundState::Running),
+                    (spawn_players_roundstart, start_round_timer),
                 )
-                .add_system_set(
-                    SystemSet::on_enter(RoundState::Running)
-                        .with_system(spawn_players_roundstart)
-                        .with_system(start_round_timer),
-                )
-                .add_system_set(
-                    SystemSet::on_update(RoundState::Running).with_system(spawn_player_latejoin),
-                )
-                .add_system(update_round_data)
-                .add_system(finalise_player_spawn);
+                .add_systems(
+                    Update,
+                    (
+                        set_ready.run_if(in_state(RoundState::Loading)),
+                        handle_start_round_request.run_if(in_state(RoundState::Ready)),
+                        spawn_player_latejoin.run_if(in_state(RoundState::Running)),
+                        update_round_data.run_if(state_changed::<RoundState>()),
+                        finalise_player_spawn,
+                    ),
+                );
         }
 
         let player_scene = app
@@ -66,8 +66,9 @@ impl Plugin for RoundPlugin {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, States)]
 pub enum RoundState {
+    #[default]
     Loading,
     Ready,
     Running,
@@ -113,24 +114,24 @@ fn load_map(mut commands: Commands, server: Res<AssetServer>) {
 }
 
 // TODO: Make it wait for all potential maps
-fn set_ready(query: Query<(), Added<TileMap>>, mut state: ResMut<State<RoundState>>) {
+fn set_ready(query: Query<(), Added<TileMap>>, mut state: ResMut<NextState<RoundState>>) {
     if !query.is_empty() {
-        state.push(RoundState::Ready).unwrap();
+        state.set(RoundState::Ready);
     }
 }
 
 fn handle_start_round_request(
     mut query: EventReader<MessageEvent<StartRoundRequest>>,
-    mut state: ResMut<State<RoundState>>,
+    mut state: ResMut<NextState<RoundState>>,
 ) {
     if query.iter().next().is_some() {
-        state.push(RoundState::Running).unwrap();
+        state.set(RoundState::Running);
     }
 }
 
 fn update_round_data(state: Res<State<RoundState>>, mut round_data: ResMut<RoundData>) {
-    if state.is_changed() && &*round_data.state != state.current() {
-        *round_data.state = *state.current();
+    if state.is_changed() && &*round_data.state != state.get() {
+        *round_data.state = *state.get();
     }
 }
 

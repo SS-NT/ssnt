@@ -24,9 +24,9 @@ impl<T> Command for EnableComponent<T>
 where
     T: Component,
 {
-    fn write(self, world: &mut World) {
+    fn apply(self, world: &mut World) {
         let mut entity = world.entity_mut(self.entity);
-        let value = entity.remove::<Disabled<T>>().unwrap().0;
+        let value = entity.take::<Disabled<T>>().unwrap().0;
         entity.insert(value);
     }
 }
@@ -49,9 +49,9 @@ impl<T> Command for DisableComponent<T>
 where
     T: Component,
 {
-    fn write(self, world: &mut World) {
+    fn apply(self, world: &mut World) {
         let mut entity = world.entity_mut(self.entity);
-        let value = entity.remove::<T>().unwrap();
+        let value = entity.take::<T>().unwrap();
         entity.insert(Disabled(value));
     }
 }

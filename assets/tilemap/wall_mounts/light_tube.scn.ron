@@ -10,30 +10,26 @@
                     id: "models/tilemap/lights.glb#Mesh12/Primitive0"
                 ),
                 "bevy_pbr::light::NotShadowCaster": (),
-                "bevy_hierarchy::components::children::Children": ([(index: 1, generation: 0)]),
+                "bevy_hierarchy::components::children::Children": ([1]),
             }
         ),
         // Light tube
         1: (
             components: {
-                "bevy_hierarchy::components::parent::Parent": (
-                    ( index: 0, generation: 0 )
-                ),
+                "bevy_hierarchy::components::parent::Parent": (0),
                 "bevy_transform::components::transform::Transform": (
                 ),
                 "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
                     id: "models/tilemap/lights.glb#Mesh9/Primitive0"
                 ),
                 "bevy_pbr::light::NotShadowCaster": (),
-                "bevy_hierarchy::components::children::Children": ([(index: 2, generation: 0)]),
+                "bevy_hierarchy::components::children::Children": ([2]),
             }
         ),
         // Light on the light tube
         2: (
             components: {
-                "bevy_hierarchy::components::parent::Parent": (
-                    ( index: 1, generation: 0 )
-                ),
+                "bevy_hierarchy::components::parent::Parent": (1),
                 "bevy_transform::components::transform::Transform": (
                 ),
                 "bevy_pbr::light::PointLight": (
@@ -41,9 +37,7 @@
                 ),
                 "bevy_pbr::bundle::CubemapVisibleEntities": (),
                 "bevy_render::primitives::CubemapFrusta": (),
-                "bevy_render::view::visibility::Visibility": (
-                    is_visible: true,
-                ),
+                "bevy_render::view::visibility::Visibility": Inherited,
                 "bevy_render::view::visibility::ComputedVisibility": (),
             }
         )

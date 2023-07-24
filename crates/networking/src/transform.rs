@@ -1,27 +1,24 @@
 use std::collections::VecDeque;
 
 use bevy::{
+    ecs::query::Has,
     math::{Quat, Vec3},
     prelude::*,
     reflect::Reflect,
-    transform::TransformSystem,
     utils::{hashbrown::hash_map::Entry, HashMap},
 };
 use bevy_rapier3d::prelude::{RigidBody, RigidBodyDisabled, Velocity};
-use bevy_renet::{
-    renet::{RenetClient, RenetServer},
-    run_if_client_connected,
-};
+use bevy_renet::renet::{RenetClient, RenetServer};
 use physics::PhysicsEntityCommands;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     identity::{NetworkIdentities, NetworkIdentity},
     messaging::{deserialize, serialize_once, Channel},
-    spawning::{ClientControlled, SpawningSystems},
-    time::{ClientNetworkTime, ServerNetworkTime, TimeSystem},
+    spawning::ClientControlled,
+    time::{ClientNetworkTime, ServerNetworkTime},
     visibility::NetworkVisibilities,
-    ConnectionId, NetworkManager,
+    ConnectionId, NetworkManager, NetworkSet,
 };
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
@@ -353,7 +350,7 @@ fn update_transform(
         &NetworkIdentity,
         Option<&Velocity>,
         Option<&Parent>,
-        Option<&RigidBodyDisabled>,
+        Has<RigidBodyDisabled>,
     )>,
     identity_query: Query<&NetworkIdentity>,
     time: Res<Time>,
@@ -362,7 +359,7 @@ fn update_transform(
     network_time: Res<ServerNetworkTime>,
 ) {
     let seconds = time.raw_elapsed_seconds();
-    for (mut networked, transform, identity, velocity, parent, disabled_body) in query.iter_mut() {
+    for (mut networked, transform, identity, velocity, parent, body_disabled) in query.iter_mut() {
         let networked: &mut NetworkTransform = &mut networked;
 
         // Respect update rate
@@ -379,7 +376,7 @@ fn update_transform(
             parent: parent
                 .and_then(|p| identity_query.get(p.get()).ok())
                 .copied(),
-            disabled: disabled_body.is_some(),
+            disabled: body_disabled,
             physics: velocity.map(|v| (*v).into()),
         };
 
@@ -469,7 +466,7 @@ fn handle_acks(
                         }
                     };
 
-                    let mut data = transform
+                    let data = transform
                         .client_data
                         .entry(ConnectionId(client_id))
                         .or_default();
@@ -811,16 +808,6 @@ fn sync_networked_transform_physics(
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
-enum ClientTransformSystem {
-    /// Receive transform update messages
-    ReceiveMessages,
-    /// Apply buffered transform updates
-    ApplyBuffer,
-    /// Sync updates with transforms and physics
-    Sync,
-}
-
 pub(crate) struct TransformPlugin;
 
 impl Plugin for TransformPlugin {
@@ -833,43 +820,28 @@ impl Plugin for TransformPlugin {
             .unwrap()
             .is_server()
         {
-            app.add_system_set(
-                SystemSet::new()
-                    .after(SpawningSystems::Spawn)
-                    .with_system(update_transform.after(TimeSystem::Tick))
-                    // .with_system(handle_retransmission)
-                    .with_system(handle_acks),
+            app.add_systems(
+                PostUpdate,
+                (
+                    handle_acks,
+                    update_transform.after(bevy_rapier3d::plugin::PhysicsSet::Writeback),
+                    // TODO: Write outgoing messages again
+                )
+                    .chain()
+                    .in_set(NetworkSet::ServerSyncPhysics),
             );
         } else {
-            app.init_resource::<BufferedTransformUpdates>()
-                .add_system(
-                    handle_transform_messages
-                        .label(ClientTransformSystem::ReceiveMessages)
-                        .with_run_criteria(run_if_client_connected),
+            app.init_resource::<BufferedTransformUpdates>().add_systems(
+                PreUpdate,
+                (
+                    handle_transform_messages,
+                    apply_buffered_updates,
+                    sync_networked_transform,
+                    sync_networked_transform_physics,
                 )
-                .add_system_to_stage(
-                    CoreStage::PostUpdate,
-                    apply_buffered_updates
-                        .label(ClientTransformSystem::ApplyBuffer)
-                        .after(ClientTransformSystem::ReceiveMessages)
-                        .after(SpawningSystems::Spawn),
-                )
-                .add_system_to_stage(
-                    CoreStage::PostUpdate,
-                    sync_networked_transform
-                        .label(ClientTransformSystem::Sync)
-                        .after(ClientTransformSystem::ApplyBuffer)
-                        .after(TimeSystem::Interpolate)
-                        .before(TransformSystem::TransformPropagate),
-                )
-                .add_system_to_stage(
-                    CoreStage::PostUpdate,
-                    sync_networked_transform_physics
-                        .label(ClientTransformSystem::Sync)
-                        .after(ClientTransformSystem::ApplyBuffer)
-                        .after(TimeSystem::Interpolate)
-                        .before(TransformSystem::TransformPropagate),
-                );
+                    .chain()
+                    .in_set(NetworkSet::ClientApply),
+            );
         }
     }
 }

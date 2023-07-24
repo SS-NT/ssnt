@@ -3,7 +3,7 @@ use bevy::{
     prelude::*,
 };
 
-use crate::identity::NetworkIdentity;
+use crate::{identity::NetworkIdentity, spawning::SpawningSet};
 
 pub(crate) struct ScenePlugin;
 
@@ -11,8 +11,17 @@ impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NetworkSceneSpawner>()
             .add_event::<NetworkSceneEvent>()
-            .add_system_to_stage(CoreStage::PreUpdate, queue_network_scenes)
-            .add_system_to_stage(CoreStage::PreUpdate, spawn_network_scenes.at_end());
+            .add_systems(
+                PreUpdate,
+                (
+                    apply_deferred,
+                    queue_network_scenes,
+                    spawn_network_scenes,
+                    apply_deferred,
+                )
+                    .chain()
+                    .in_set(SpawningSet::SpawnScenes),
+            );
     }
 }
 
@@ -26,6 +35,7 @@ impl From<Handle<DynamicScene>> for NetworkScene {
     }
 }
 
+#[derive(Event)]
 pub enum NetworkSceneEvent {
     Created(Entity),
 }
@@ -114,7 +124,7 @@ fn spawn_network_scenes(world: &mut World) {
                     let registration = read_registry.get(*type_id).unwrap();
                     let reflect_component = registration.data::<ReflectComponent>().unwrap();
                     reflect_component.copy(world, &mut temporary_world, *entity, temporary_entity);
-                    reflect_component.remove(world, *entity);
+                    reflect_component.remove(&mut world.entity_mut(*entity));
                 }
                 drop(read_registry);
 

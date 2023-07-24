@@ -250,7 +250,7 @@ pub fn networked_derive(input: TokenStream) -> TokenStream {
     let name = input.ident;
     let priority = input.priority;
     let param = input.param;
-    let method_param = quote_spanned!(param.span()=> param: &mut <<Self::Param as bevy::ecs::system::SystemParam>::Fetch as bevy::ecs::system::SystemParamFetch<'w, 's>>::Item);
+    let method_param = quote_spanned!(param.span()=> param: &mut bevy::ecs::system::StaticSystemParam<Self::Param>);
     match side {
         NetworkedSide::Server => {
             // Build writes for the serialize method

@@ -14,9 +14,6 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(SplashPlugin)
-            .add_plugin(MainMenuPlugin)
-            .add_plugin(PauseMenuPlugin)
-            .add_plugin(LobbyPlugin);
+        app.add_plugins((SplashPlugin, MainMenuPlugin, PauseMenuPlugin, LobbyPlugin));
     }
 }

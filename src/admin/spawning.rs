@@ -1,13 +1,13 @@
 use bevy::{
     asset::{AssetPathId, HandleId},
     input::Input,
-    math::{Mat4, Vec2, Vec3},
+    math::Vec3,
     prelude::*,
     reflect::Reflect,
     scene::DynamicScene,
-    window::Windows,
+    window::PrimaryWindow,
 };
-use bevy_egui::{egui::Window, EguiContext};
+use bevy_egui::{egui, EguiContexts};
 use bevy_rapier3d::plugin::RapierContext;
 use networking::{
     identity::EntityCommandsExt,
@@ -35,9 +35,9 @@ struct SpawnerUiState {
     to_spawn: Option<AssetPathId>,
 }
 
-fn spawning_ui(mut egui_context: ResMut<EguiContext>, mut state: ResMut<SpawnerUiState>) {
+fn spawning_ui(mut contexts: EguiContexts, mut state: ResMut<SpawnerUiState>) {
     let state = state.as_mut();
-    Window::new("Spawning").show(egui_context.ctx_mut(), |ui| {
+    egui::Window::new("Spawning").show(contexts.ctx_mut(), |ui| {
         ui.selectable_value(&mut state.to_spawn, None, "None");
         for data in state.all_items.iter() {
             ui.selectable_value(&mut state.to_spawn, Some(data.id), &data.name);
@@ -98,9 +98,9 @@ enum SpawnerMessage {
 fn spawn_requesting(
     ui_state: Res<SpawnerUiState>,
     mut buttons: ResMut<Input<MouseButton>>,
-    mut context: ResMut<EguiContext>,
+    mut contexts: EguiContexts,
     rapier_context: Res<RapierContext>,
-    windows: Res<Windows>,
+    windows: Query<(Entity, &Window), With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut sender: MessageSender,
 ) {
@@ -112,13 +112,12 @@ fn spawn_requesting(
         return;
     }
 
-    let window = match windows.get_primary() {
-        Some(w) => w,
-        None => return,
+    let Ok((window_entity, window)) = windows.get_single() else {
+        return;
     };
 
-    if context
-        .try_ctx_for_window_mut(window.id())
+    if contexts
+        .try_ctx_for_window_mut(window_entity)
         .map(|c| c.wants_pointer_input())
         == Some(true)
     {
@@ -137,10 +136,11 @@ fn spawn_requesting(
         None => return,
     };
 
-    let (origin, direction) = match ray_from_cursor(cursor_position, camera, camera_transform) {
-        Some(r) => r,
-        None => return,
-    };
+    let Ray { origin, direction } =
+        match camera.viewport_to_world(camera_transform, cursor_position) {
+            Some(r) => r,
+            None => return,
+        };
 
     if let Some((_, toi)) =
         rapier_context.cast_ray(origin, direction, 100.0, true, Default::default())
@@ -188,38 +188,23 @@ impl Plugin for SpawningPlugin {
         app.add_network_message::<SpawnerMessage>();
 
         if is_server(app) {
-            app.add_system(handle_spawn_request);
+            app.add_systems(
+                Update,
+                handle_spawn_request.run_if(on_event::<MessageEvent<SpawnerMessage>>()),
+            );
         } else {
-            app.init_resource::<SpawnerUiState>()
-                .add_system_set(
-                    SystemSet::on_update(GameState::Game)
-                        .with_system(spawning_ui.label("admin spawn ui")),
-                )
-                .add_system(prepare_item_ui_data)
-                .add_system(
-                    spawn_requesting
-                        .after("admin spawn ui")
-                        .before(InteractionSystem::Input),
-                );
+            app.init_resource::<SpawnerUiState>().add_systems(
+                Update,
+                (
+                    prepare_item_ui_data,
+                    (
+                        spawning_ui,
+                        spawn_requesting.before(InteractionSystem::Input),
+                    )
+                        .chain()
+                        .run_if(in_state(GameState::Game)),
+                ),
+            );
         }
     }
-}
-
-// Taken from https://github.com/aevyrie/bevy_mod_raycast/blob/51d9e2c99066ea769db27c0ae79d11b258fcef4f/src/primitives.rs#L192
-pub fn ray_from_cursor(
-    cursor_pos_screen: Vec2,
-    camera: &Camera,
-    camera_transform: &GlobalTransform,
-) -> Option<(Vec3, Vec3)> {
-    let view = camera_transform.compute_matrix();
-    let screen_size = camera.logical_target_size()?;
-    let projection = camera.projection_matrix();
-    let far_ndc = projection.project_point3(Vec3::NEG_Z).z;
-    let near_ndc = projection.project_point3(Vec3::Z).z;
-    let cursor_ndc = (cursor_pos_screen / screen_size) * 2.0 - Vec2::ONE;
-    let ndc_to_world: Mat4 = view * projection.inverse();
-    let near = ndc_to_world.project_point3(cursor_ndc.extend(near_ndc));
-    let far = ndc_to_world.project_point3(cursor_ndc.extend(far_ndc));
-    let ray_direction = far - near;
-    Some((near, ray_direction))
 }

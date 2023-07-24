@@ -4,12 +4,9 @@ use bevy::prelude::*;
 use maps::MapCommandsExt;
 use networking::is_server;
 
-use crate::{
-    event::{EventSystemExt, InterceptableEvents},
-    interaction::{
-        ActiveInteraction, InteractionListEvent, InteractionOption, InteractionSpecificity,
-        InteractionStatus,
-    },
+use crate::interaction::{
+    ActiveInteraction, GenerateInteractionList, InteractionListEvents, InteractionOption,
+    InteractionSpecificity, InteractionStatus,
 };
 
 pub struct ConstructionPlugin;
@@ -20,12 +17,13 @@ impl Plugin for ConstructionPlugin {
             .register_type::<WrenchDeconstructable>()
             .register_type::<WrenchDeconstructInteraction>();
         if is_server(app) {
-            app.add_system(
-                prepare_deconstruct_wrench_interaction
-                    .into_descriptor()
-                    .intercept::<InteractionListEvent>(),
-            )
-            .add_system(execute_deconstruct_wrench_interaction);
+            app.add_systems(
+                Update,
+                (
+                    prepare_deconstruct_wrench_interaction.in_set(GenerateInteractionList),
+                    execute_deconstruct_wrench_interaction,
+                ),
+            );
         }
     }
 }
@@ -58,11 +56,11 @@ impl Default for WrenchDeconstructInteraction {
 }
 
 fn prepare_deconstruct_wrench_interaction(
-    events: Res<InterceptableEvents<InteractionListEvent>>,
+    list: Res<InteractionListEvents>,
     wrenches: Query<(), With<Wrench>>,
     deconstructables: Query<(), With<WrenchDeconstructable>>,
 ) {
-    for event in events.iter() {
+    for event in list.events.iter() {
         let Some(item_in_hand) = event.item_in_hand else {
             continue;
         };

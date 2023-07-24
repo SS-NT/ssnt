@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, str::FromStr};
 
 use bevy::prelude::*;
-use bevy_egui::EguiContext;
+use bevy_egui::EguiContexts;
 use bevy_inspector_egui::egui::{self, TextEdit};
 use networking::{ClientEvent, UserData};
 
@@ -11,8 +11,13 @@ pub struct MainMenuPlugin;
 
 impl Plugin for MainMenuPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system_set(SystemSet::on_update(GameState::MainMenu).with_system(ui))
-            .add_system(react_to_client_change);
+        app.add_systems(
+            Update,
+            (
+                ui.run_if(in_state(GameState::MainMenu)),
+                react_to_client_change,
+            ),
+        );
     }
 }
 
@@ -22,7 +27,7 @@ struct DisconnectReason {
 }
 
 fn ui(
-    mut egui_context: ResMut<EguiContext>,
+    mut contexts: EguiContexts,
     mut ip: Local<String>,
     mut name: Local<String>,
     mut client_events: EventWriter<ClientEvent>,
@@ -31,7 +36,7 @@ fn ui(
 ) {
     egui::Area::new("main buttons")
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(egui_context.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut(), |ui| {
             ui.horizontal(|ui| {
                 // TODO: Actually use name
                 let name_field = TextEdit::singleline(&mut *name).hint_text("Name");
@@ -64,23 +69,22 @@ fn ui(
 
 fn react_to_client_change(
     mut events: EventReader<ClientEvent>,
-    mut game_state: ResMut<State<GameState>>,
+    mut game_state: ResMut<NextState<GameState>>,
     mut commands: Commands,
 ) {
     for event in events.iter() {
         match event {
             ClientEvent::Join(_) => {
                 commands.remove_resource::<DisconnectReason>();
-                game_state.overwrite_set(GameState::Joining)
+                game_state.set(GameState::Joining)
             }
-            ClientEvent::Joined => game_state.overwrite_set(GameState::Game),
+            ClientEvent::Joined => game_state.set(GameState::Game),
             ClientEvent::JoinFailed(reason) | ClientEvent::Disconnected(reason) => {
                 commands.insert_resource(DisconnectReason {
                     reason: reason.clone(),
                 });
-                game_state.overwrite_set(GameState::MainMenu)
+                game_state.set(GameState::MainMenu)
             }
         }
-        .unwrap();
     }
 }

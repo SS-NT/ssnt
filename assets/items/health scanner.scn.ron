@@ -18,14 +18,12 @@
                 "physics::RigidBody": (
                     kind: Dynamic
                 ),
-                "bevy_hierarchy::components::children::Children": ([(index: 1, generation: 0)]),
+                "bevy_hierarchy::components::children::Children": ([1]),
             }
         ),
         1: (
             components: {
-                "bevy_hierarchy::components::parent::Parent": (
-                    ( index: 0, generation: 0 )
-                ),
+                "bevy_hierarchy::components::parent::Parent": (0),
                 "bevy_transform::components::transform::Transform": (
                     translation: (
                         x: 0.0,

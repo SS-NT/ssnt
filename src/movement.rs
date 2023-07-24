@@ -1,14 +1,16 @@
+use std::time::Duration;
+
 use crate::{
     camera::{MainCamera, TopDownCamera},
     combat::{ClientCombatModeStatus, CombatModeClient},
     Player,
 };
-use bevy::{math::Vec3Swizzles, prelude::*, time::FixedTimestep};
+use bevy::{math::Vec3Swizzles, prelude::*, time::common_conditions::on_timer};
 use bevy_rapier3d::prelude::{ExternalForce, ReadMassProperties, Velocity};
 use networking::{
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     spawning::{ClientControlled, ClientControls},
-    NetworkManager, Players, ServerEvent,
+    NetworkManager, NetworkSet, Players, ServerEvent,
 };
 use serde::{Deserialize, Serialize};
 
@@ -166,6 +168,7 @@ fn handle_movement_message(
     controls: Res<ClientControls>,
     players: Res<Players>,
     mut messages: EventReader<MessageEvent<MovementMessage>>,
+    mut commands: Commands,
 ) {
     for event in messages.iter() {
         let player = match players.get(event.connection) {
@@ -177,6 +180,19 @@ fn handle_movement_message(
             if let Ok(mut transform) = query.get_mut(controlled) {
                 transform.translation = event.message.position;
                 transform.rotation = event.message.rotation;
+                // Reset velocity to prevent server physics from going crazy
+                // Once movement is server authoritative this won't be necessary
+                commands.entity(controlled).insert((
+                    Velocity {
+                        linvel: Vec3::ZERO,
+                        angvel: Vec3::ZERO,
+                    },
+                    // TODO: Remove once client no longer has authority
+                    ClientAuthoritativeTransform {
+                        position: event.message.position,
+                        rotation: event.message.rotation,
+                    },
+                ));
             }
         }
     }
@@ -257,7 +273,21 @@ pub struct ForcePositionMessage {
 #[component(storage = "SparseSet")]
 struct ForcePositionReceived;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemLabel)]
+#[derive(Component)]
+struct ClientAuthoritativeTransform {
+    position: Vec3,
+    rotation: Quat,
+}
+
+// Maintaining this movement code is getting exponentially more painful.
+fn restore_client_position(mut query: Query<(&mut Transform, &ClientAuthoritativeTransform)>) {
+    for (mut transform, target_transform) in query.iter_mut() {
+        transform.translation = target_transform.position;
+        transform.rotation = target_transform.rotation;
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemSet)]
 pub enum MovementSystem {
     Update,
 }
@@ -275,17 +305,28 @@ impl Plugin for MovementPlugin {
             .unwrap()
             .is_client()
         {
-            app.add_system(movement_system.label(MovementSystem::Update))
-                .add_system(
-                    send_movement_update
-                        .after(MovementSystem::Update)
-                        .with_run_criteria(FixedTimestep::step(0.1)),
-                )
-                .add_system_to_stage(CoreStage::PostUpdate, character_rotation_system)
-                .add_system(handle_force_position_client);
+            app.add_systems(
+                Update,
+                (
+                    (
+                        movement_system,
+                        character_rotation_system,
+                        send_movement_update.run_if(on_timer(Duration::from_millis(30))),
+                    )
+                        .chain()
+                        .in_set(MovementSystem::Update),
+                    handle_force_position_client,
+                ),
+            );
         } else {
-            app.add_system(handle_movement_message)
-                .add_system(force_position_on_rejoin);
+            app.add_systems(Update, (handle_movement_message, force_position_on_rejoin))
+                .add_systems(
+                    PostUpdate,
+                    // To prevent server physics simulation messing up the position before sending
+                    restore_client_position
+                        .after(bevy_rapier3d::plugin::PhysicsSet::Writeback)
+                        .before(NetworkSet::ServerSyncPhysics),
+                );
         }
     }
 }

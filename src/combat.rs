@@ -1,6 +1,5 @@
 use bevy::{ecs::system::SystemParam, prelude::*, reflect::TypeUuid, window::PrimaryWindow};
 use bevy_egui::{egui, EguiContexts};
-use bevy_rapier3d::prelude::RapierContext;
 use networking::{
     component::AppExt,
     is_server,
@@ -152,11 +151,14 @@ pub struct Aim {
     pub origin: Vec3,
 }
 
+/// At what height ranged weapons are aimed.
+// TODO: Replace with height depending on character
+const RANGED_AIM_HEIGHT: f32 = 0.7;
+
 fn client_calculate_aim(
     mut players: Query<(&mut CombatModeClient, &GlobalTransform), With<ClientControlled>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    rapier_context: Res<RapierContext>,
 ) {
     if players.is_empty() {
         return;
@@ -175,9 +177,9 @@ fn client_calculate_aim(
     let Some(ray) = camera.viewport_to_world(camera_transform, cursor_position) else {
         return;
     };
-    // TODO: replace with plane intersection after updating Bevy
-    let Some((_, toi)) =
-        rapier_context.cast_ray(ray.origin, ray.direction, 100.0, true, Default::default()) else
+
+    let Some(toi) =
+        ray.intersect_plane(Vec3::new(0.0, RANGED_AIM_HEIGHT, 0.0), Vec3::Y) else
     {
         return;
     };

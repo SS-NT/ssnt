@@ -11,7 +11,11 @@ use networking::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{body::Limb, combat::damage::*, GameState};
+use crate::{
+    body::Limb,
+    combat::{damage::*, RANGED_AIM_HEIGHT},
+    GameState,
+};
 
 use super::CombatInputEvent;
 
@@ -85,7 +89,7 @@ fn shoot_gun(
         // Shoot
         let target_position = event.input.aim.target_position;
         // Hack: to shoot further up and not on ground level
-        let mut origin = event.input.aim.origin + Vec3::new(0.0, 0.7, 0.0);
+        let mut origin = event.input.aim.origin + Vec3::new(0.0, RANGED_AIM_HEIGHT, 0.0);
         let mut direction = (target_position - origin).normalize_or_zero();
         // Don't aim up or down for now
         direction.y = 0.;

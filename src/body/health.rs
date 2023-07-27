@@ -20,7 +20,7 @@ impl Plugin for HealthPlugin {
             app.add_event::<HeartBeat>().add_systems(
                 Update,
                 (
-                    heart_beat,
+                    (heart_beat, adjust_heart_rate).chain(),
                     breathing,
                     lung_gas_exchange,
                     receive_damage,
@@ -93,7 +93,7 @@ impl FromWorld for OrganicBodyPart {
     fn from_world(_: &mut World) -> Self {
         Self {
             oxygen_consumed: 0.0,
-            oxygen_capacity: 0.0,
+            oxygen_capacity: 0.0015,
         }
     }
 }
@@ -215,6 +215,41 @@ impl OrganicBrain {
     }
 }
 
+fn adjust_heart_rate(
+    mut hearts: Query<(Entity, &mut OrganicHeart, Option<&OrganicBodyPart>)>,
+    bodies: Query<&Body>,
+    body_parts: Query<&OrganicBodyPart>,
+    parents: Query<&Parent>,
+) {
+    for (heart_entity, mut heart, heart_part) in hearts.iter_mut() {
+        // Do not adjust heart rate if in cardiac arrest
+        if heart.heart_rate == 0 {
+            continue;
+        }
+
+        let Some(body_entity) = parents.iter_ancestors(heart_entity).find(|e| bodies.contains(*e)) else {
+            continue;
+        };
+        let body = bodies.get(body_entity).unwrap();
+
+        let mut average_oxygen = 0.0;
+        let mut average_count = 0;
+        let mut iter = body_parts.iter_many(&body.limbs);
+        while let Some(part) = iter.fetch_next() {
+            average_count += 1;
+            average_oxygen += part.oxygen_saturation();
+        }
+        average_oxygen /= average_count as f32;
+
+        heart.heart_rate = (RESTING_HEART_BPM as f32 * average_oxygen
+            + INTENSE_HEART_BPM as f32 * (1.0 - average_oxygen)) as u32;
+
+        // Heart beats slower if it runs low on oxygen
+        let heart_oxygen = heart_part.map(|h| h.oxygen_saturation()).unwrap_or(1.0);
+        heart.heart_rate = (heart.heart_rate as f32 * heart_oxygen) as u32;
+    }
+}
+
 const RESTING_HEART_CONSUMPTION: f32 = 0.00034;
 const RESTING_HEART_BPM: u32 = 70;
 const INTENSE_HEART_CONSUMPTION: f32 = 0.0015;
@@ -242,7 +277,7 @@ fn heart_beat(
         if let Ok((_, mut heart_part)) = body_parts.get_mut(heart_entity) {
             // Calculate oxygen needed per beat depending on BPM
             // Higher BPM gives the heart muscles less time to relax, reducing their efficiency
-            let t = ((heart.heart_rate - RESTING_HEART_BPM) as f32
+            let t = (heart.heart_rate.saturating_sub(RESTING_HEART_BPM) as f32
                 / (INTENSE_HEART_BPM - RESTING_HEART_BPM) as f32)
                 .clamp(0.0, 1.0);
             // TODO: Linear interpolation is not really accurate
@@ -272,14 +307,22 @@ fn heart_beat(
         let (body, mut organic_body) = bodies.get_mut(body_entity).unwrap();
 
         // How much blood we pump depends on how well the heart works and how much blood is in the body
-        let blood_to_spread =
-            heart.pump_rate * pump_strength * (organic_body.blood / organic_body.blood_capacity);
+        let body_blood_ratio = organic_body.blood / organic_body.blood_capacity;
+        let blood_pressure = body_blood_ratio * 2.0 - 1.0;
+        let blood_to_spread = heart.pump_rate * pump_strength * blood_pressure;
         event.send(HeartBeat {
             body: body_entity,
             blood_amount: blood_to_spread,
         });
         let blood_oxygen_saturation = organic_body.oxygen_in_blood / organic_body.blood;
-        let oxygen_to_spread = blood_to_spread * blood_oxygen_saturation;
+        let mut oxygen_to_spread = blood_to_spread * blood_oxygen_saturation;
+
+        // Heart gets refreshed with new blood before all other parts
+        if let Ok((_, mut heart_part)) = body_parts.get_mut(heart_entity) {
+            let heart_oxygen_used = heart_part.refresh_oxygen(oxygen_to_spread);
+            oxygen_to_spread -= heart_oxygen_used;
+            organic_body.oxygen_in_blood -= heart_oxygen_used;
+        }
 
         // Provide blood to other parts
         let parts_count = body_parts.iter_many(&body.limbs).count();

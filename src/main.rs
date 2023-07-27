@@ -223,7 +223,7 @@ fn setup_client(
 ) {
     // TODO: Replace with on-station lights
     commands.insert_resource(AmbientLight {
-        brightness: 0.01,
+        brightness: 0.1,
         ..Default::default()
     });
 

@@ -153,7 +153,7 @@ pub struct Aim {
 
 /// At what height ranged weapons are aimed.
 // TODO: Replace with height depending on character
-const RANGED_AIM_HEIGHT: f32 = 0.7;
+const RANGED_AIM_HEIGHT: f32 = 0.85;
 
 fn client_calculate_aim(
     mut players: Query<(&mut CombatModeClient, &GlobalTransform), With<ClientControlled>>,

@@ -4128,6 +4128,7 @@ name = "ssnt"
 version = "0.1.0"
 dependencies = [
  "async-compat",
+ "base64",
  "bevy",
  "bevy-inspector-egui",
  "bevy_common_assets",

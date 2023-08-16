@@ -3,7 +3,7 @@ use std::{net::SocketAddr, str::FromStr};
 use bevy::prelude::*;
 use bevy_egui::EguiContexts;
 use bevy_inspector_egui::egui::{self, TextEdit};
-use networking::{ClientEvent, UserData};
+use networking::{ClientEvent, TargetServer, UserData};
 
 use crate::GameState;
 
@@ -51,7 +51,7 @@ fn ui(
 
                 if ui.button("Join").clicked() {
                     if let Ok(address) = SocketAddr::from_str(ip.as_ref()) {
-                        client_events.send(ClientEvent::Join(address));
+                        client_events.send(ClientEvent::Join(TargetServer::Raw(address)));
                     }
                 }
             });

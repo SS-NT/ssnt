@@ -12,13 +12,13 @@ use crate::{ArgCommands, Args};
 
 #[derive(Default, Deserialize, Resource)]
 pub struct ServerConfig {
-    registration: Option<ServerRegistration>,
+    pub registration: Option<ServerRegistration>,
 }
 
 #[derive(Deserialize, Clone)]
 pub struct ServerRegistration {
     api_url: String,
-    private_key: [u8; 32],
+    pub private_key: [u8; 32],
 }
 
 const DEFAULT_SERVER_CONFIG_FILE: &str = "server-config.toml";

@@ -32,11 +32,15 @@ use bevy_rapier3d::prelude::Collider;
 use byond::tgm::TgmLoader;
 use camera::TopDownCamera;
 use clap::{Parser, Subcommand};
+use config::ServerConfig;
 use futures_lite::future;
 use maps::TileMapData;
 use networking::identity::EntityCommandsExt as NetworkingEntityCommandsExt;
 use networking::spawning::ClientControlled;
-use networking::{ClientEvent, NetworkRole, NetworkingPlugin, UserData};
+use networking::{
+    ClientEvent, ConnectToken, NetworkRole, NetworkingPlugin, ServerAuthentication, TargetServer,
+    UserData,
+};
 
 /// How many ticks the server runs per second
 const SERVER_TPS: u32 = 60;
@@ -60,13 +64,18 @@ enum ArgCommands {
     },
     /// join a game
     Join { address: SocketAddr, name: String },
+    /// join a game using a connection token
+    JoinToken {
+        /// base64 encoded connection token
+        token: String,
+    },
 }
 
 fn main() {
     let args = Args::parse();
     let role = match args.command {
         Some(ArgCommands::Host { .. }) => NetworkRole::Server,
-        Some(ArgCommands::Join { .. }) | None => NetworkRole::Client,
+        _ => NetworkRole::Client,
     };
     let networking_plugin = NetworkingPlugin { role };
 
@@ -201,13 +210,26 @@ fn setup_shared(mut commands: Commands) {
     ));
 }
 
-fn setup_server(args: Res<Args>, mut commands: Commands) {
+fn setup_server(args: Res<Args>, server_config: Res<ServerConfig>, mut commands: Commands) {
     match args.command.as_ref().unwrap() {
         &ArgCommands::Host {
             bind_address,
             public_address,
         } => {
-            let (server, transport) = networking::create_server(bind_address, public_address);
+            let authentication = match &server_config.registration {
+                Some(registration) => {
+                    info!("Running server in authenticated mode");
+                    ServerAuthentication::Secure {
+                        private_key: registration.private_key,
+                    }
+                }
+                None => {
+                    info!("No server registration configured, running in unauthenticated mode (users are not verified)");
+                    ServerAuthentication::Unsecure
+                }
+            };
+            let (server, transport) =
+                networking::create_server(bind_address, public_address, authentication);
             commands.insert_resource(server);
             commands.insert_resource(transport);
         }
@@ -239,11 +261,26 @@ fn setup_client(
         KeepOnServerChange,
     ));
 
+    // Connect with IP
     if let Some(ArgCommands::Join { address, name }) = &args.command {
         state.set(GameState::MainMenu);
-        client_events.send(ClientEvent::Join(*address));
+        client_events.send(ClientEvent::Join(TargetServer::Raw(*address)));
         commands.insert_resource(UserData {
             username: name.clone(),
+        });
+    }
+
+    // Connect with a token from the central server
+    if let Some(ArgCommands::JoinToken { token }) = &args.command {
+        state.set(GameState::MainMenu);
+
+        let token_data = base64::decode(token).expect("invalid token: not valid base64");
+        let mut reader = std::io::Cursor::new(token_data);
+        let token = ConnectToken::read(&mut reader).expect("invalid token: not a connection token");
+        client_events.send(ClientEvent::Join(TargetServer::Token(Box::new(token))));
+
+        commands.insert_resource(UserData {
+            username: "Change me".to_owned(),
         });
     }
 }

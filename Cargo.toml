@@ -36,6 +36,7 @@ async-compat = "0.2.1"
 tokio = { version = "1.21.2", features = ["time"] }
 # Remove when https://github.com/bevyengine/bevy/pull/6578 is merged
 smallvec = "*"
+base64 = "0.13.0"
 
 [patch.crates-io]
 bevy = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }

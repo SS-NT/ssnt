@@ -11,13 +11,14 @@ pub mod transform;
 pub mod variable;
 pub mod visibility;
 
+pub use bevy_renet::renet::transport::{ConnectToken, ServerAuthentication};
 pub use networking_derive::Networked;
 
 use bevy_renet::{
     renet::{
         transport::{
             ClientAuthentication, NetcodeClientTransport, NetcodeError, NetcodeServerTransport,
-            NetcodeTransportError, ServerAuthentication, ServerConfig,
+            NetcodeTransportError, ServerConfig,
         },
         ConnectionConfig, RenetClient, RenetServer,
     },
@@ -83,12 +84,33 @@ pub enum ClientState {
     Connected,
 }
 
-#[derive(Event, Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Event, Debug, Clone, Eq, PartialEq)]
 pub enum ClientEvent {
-    Join(SocketAddr),
+    Join(TargetServer),
     Joined,
     JoinFailed(String),
     Disconnected(String),
+}
+
+/// Specifies the target server to join.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum TargetServer {
+    Raw(SocketAddr),
+    Token(Box<ConnectToken>),
+}
+
+impl Display for TargetServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TargetServer::Raw(socket) => {
+                write!(f, "{}", socket)
+            }
+            // TODO: Can we extract the server address from the token?
+            TargetServer::Token(_) => {
+                write!(f, "(opaque token)")
+            }
+        }
+    }
 }
 
 #[derive(Event, Debug, Clone, Eq, PartialEq, Hash)]
@@ -126,6 +148,7 @@ struct ServerInfo {
 pub fn create_server(
     listen_address: SocketAddr,
     public_address: Option<IpAddr>,
+    authentication: ServerAuthentication,
 ) -> (RenetServer, NetcodeServerTransport) {
     let socket = UdpSocket::bind(listen_address).unwrap();
     let server_config = ServerConfig {
@@ -134,7 +157,7 @@ pub fn create_server(
         public_addr: public_address
             .map(|p| SocketAddr::from((p, listen_address.port())))
             .unwrap_or(listen_address),
-        authentication: ServerAuthentication::Unsecure,
+        authentication,
     };
     let current_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -159,26 +182,32 @@ fn handle_joining_server(
     mut commands: Commands,
 ) {
     for event in events.iter() {
-        if let ClientEvent::Join(address) = event {
+        if let ClientEvent::Join(target) = event {
             match state.get() {
                 ClientState::Joining | ClientState::Connected => {
                     warn!("Client tried to join server while already joined or connected");
                 }
                 _ => {
                     next_state.set(ClientState::Joining);
-                    info!("Joining server {}", address);
+                    info!("Joining server {}", target);
 
                     let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
                     let current_time = SystemTime::now()
                         .duration_since(SystemTime::UNIX_EPOCH)
                         .unwrap();
-                    let client_id = current_time.as_millis() as u64;
-                    // TODO: use authentication here
-                    let auth = ClientAuthentication::Unsecure {
-                        protocol_id: PROTOCOL_ID,
-                        client_id,
-                        server_addr: *address,
-                        user_data: None,
+                    let auth = match target {
+                        TargetServer::Raw(address) => {
+                            let client_id = current_time.as_millis() as u64;
+                            ClientAuthentication::Unsecure {
+                                protocol_id: PROTOCOL_ID,
+                                client_id,
+                                server_addr: *address,
+                                user_data: None,
+                            }
+                        }
+                        TargetServer::Token(token) => ClientAuthentication::Secure {
+                            connect_token: *token.clone(),
+                        },
                     };
                     let client = RenetClient::new(connection_config());
                     commands.insert_resource(client);

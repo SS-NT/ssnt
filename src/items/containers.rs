@@ -37,6 +37,9 @@ pub struct Container {
     items: HashMap<UVec2, Entity>,
     /// What entity any items should be nested under. Defaults to the container entity if `None`.
     pub attach_to: Option<Entity>,
+    pub relative_position: Vec3,
+    /// The items remain visible when stored
+    pub items_visible: bool,
 }
 
 impl FromWorld for Container {
@@ -45,6 +48,8 @@ impl FromWorld for Container {
             size: (1, 1).into(),
             items: Default::default(),
             attach_to: None,
+            relative_position: Vec3::ZERO,
+            items_visible: false,
         }
     }
 }
@@ -97,7 +102,7 @@ impl Container {
 pub struct DisplayContainer;
 
 /// An event requesting to move an item from or into a container.
-#[derive(Event)]
+#[derive(Event, Debug)]
 pub struct MoveItemOrder {
     pub item: Entity,
     pub container: Option<Entity>,
@@ -128,6 +133,7 @@ fn do_item_move(
         let data = order.data();
 
         let Ok((item_entity, item, mut stored)) = items.get_mut(data.item) else {
+            warn!(order = ?data, "Failed to move item because it does not have an item component");
             results.send(order.complete(MoveItemResult { success: false }));
             continue;
         };
@@ -156,12 +162,14 @@ fn do_item_move(
         };
 
         let Ok(mut container) = containers.get_mut(container_entity) else {
+            warn!(order = ?data, "Failed to move item because target is not a container");
             results.send(order.complete(MoveItemResult { success: false }));
             continue;
         };
 
         let position = data.position.expect("Automatic position not supported yet");
         if !container.can_fit(&only_items, item, position) {
+            warn!(order = ?data, "Failed to move item because it does not fit in the container");
             results.send(order.complete(MoveItemResult { success: false }));
             continue;
         }
@@ -169,9 +177,11 @@ fn do_item_move(
         container.insert_item_unchecked(data.item, position);
         if let Some(stored) = stored.as_mut() {
             *stored.container = container_entity;
+            *stored.visible = container.items_visible;
         } else {
             commands.entity(data.item).insert(StoredItem {
                 container: container_entity.into(),
+                visible: container.items_visible.into(),
             });
         }
 

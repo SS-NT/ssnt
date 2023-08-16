@@ -22,6 +22,7 @@
                 ),
                 "ssnt::items::containers::Container": (
                     size: (x: 10, y: 10),
+                    items_visible: true,
                 ),
                 "ssnt::items::containers::DisplayContainer": (
                 ),

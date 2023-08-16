@@ -7,8 +7,9 @@ use networking::{
     NetworkManager, Networked,
 };
 
-use self::containers::ContainerPlugin;
+use self::{clothes::ClothingPlugin, containers::ContainerPlugin};
 
+pub mod clothes;
 pub mod containers;
 
 pub struct ItemPlugin;
@@ -20,9 +21,15 @@ impl Plugin for ItemPlugin {
             .add_systems(Startup, load_item_assets);
 
         if !is_server(app) {
-            app.add_systems(Update, client_initialize_spawned_items);
+            app.add_systems(
+                Update,
+                (
+                    client_initialize_spawned_items,
+                    client_update_item_visibility,
+                ),
+            );
         }
-        app.add_plugins(ContainerPlugin);
+        app.add_plugins((ContainerPlugin, ClothingPlugin));
     }
 }
 
@@ -49,6 +56,7 @@ pub struct StoredItem {
         with = "Self::network_container(Res<'static, NetworkIdentities>) -> NetworkIdentity"
     )]
     container: NetworkVar<Entity>,
+    visible: NetworkVar<bool>,
 }
 
 impl StoredItem {
@@ -68,6 +76,7 @@ impl StoredItem {
 #[networked(server = "StoredItem")]
 struct StoredItemClient {
     container: ServerVar<NetworkIdentity>,
+    visible: ServerVar<bool>,
 }
 
 /// Stores strong references to all item assets.
@@ -136,6 +145,28 @@ fn client_initialize_spawned_items(
         process_entity(root);
         for child in children_query.iter_descendants(root) {
             process_entity(child);
+        }
+    }
+}
+
+fn client_update_item_visibility(
+    mut query: Query<(&mut Visibility, &StoredItemClient), Changed<StoredItemClient>>,
+    mut removed: RemovedComponents<StoredItemClient>,
+    mut vis_query: Query<&mut Visibility, Without<StoredItemClient>>,
+) {
+    for (mut visibility, item) in query.iter_mut() {
+        match (*item.visible, *visibility) {
+            (true, Visibility::Hidden) => *visibility = Visibility::Inherited,
+            (false, Visibility::Inherited) => *visibility = Visibility::Hidden,
+            _ => {}
+        }
+    }
+
+    for entity in removed.iter() {
+        if let Ok(mut visibility) = vis_query.get_mut(entity) {
+            if *visibility == Visibility::Hidden {
+                *visibility = Visibility::Inherited;
+            }
         }
     }
 }

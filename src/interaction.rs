@@ -565,7 +565,7 @@ fn client_interaction_selection_ui(
         // Position window at cursor
         if let Ok(window) = windows.get_single() {
             if let Some(pos) = window.cursor_position() {
-                ui_window = ui_window.current_pos(egui::pos2(pos.x, window.height() - pos.y));
+                ui_window = ui_window.current_pos(egui::pos2(pos.x, pos.y));
             }
         }
     }

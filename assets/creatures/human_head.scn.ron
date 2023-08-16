@@ -28,7 +28,48 @@
                 "bevy_asset::handle::Handle<bevy_pbr::pbr_material::StandardMaterial>": (
                     id: "models/human.glb#Material0"
                 ),
+                "bevy_hierarchy::components::children::Children": ([
+                    1, 2,
+                ]),
             }
-        )
+        ),
+        // Eyes
+        1: (
+            components: {
+                "bevy_hierarchy::components::parent::Parent": (0),
+                "bevy_transform::components::transform::Transform": (
+                    translation: (
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.162,
+                    ),
+                ),
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
+                    id: "models/human.glb#Mesh4/Primitive0"
+                ),
+                "bevy_asset::handle::Handle<bevy_pbr::pbr_material::StandardMaterial>": (
+                    id: "models/human.glb#Material2"
+                ),
+            }
+        ),
+        // Hair
+        2: (
+            components: {
+                "bevy_hierarchy::components::parent::Parent": (0),
+                "bevy_transform::components::transform::Transform": (
+                    translation: (
+                        x: 0.0,
+                        y: -1.435,
+                        z: 0.0,
+                    ),
+                ),
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
+                    id: "models/human.glb#Mesh23/Primitive0"
+                ),
+                "bevy_asset::handle::Handle<bevy_pbr::pbr_material::StandardMaterial>": (
+                    id: "models/human.glb#Material4"
+                ),
+            }
+        ),
     }
 )

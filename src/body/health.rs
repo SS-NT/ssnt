@@ -58,10 +58,6 @@ impl Default for OrganicBody {
 }
 
 impl OrganicBody {
-    fn blood_ratio(&self) -> f32 {
-        self.blood / self.blood_capacity
-    }
-
     fn oxygen_capacity(&self) -> f32 {
         self.blood * MAX_BLOOD_OXYGEN
     }
@@ -473,6 +469,7 @@ struct OrganicLaceration {
     size: LacerationSize,
 }
 
+#[allow(dead_code)]
 enum LacerationSize {
     Small,
     Medium,
@@ -494,7 +491,7 @@ fn receive_damage(
     body_parts: Query<&OrganicBodyPart>,
     mut commands: Commands,
 ) {
-    for (attack_entity, affected_entity, kinetic) in attacks.iter() {
+    for (attack_entity, affected_entity, _kinetic) in attacks.iter() {
         let Ok(_) = body_parts.get(affected_entity.0) else {
             continue;
         };

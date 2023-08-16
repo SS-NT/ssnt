@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+#[allow(dead_code)]
 pub enum KineticShape {
     Blunt,
     Sharp,

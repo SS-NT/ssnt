@@ -146,7 +146,7 @@ fn health_scanner_ui(
             .id(egui::Id::new(("health scanner", entity)))
             .open(&mut keep_open)
             .show(contexts.ctx_mut(), |ui| {
-                if let Some(target) = *scanner.target {
+                if let Some(_target) = *scanner.target {
                     if let Some(vitals) = &*scanner.vitals {
                         ui.label(format!("BPM: {}", vitals.bpm));
                         ui.label(format!(
@@ -230,7 +230,6 @@ fn prepare_scan_interaction(
 fn health_scan_interaction(
     mut query: Query<(&mut HealthScanInteraction, &mut ActiveInteraction)>,
     mut scanners: Query<&mut HealthScanner>,
-    mut bodies: Query<&mut Body>,
     ids: Query<(Entity, &NetworkIdentity)>,
     controls: Res<ClientControls>,
     players: Res<Players>,

@@ -224,9 +224,11 @@ fn client_combat_input(
 
 #[derive(Event)]
 struct CombatInputEvent {
+    #[allow(dead_code)]
     actor: Entity,
     input: CombatInput,
     wielded_weapon: Option<Entity>,
+    #[allow(dead_code)]
     used_hand: Option<Entity>,
 }
 

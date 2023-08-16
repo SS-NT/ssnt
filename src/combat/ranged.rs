@@ -12,7 +12,6 @@ use networking::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    body::Limb,
     combat::{damage::*, RANGED_AIM_HEIGHT},
     GameState,
 };
@@ -63,8 +62,6 @@ fn shoot_gun(
     mut guns: Query<&mut Gun>,
     time: Res<Time>,
     rapier: Res<RapierContext>,
-    limbs: Query<&Limb>,
-    players: Query<&crate::body::Body>,
     mut commands: Commands,
     mut sender: MessageSender,
 ) {
@@ -96,16 +93,12 @@ fn shoot_gun(
         // Prevent player from hitting themselves
         origin += direction * 0.5;
 
-        bevy::log::info!(direction = ?direction, position = ?origin, "Shooting");
         let filter = QueryFilter::new().groups(CollisionGroups::new(
             physics::RAYCASTING_GROUP,
             physics::DEFAULT_GROUP | physics::LIMB_GROUP,
         ));
         if let Some((hit_entity, toi)) = rapier.cast_ray(origin, direction, 20.0, false, filter) {
-            let has_limb = limbs.contains(hit_entity);
-            let has_player = players.contains(hit_entity);
             let position = origin + direction * toi;
-            bevy::log::info!(has_limb, has_player, position = ?position, "Hit");
 
             commands.spawn((
                 Attack,

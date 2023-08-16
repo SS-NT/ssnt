@@ -12,7 +12,7 @@ use bevy::{
 };
 use networking::{
     component::AppExt,
-    identity::{EntityCommandsExt, NetworkIdentities, NetworkIdentity},
+    identity::{NetworkIdentities, NetworkIdentity},
     scene::NetworkSceneBundle,
     spawning::{NetworkedEntityEvent, SpawningSet},
     transform::NetworkTransform,
@@ -517,7 +517,6 @@ fn spawn_from_data(
                                     .into(),
                                 },
                             ))
-                            .networked()
                             .id();
                         commands.entity(map_entity).add_child(tile);
                         tile

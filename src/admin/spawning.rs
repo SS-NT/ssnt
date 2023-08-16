@@ -10,7 +10,6 @@ use bevy::{
 use bevy_egui::{egui, EguiContexts};
 use bevy_rapier3d::plugin::RapierContext;
 use networking::{
-    identity::EntityCommandsExt,
     is_server,
     messaging::{AppExt, MessageEvent, MessageSender},
     scene::NetworkSceneBundle,
@@ -170,13 +169,11 @@ fn handle_spawn_request(
             warn!("Invalid item id received from {:?}", event.connection);
             continue;
         }
-        commands
-            .spawn(NetworkSceneBundle {
-                scene: Handle::weak(id.into()).into(),
-                transform: Transform::from_translation(position + Vec3::Y * 5.0),
-                ..Default::default()
-            })
-            .networked();
+        commands.spawn(NetworkSceneBundle {
+            scene: Handle::weak(id.into()).into(),
+            transform: Transform::from_translation(position + Vec3::Y * 5.0),
+            ..Default::default()
+        });
         info!(connection=?event.connection, "Spawned item");
     }
 }

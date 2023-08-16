@@ -13,6 +13,12 @@ use crate::{visibility::InGrid, NetworkManager};
 #[reflect(Component)]
 pub struct NetworkIdentity(u32);
 
+impl NetworkIdentity {
+    pub(crate) fn next(&self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
 // Mock implementation for component reflection
 impl FromWorld for NetworkIdentity {
     fn from_world(_: &mut bevy::prelude::World) -> Self {
@@ -52,8 +58,8 @@ impl NetworkIdentities {
     }
 }
 
-struct NetworkCommand {
-    entity: Entity,
+pub struct NetworkCommand {
+    pub entity: Entity,
 }
 
 impl Command for NetworkCommand {

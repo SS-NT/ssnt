@@ -13,7 +13,7 @@ use bevy::{
 use bevy_egui::{egui, EguiContexts};
 use networking::{
     component::AppExt as ComponentAppExt,
-    identity::{EntityCommandsExt, NetworkIdentities, NetworkIdentity},
+    identity::{NetworkIdentities, NetworkIdentity},
     is_server,
     messaging::{AppExt, MessageEvent, MessageSender},
     scene::NetworkSceneBundle,
@@ -469,12 +469,10 @@ fn spawn_limb<'w, 's, 'a: 'b, 'b: 'c, 'c>(
     server: &AssetServer,
     name: &str,
 ) -> EntityCommands<'w, 's, 'c> {
-    let mut entity = builder.spawn(NetworkSceneBundle {
+    builder.spawn(NetworkSceneBundle {
         scene: server.load(format!("creatures/{}.scn.ron", name)).into(),
         ..Default::default()
-    });
-    entity.networked();
-    entity
+    })
 }
 
 fn create_creature(
@@ -566,7 +564,7 @@ fn create_creature(
 
         bevy::log::info!("Created creature");
         results.send(order.complete(SpawnCreatureResult {
-            root: creature.networked().id(),
+            root: creature.id(),
         }));
     }
 }

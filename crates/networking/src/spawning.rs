@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     identity::{IdentitySystem, NetworkIdentities, NetworkIdentity},
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
-    scene::{NetworkScene, NetworkSceneBundle, NetworkSceneChildren, NetworkSceneIdentities},
+    scene::{NetworkScene, NetworkSceneBundle, NetworkedChild},
     visibility::NetworkVisibilities,
     ConnectionId, NetworkManager, NetworkSet, Players, ServerEvent,
 };
@@ -20,8 +20,6 @@ use crate::{
 struct SpawnEntity {
     pub network_id: NetworkIdentity,
     pub identifier: SpawnAssetIdentifier,
-    /// Network identities for children.
-    pub child_ids: Vec<NetworkIdentity>,
 }
 
 /// Tells a client what object to spawn.
@@ -68,14 +66,15 @@ pub enum NetworkedEntityEvent {
 
 #[allow(clippy::too_many_arguments)]
 fn send_spawn_messages(
-    query: Query<(
-        Entity,
-        &NetworkIdentity,
-        Option<&PrefabPath>,
-        Option<&NetworkScene>,
-        Option<&NetworkSceneChildren>,
-    )>,
-    identities: Query<&NetworkIdentity>,
+    query: Query<
+        (
+            Entity,
+            &NetworkIdentity,
+            Option<&PrefabPath>,
+            Option<&NetworkScene>,
+        ),
+        Without<NetworkedChild>,
+    >,
     with_parents: Query<(), With<Parent>>,
     visibilities: Res<NetworkVisibilities>,
     controlled: Res<ClientControls>,
@@ -84,7 +83,7 @@ fn send_spawn_messages(
     mut entity_events: EventWriter<ServerEntityEvent>,
     scenes: Res<Assets<DynamicScene>>,
 ) {
-    for (entity, identity, name, scene, children) in query.iter() {
+    for (entity, identity, name, scene) in query.iter() {
         // Only send scenes once they're loaded
         if let Some(scene) = scene {
             // TODO: Can we check for scene spawned instead of asset existence?
@@ -121,19 +120,9 @@ fn send_spawn_messages(
                     }
                 };
 
-                // Collect the network ids of the children
-                let child_ids = children.map(|c| {
-                    c.networked_children
-                        .iter()
-                        .map(|child| identities.get(*child).unwrap())
-                        .copied()
-                        .collect()
-                });
-
                 let message = SpawnEntity {
                     identifier,
                     network_id: *identity,
-                    child_ids: child_ids.unwrap_or_default(),
                 };
 
                 // Increase priority if object is owned by a player
@@ -238,12 +227,6 @@ fn receive_spawn(
                         });
                     }
                     SpawnAssetIdentifier::Empty => {}
-                }
-
-                if !spawn.child_ids.is_empty() {
-                    builder.insert(NetworkSceneIdentities {
-                        child_identities: spawn.child_ids,
-                    });
                 }
 
                 let entity = builder.id();

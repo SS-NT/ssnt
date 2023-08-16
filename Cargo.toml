@@ -76,8 +76,8 @@ bevy_utils = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
 bevy_window = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
 bevy_winit = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }
 
-bevy_rapier3d = { path = "../bevy_rapier/bevy_rapier3d" }
-rapier3d = { path = "../rapier/crates/rapier3d" }
+bevy_rapier3d = { git = "https://github.com/Alainx277/bevy_rapier", branch = "ssnt" }
+rapier3d = { git = "https://github.com/Alainx277/rapier", branch = "ssnt" }
 
 [profile.dev.package."*"]
 opt-level = 3

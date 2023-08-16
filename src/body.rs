@@ -264,8 +264,14 @@ impl Hands {
 #[derive(Component, Networked, TypeUuid, Default)]
 #[networked(server = "Hands")]
 #[uuid = "9c9b2476-15e1-4d34-9336-7368f6702406"]
-struct HandsClient {
+pub struct HandsClient {
     active_hand: ServerVar<NetworkIdentity>,
+}
+
+impl HandsClient {
+    pub fn active_hand(&self) -> NetworkIdentity {
+        *self.active_hand
+    }
 }
 
 /// Updates the selected hand when limbs of a body get changed
@@ -284,7 +290,7 @@ fn handle_hand_modification(
             .collect();
         if let Some(mut hands) = existing_hands {
             // We still have the hand that's currently active, nothing to change
-            if current_hands.contains(&*((&hands).active_hand)) {
+            if current_hands.contains(&*(hands.active_hand)) {
                 continue;
             }
             // If we lost that hand, choose a random one or remove hands entirely

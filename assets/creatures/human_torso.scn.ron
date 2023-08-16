@@ -30,7 +30,31 @@
                 "bevy_asset::handle::Handle<bevy_pbr::pbr_material::StandardMaterial>": (
                     id: "models/human.glb#Material0"
                 ),
+                "bevy_hierarchy::components::children::Children": ([
+                    1,
+                ]),
             }
-        )
+        ),
+        1: (
+            components: {
+                "bevy_hierarchy::components::parent::Parent": (0),
+                "networking::scene::NetworkedChild": (),
+                "bevy_transform::components::transform::Transform": (
+                    translation: (
+                        x: 0.0,
+                        y: -0.940,
+                        z: 0.0,
+                    ),
+                ),
+                "ssnt::items::clothes::ClothingHolder": (
+                    clothing_type: "torso",
+                ),
+                "ssnt::items::containers::Container": (
+                    items_visible: true,
+                ),
+                "ssnt::items::containers::DisplayContainer": (
+                ),
+            }
+        ),
     }
 )

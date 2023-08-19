@@ -345,11 +345,13 @@ impl NetworkTransform {
 
 fn update_transform(
     mut query: Query<(
+        Entity,
         &mut NetworkTransform,
         &Transform,
         &NetworkIdentity,
         Option<&Velocity>,
         Option<&Parent>,
+        Has<RigidBody>,
         Has<RigidBodyDisabled>,
     )>,
     identity_query: Query<&NetworkIdentity>,
@@ -357,9 +359,12 @@ fn update_transform(
     visibilities: Res<NetworkVisibilities>,
     mut server: ResMut<RenetServer>,
     network_time: Res<ServerNetworkTime>,
+    mut commands: Commands,
 ) {
     let seconds = time.raw_elapsed_seconds();
-    for (mut networked, transform, identity, velocity, parent, body_disabled) in query.iter_mut() {
+    for (entity, mut networked, transform, identity, velocity, parent, has_body, body_disabled) in
+        query.iter_mut()
+    {
         let networked: &mut NetworkTransform = &mut networked;
 
         // Respect update rate
@@ -368,6 +373,11 @@ fn update_transform(
         }
 
         networked.last_update = seconds;
+
+        // Insert velocity component so we can synchronize it
+        if has_body && velocity.is_none() {
+            commands.entity(entity).insert(Velocity::default());
+        }
 
         let snapshot = TransformSnapshot {
             sequence_number: SequenceNumber::from_tick(network_time.current_tick()),

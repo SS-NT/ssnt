@@ -116,8 +116,7 @@ impl ClientNetworkTime {
         // Calculate when the last tick was most likely recorded at the server
         let tick_time_server = last_tick.time - rtt * tick_rate / 2.0;
         // Calculate how many ticks have passed since then
-        // TODO: Figure out why the tick rate needs to be multiplied
-        let ticks_since = (current_time - tick_time_server) / (tick_rate * 2.0);
+        let ticks_since = (current_time - tick_time_server) / (tick_rate);
 
         Some(last_tick.tick as f32 + ticks_since)
     }
@@ -129,9 +128,9 @@ impl ClientNetworkTime {
         let mut offset = (self.average_rtt().unwrap().ceil() / 2.0).ceil() as u32 + 4;
 
         // Limit the offset by the maximum time we are allowed to lag behind
-        if let Some(seconds) = self.server_tick_seconds {
-            if offset as f32 * seconds > MAX_TICK_OFFSET_SECONDS {
-                offset = (MAX_TICK_OFFSET_SECONDS / seconds).floor() as u32;
+        if let Some(server_tick) = self.server_tick_seconds {
+            if offset as f32 * server_tick > MAX_TICK_OFFSET_SECONDS {
+                offset = (MAX_TICK_OFFSET_SECONDS / server_tick).floor() as u32;
             }
         }
 
@@ -287,7 +286,8 @@ fn update_interpolated_tick(mut network_time: ResMut<ClientNetworkTime>, time: R
         speed = (speed * (1.0 - 0.1)) + (target_speed * 0.1);
     }
 
-    network_time.interpolated_tick += speed;
+    network_time.interpolated_tick +=
+        speed * (time.delta_seconds() / network_time.server_tick_seconds.unwrap());
     network_time.tick_speed = speed;
 }
 

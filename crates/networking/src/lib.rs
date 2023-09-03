@@ -513,6 +513,7 @@ impl Plugin for NetworkingPlugin {
                         NetworkSet::ClientApply.run_if(has_client()),
                     ),
                 )
+                .configure_sets(PostUpdate, (NetworkSet::SendOutgoing.run_if(has_client()),))
                 .add_systems(
                     Update,
                     (

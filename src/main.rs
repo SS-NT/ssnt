@@ -288,7 +288,7 @@ fn setup_client(
 /// Delete all entities when leaving a server, except entities with [`KeepOnServerChange`].
 fn clean_entities_on_disconnect(
     mut events: EventReader<ClientEvent>,
-    to_delete: Query<Entity, (Without<Parent>, Without<KeepOnServerChange>)>,
+    to_delete: Query<Entity, (With<Transform>, Without<Parent>, Without<KeepOnServerChange>)>,
     mut commands: Commands,
 ) {
     let has_disconnected = events

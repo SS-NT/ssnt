@@ -31,7 +31,7 @@
                     id: "models/human.glb#Material0"
                 ),
                 "bevy_hierarchy::components::children::Children": ([
-                    1,
+                    1, 2
                 ]),
             }
         ),
@@ -48,6 +48,27 @@
                 ),
                 "ssnt::items::clothes::ClothingHolder": (
                     clothing_type: "torso",
+                ),
+                "ssnt::items::containers::Container": (
+                    items_visible: true,
+                ),
+                "ssnt::items::containers::DisplayContainer": (
+                ),
+            }
+        ),
+        2: (
+            components: {
+                "bevy_hierarchy::components::parent::Parent": (0),
+                "networking::scene::NetworkedChild": (),
+                "bevy_transform::components::transform::Transform": (
+                    translation: (
+                        x: 0.0,
+                        y: -0.940,
+                        z: 0.0,
+                    ),
+                ),
+                "ssnt::items::clothes::ClothingHolder": (
+                    clothing_type: "back",
                 ),
                 "ssnt::items::containers::Container": (
                     items_visible: true,

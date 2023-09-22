@@ -1,5 +1,9 @@
 (
     id: "security_officer",
     name: "Security Officer",
-    description: "Keeps the order on the station. This includes beating the clown."
+    description: "Keeps the order on the station. This includes beating the clown.",
+    clothing: [
+        "assistant_jumpsuit",
+        "gray_backpack",
+    ]
 )

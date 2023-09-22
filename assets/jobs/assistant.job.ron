@@ -1,5 +1,9 @@
 (
     id: "assistant",
     name: "Assistant",
-    description: "Jobless. Will probably break into places."
+    description: "Jobless. Will probably break into places.",
+    clothing: [
+        "assistant_jumpsuit",
+        "gray_backpack",
+    ]
 )

@@ -8,6 +8,7 @@ use networking::{
     is_client, is_server,
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     resource::AppExt as ResAppExt,
+    scene::NetworkSceneBundle,
     spawning::ClientControls,
     time::ServerNetworkTime,
     variable::{NetworkVar, ServerVar},
@@ -15,10 +16,11 @@ use networking::{
     Networked, Players,
 };
 use serde::{Deserialize, Serialize};
-use utils::order::*;
+use utils::task::*;
 
 use crate::{
-    body::{SpawnCreatureOrder, SpawnCreatureResult},
+    body::SpawnCreature,
+    items::clothes::{EquipClothing, EquipClothingSystem},
     job::{JobDefinition, SelectedJobs},
     movement::ForcePositionMessage,
 };
@@ -49,7 +51,12 @@ impl Plugin for RoundPlugin {
                         handle_start_round_request.run_if(in_state(RoundState::Ready)),
                         spawn_player_latejoin.run_if(in_state(RoundState::Running)),
                         update_round_data.run_if(state_changed::<RoundState>()),
-                        finalise_player_spawn,
+                        (
+                            handle_player_body_spawned.after(EquipClothingSystem),
+                            apply_deferred,
+                            finalise_player_spawn,
+                        )
+                            .chain(),
                     ),
                 );
         }
@@ -149,7 +156,8 @@ struct PlayerAssets {
 
 #[derive(Resource, Default)]
 struct SpawnsInProgress {
-    orders: HashMap<OrderId<SpawnCreatureOrder>, Uuid>,
+    spawn_tasks: HashMap<TaskId<SpawnCreature>, Uuid>,
+    clothing_tasks: Vec<(Vec<TaskId<EquipClothing>>, Uuid, Entity)>,
 }
 
 fn spawn_players_roundstart(
@@ -157,7 +165,7 @@ fn spawn_players_roundstart(
     job_data: Res<Assets<JobDefinition>>,
     players: Res<Players>,
     mut spawns: ResMut<SpawnsInProgress>,
-    mut spawning: Orderer<SpawnCreatureOrder>,
+    mut spawning: ResMut<Tasks<SpawnCreature>>,
 ) {
     for (connection, _) in selected_jobs.selected(&job_data) {
         let player = match players.get(connection) {
@@ -165,11 +173,11 @@ fn spawn_players_roundstart(
             None => continue,
         };
 
-        let spawn_id = spawning.create(SpawnCreatureOrder {
+        let spawn_id = spawning.create(SpawnCreature {
             archetype: "human".into(),
         });
 
-        spawns.orders.insert(spawn_id, player.id);
+        spawns.spawn_tasks.insert(spawn_id, player.id);
     }
 }
 
@@ -183,7 +191,7 @@ fn spawn_player_latejoin(
     job_data: Res<Assets<JobDefinition>>,
     players: Res<Players>,
     mut spawns: ResMut<SpawnsInProgress>,
-    mut spawning: Orderer<SpawnCreatureOrder>,
+    mut spawning: ResMut<Tasks<SpawnCreature>>,
 ) {
     for event in messages.iter() {
         let Some(player) =  players.get(event.connection) else {
@@ -194,12 +202,64 @@ fn spawn_player_latejoin(
             continue;
         }
 
-        let spawn_id = spawning.create(SpawnCreatureOrder {
+        let spawn_id = spawning.create(SpawnCreature {
             archetype: "human".into(),
         });
 
-        spawns.orders.insert(spawn_id, player.id);
+        spawns.spawn_tasks.insert(spawn_id, player.id);
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_player_body_spawned(
+    players: Res<Players>,
+    selected_jobs: Res<SelectedJobs>,
+    job_data: Res<Assets<JobDefinition>>,
+    mut spawns: ResMut<SpawnsInProgress>,
+    mut spawning: ResMut<Tasks<SpawnCreature>>,
+    mut clothing_equip: ResMut<Tasks<EquipClothing>>,
+    asset_server: Res<AssetServer>,
+    mut commands: Commands,
+) {
+    let spawns = &mut *spawns;
+    spawns.spawn_tasks.retain(|&task, &mut player_id| {
+        let Some(result) = spawning.result(task) else {
+            return true;
+        };
+
+        let Some(connection) = players.get_connection(&player_id) else {
+            return false;
+        };
+
+        let Some(job) = selected_jobs.get(connection, &job_data) else {
+            return false;
+        };
+
+        let clothing_tasks: Vec<_> = job
+            .clothing
+            .iter()
+            .map(|clothing| {
+                let clothing_entity = commands
+                    .spawn(NetworkSceneBundle {
+                        scene: asset_server
+                            .load(format!("items/{}.scn.ron", clothing))
+                            .into(),
+                        ..Default::default()
+                    })
+                    .id();
+                clothing_equip.create(EquipClothing {
+                    creature: result.root,
+                    clothing: clothing_entity,
+                    slot: None,
+                })
+            })
+            .collect();
+
+        spawns
+            .clothing_tasks
+            .push((clothing_tasks, player_id, result.root));
+        false
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -209,55 +269,71 @@ fn finalise_player_spawn(
     selected_jobs: Res<SelectedJobs>,
     job_data: Res<Assets<JobDefinition>>,
     mut spawns: ResMut<SpawnsInProgress>,
-    mut results: Results<SpawnCreatureOrder, SpawnCreatureResult>,
+    mut clothing: ResMut<Tasks<EquipClothing>>,
     mut controls: ResMut<ClientControls>,
     mut commands: Commands,
     mut sender: MessageSender,
 ) {
-    for result in results.iter() {
-        let Some(player_id) = spawns.orders.remove(&result.id) else {
-            continue;
+    spawns
+        .clothing_tasks
+        .retain(|(tasks, player_id, player_entity)| {
+            let mut clothing_finished = true;
+            for &task_id in tasks.iter() {
+                if let Some(result) = clothing.result(task_id) {
+                    match result {
+                        Ok(_) => {}
+                        Err(_) => {
+                            warn!("Error equipping starting clothing");
+                        }
+                    }
+                } else {
+                    clothing_finished = false;
+                }
+            }
+
+            if !clothing_finished {
+                return true;
+            }
+
+            let Some(connection) = players.get_connection(player_id) else {
+            return false;
         };
 
-        let Some(connection) = players.get_connection(&player_id) else {
-            continue;
+            let Some(job) = selected_jobs.get(connection, &job_data) else {
+            return false;
         };
 
-        let Some(job) = selected_jobs.get(connection, &job_data) else {
-            continue;
+            // TODO: Support multiple maps
+            let Ok(main_map) = maps.get_single() else {
+            return false;
         };
 
-        // TODO: Support multiple maps
-        let main_map = match maps.get_single() {
-            Ok(m) => m,
-            Err(_) => return,
-        };
+            let spawn_position = crate::job::get_spawn_position(main_map, job);
 
-        let spawn_position = crate::job::get_spawn_position(main_map, job);
-
-        // Add some player specific components
-        let player_entity = result.data.root;
-        commands.entity(player_entity).insert((
-            NetworkObserverBundle {
-                observer: NetworkObserver {
-                    range: 1,
-                    player_id,
+            // Add some player specific components
+            commands.entity(*player_entity).insert((
+                NetworkObserverBundle {
+                    observer: NetworkObserver {
+                        range: 1,
+                        player_id: *player_id,
+                    },
+                    cells: Default::default(),
                 },
-                cells: Default::default(),
-            },
-            Transform::from_translation(spawn_position),
-        ));
+                Transform::from_translation(spawn_position),
+            ));
 
-        controls.give_control(player_id, player_entity);
+            controls.give_control(*player_id, *player_entity);
 
-        // Force client to accept new position (unless they cheat lol)
-        sender.send_with_priority(
-            &ForcePositionMessage {
-                position: spawn_position,
-                rotation: Quat::IDENTITY,
-            },
-            MessageReceivers::Single(connection),
-            10,
-        );
-    }
+            // Force client to accept new position (unless they cheat lol)
+            sender.send_with_priority(
+                &ForcePositionMessage {
+                    position: spawn_position,
+                    rotation: Quat::IDENTITY,
+                },
+                MessageReceivers::Single(connection),
+                10,
+            );
+
+            false
+        });
 }

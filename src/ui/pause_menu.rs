@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_egui::EguiContexts;
 use bevy_inspector_egui::egui;
-use networking::{ClientOrder, ClientState};
+use networking::{ClientState, ClientTask};
 
 use crate::GameState;
 
@@ -18,7 +18,7 @@ fn ui(
     keys: Res<Input<KeyCode>>,
     mut visible: Local<bool>,
     state: Res<State<ClientState>>,
-    mut orders: EventWriter<ClientOrder>,
+    mut tasks: EventWriter<ClientTask>,
 ) {
     if !matches!(state.get(), ClientState::Connected) {
         *visible = false;
@@ -44,7 +44,7 @@ fn ui(
                 }
                 ui.add_space(5.0);
                 if ui.button("Leave").clicked() {
-                    orders.send(ClientOrder::Leave);
+                    tasks.send(ClientTask::Leave);
                 }
             });
         });

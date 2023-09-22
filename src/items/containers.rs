@@ -7,7 +7,7 @@ use networking::{
     NetworkSet, Players,
 };
 use physics::PhysicsEntityCommands;
-use utils::order::{Order, OrderAppExt, OrderResult};
+use utils::task::{Task, Tasks};
 
 use super::{Item, StoredItem};
 
@@ -18,7 +18,7 @@ impl Plugin for ContainerPlugin {
         app.register_type::<Container>()
             .register_type::<DisplayContainer>();
         if is_server(app) {
-            app.register_order::<MoveItemOrder, MoveItemResult>()
+            app.init_resource::<Tasks<MoveItem>>()
                 .add_systems(
                     PreUpdate,
                     item_in_container_visibility
@@ -102,14 +102,17 @@ impl Container {
 pub struct DisplayContainer;
 
 /// An event requesting to move an item from or into a container.
-#[derive(Event, Debug)]
-pub struct MoveItemOrder {
+#[derive(Debug)]
+pub struct MoveItem {
     pub item: Entity,
     pub container: Option<Entity>,
     pub position: Option<UVec2>,
 }
 
-#[derive(Event)]
+impl Task for MoveItem {
+    type Result = MoveItemResult;
+}
+
 pub struct MoveItemResult {
     success: bool,
 }
@@ -121,21 +124,17 @@ impl MoveItemResult {
 }
 
 fn do_item_move(
-    mut orders: EventReader<Order<MoveItemOrder>>,
-    mut results: EventWriter<OrderResult<MoveItemOrder, MoveItemResult>>,
+    mut tasks: ResMut<Tasks<MoveItem>>,
     mut containers: Query<&mut Container>,
     mut items: Query<(Entity, &Item, Option<&mut StoredItem>)>,
     global_transforms: Query<&GlobalTransform>,
     only_items: Query<&Item>,
     mut commands: Commands,
 ) {
-    for order in orders.iter() {
-        let data = order.data();
-
+    tasks.process(|data| {
         let Ok((item_entity, item, mut stored)) = items.get_mut(data.item) else {
-            warn!(order = ?data, "Failed to move item because it does not have an item component");
-            results.send(order.complete(MoveItemResult { success: false }));
-            continue;
+            warn!(task = ?data, "Failed to move item because it does not have an item component");
+            return MoveItemResult { success: false };
         };
 
         // Remove from old container if it exists
@@ -157,21 +156,18 @@ fn do_item_move(
                     entity_commands.insert(Transform::from(*transform));
                 }
             }
-            results.send(order.complete(MoveItemResult { success: true }));
-            return;
+            return MoveItemResult { success: true };
         };
 
         let Ok(mut container) = containers.get_mut(container_entity) else {
-            warn!(order = ?data, "Failed to move item because target is not a container");
-            results.send(order.complete(MoveItemResult { success: false }));
-            continue;
+            warn!(task = ?data, "Failed to move item because target is not a container");
+            return MoveItemResult { success: false };
         };
 
         let position = data.position.expect("Automatic position not supported yet");
         if !container.can_fit(&only_items, item, position) {
-            warn!(order = ?data, "Failed to move item because it does not fit in the container");
-            results.send(order.complete(MoveItemResult { success: false }));
-            continue;
+            warn!(task = ?data, "Failed to move item because it does not fit in the container");
+            return MoveItemResult { success: false };
         }
 
         container.insert_item_unchecked(data.item, position);
@@ -185,8 +181,6 @@ fn do_item_move(
             });
         }
 
-        results.send(order.complete(MoveItemResult { success: true }));
-
         // TODO: Do all containers nest their items? Probably...
         commands
             .entity(container.attach_to.unwrap_or(container_entity))
@@ -196,7 +190,9 @@ fn do_item_move(
             .entity(item_entity)
             .insert(Transform::default())
             .disable_physics();
-    }
+
+        MoveItemResult { success: true }
+    });
 }
 
 /// Influences the network visibility of items that are stored in a container.

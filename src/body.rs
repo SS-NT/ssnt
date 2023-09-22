@@ -23,7 +23,7 @@ use networking::{
 };
 use physics::{ColliderGroup, PhysicsEntityCommands};
 use serde::{Deserialize, Serialize};
-use utils::order::*;
+use utils::task::*;
 
 use crate::{
     interaction::{
@@ -31,7 +31,7 @@ use crate::{
         InteractionOption, InteractionSpecificity, InteractionStatus,
     },
     items::{
-        containers::{Container, MoveItemOrder, MoveItemResult},
+        containers::{Container, MoveItem},
         Item, StoredItem,
     },
 };
@@ -55,7 +55,7 @@ impl Plugin for BodyPlugin {
                 .register_type::<DropInteraction>()
                 .register_type::<CutInteraction>()
                 .add_event::<LimbEvent>()
-                .register_order::<SpawnCreatureOrder, SpawnCreatureResult>()
+                .init_resource::<Tasks<SpawnCreature>>()
                 .add_systems(
                     Update,
                     (
@@ -311,7 +311,7 @@ fn handle_hand_modification(
 fn handle_hand_separation(
     mut events: EventReader<LimbEvent>,
     hands: Query<&Container, With<Hand>>,
-    mut move_orderer: Orderer<MoveItemOrder>,
+    mut move_items: ResMut<Tasks<MoveItem>>,
 ) {
     for event in events.iter() {
         if event.kind != LimbEventKind::Removed {
@@ -326,7 +326,7 @@ fn handle_hand_separation(
         // Drop all items this hand is holding
         // TODO: This should be handled in health system (ex. no nerve signal)
         for item in container.iter().map(|(_, i)| *i) {
-            move_orderer.create(MoveItemOrder {
+            move_items.create_ignore(MoveItem {
                 item,
                 container: None,
                 position: None,
@@ -459,13 +459,15 @@ struct BodyAssets {
     scenes: Vec<HandleUntyped>,
 }
 
-/// An order to create the body of a given creature archetype
-#[derive(Event)]
-pub struct SpawnCreatureOrder {
+/// Task to create the body of a given creature archetype
+pub struct SpawnCreature {
     pub archetype: String,
 }
 
-#[derive(Event)]
+impl Task for SpawnCreature {
+    type Result = SpawnCreatureResult;
+}
+
 pub struct SpawnCreatureResult {
     pub root: Entity,
 }
@@ -482,13 +484,11 @@ fn spawn_limb<'w, 's, 'a: 'b, 'b: 'c, 'c>(
 }
 
 fn create_creature(
-    mut orders: EventReader<Order<SpawnCreatureOrder>>,
-    mut results: EventWriter<OrderResult<SpawnCreatureOrder, SpawnCreatureResult>>,
+    mut tasks: ResMut<Tasks<SpawnCreature>>,
     server: Res<AssetServer>,
     mut commands: Commands,
 ) {
-    for order in orders.iter() {
-        let data = order.data();
+    tasks.process(|data| {
         let mut creature = commands.spawn(NetworkSceneBundle {
             scene: server.load("creatures/player.scn.ron").into(),
             ..Default::default()
@@ -569,10 +569,10 @@ fn create_creature(
         }
 
         bevy::log::info!("Created creature");
-        results.send(order.complete(SpawnCreatureResult {
+        SpawnCreatureResult {
             root: creature.id(),
-        }));
-    }
+        }
+    });
 }
 
 #[derive(Component, Reflect)]
@@ -580,12 +580,12 @@ fn create_creature(
 #[component(storage = "SparseSet")]
 struct PickupInteraction {
     #[reflect(ignore)]
-    move_order: Option<OrderId<MoveItemOrder>>,
+    move_task: Option<TaskId<MoveItem>>,
 }
 
 impl PickupInteraction {
     fn new() -> Self {
-        Self { move_order: None }
+        Self { move_task: None }
     }
 }
 
@@ -637,11 +637,10 @@ fn pickup_interaction(
     items: Query<&Item>,
     hands: Query<&Hands>,
     hand_query: Query<(Entity, &Hand, &Container)>,
-    mut move_orderer: Orderer<MoveItemOrder>,
-    mut move_results: Results<MoveItemOrder, MoveItemResult>,
+    mut item_moves: ResMut<Tasks<MoveItem>>,
 ) {
     for (source, mut interaction, mut active) in query.iter_mut() {
-        if interaction.move_order.is_some() {
+        if interaction.move_task.is_some() {
             continue;
         }
 
@@ -665,27 +664,26 @@ fn pickup_interaction(
             continue;
         }
 
-        // Sending an order to move the target item
-        let id = move_orderer.create(MoveItemOrder {
+        // Creating a task to move the target item
+        let id = item_moves.create(MoveItem {
             item: active.target,
             container: Some(hand_entity),
             position: Some(UVec2::ZERO),
         });
-        interaction.move_order = Some(id);
+        interaction.move_task = Some(id);
     }
 
     // Check for completed container moves
-    for result in move_results.iter() {
-        for (_, interaction, mut active) in query.iter_mut() {
-            if interaction.move_order == Some(result.id) {
-                active.status = if result.data.was_success() {
-                    InteractionStatus::Completed
-                } else {
-                    InteractionStatus::Canceled
-                };
-
-                break;
-            }
+    for (_, interaction, mut active) in query.iter_mut() {
+        let Some(task) = interaction.move_task else {
+            continue;
+        };
+        if let Some(result) = item_moves.result(task) {
+            active.status = if result.was_success() {
+                InteractionStatus::Completed
+            } else {
+                InteractionStatus::Canceled
+            };
         }
     }
 }
@@ -695,12 +693,12 @@ fn pickup_interaction(
 #[component(storage = "SparseSet")]
 struct DropInteraction {
     #[reflect(ignore)]
-    move_order: Option<OrderId<MoveItemOrder>>,
+    move_task: Option<TaskId<MoveItem>>,
 }
 
 impl DropInteraction {
     fn new() -> Self {
-        Self { move_order: None }
+        Self { move_task: None }
     }
 }
 
@@ -744,11 +742,10 @@ fn drop_interaction(
     items: Query<&StoredItem>,
     bodies: Query<&Body>,
     hand_query: Query<Entity, With<Hand>>,
-    mut move_orderer: Orderer<MoveItemOrder>,
-    mut move_results: Results<MoveItemOrder, MoveItemResult>,
+    mut item_moves: ResMut<Tasks<MoveItem>>,
 ) {
     for (source, mut interaction, mut active) in query.iter_mut() {
-        if interaction.move_order.is_some() {
+        if interaction.move_task.is_some() {
             continue;
         }
 
@@ -768,27 +765,26 @@ fn drop_interaction(
             continue;
         };
 
-        // Sending an order to move the item held
-        let id = move_orderer.create(MoveItemOrder {
+        // Creating a task to move the item held
+        let id = item_moves.create(MoveItem {
             item: active.target,
             container: None,
             position: None,
         });
-        interaction.move_order = Some(id);
+        interaction.move_task = Some(id);
     }
 
     // Check for completed container moves
-    for result in move_results.iter() {
-        for (_, interaction, mut active) in query.iter_mut() {
-            if interaction.move_order == Some(result.id) {
-                active.status = if result.data.was_success() {
-                    InteractionStatus::Completed
-                } else {
-                    InteractionStatus::Canceled
-                };
-
-                break;
-            }
+    for (_, interaction, mut active) in query.iter_mut() {
+        let Some(task) = interaction.move_task else {
+            continue;
+        };
+        if let Some(result) = item_moves.result(task) {
+            active.status = if result.was_success() {
+                InteractionStatus::Completed
+            } else {
+                InteractionStatus::Canceled
+            };
         }
     }
 }

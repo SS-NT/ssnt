@@ -114,7 +114,7 @@ impl Display for TargetServer {
 }
 
 #[derive(Event, Debug, Clone, Eq, PartialEq, Hash)]
-pub enum ClientOrder {
+pub enum ClientTask {
     Leave,
 }
 
@@ -301,13 +301,13 @@ fn client_handle_disconnect(
     commands.remove_resource::<RenetClient>();
 }
 
-fn client_handle_orders(
-    mut orders: EventReader<ClientOrder>,
+fn client_handle_tasks(
+    mut tasks: EventReader<ClientTask>,
     mut client: Option<ResMut<RenetClient>>,
 ) {
-    for order in orders.iter() {
-        match order {
-            ClientOrder::Leave => {
+    for task in tasks.iter() {
+        match task {
+            ClientTask::Leave => {
                 if let Some(client) = client.as_mut() {
                     client.disconnect();
                 }
@@ -503,7 +503,7 @@ impl Plugin for NetworkingPlugin {
         if self.role == NetworkRole::Client {
             app.add_state::<ClientState>()
                 .add_event::<ClientEvent>()
-                .add_event::<ClientOrder>()
+                .add_event::<ClientTask>()
                 .configure_sets(
                     PreUpdate,
                     (
@@ -525,7 +525,7 @@ impl Plugin for NetworkingPlugin {
                             client_handle_disconnect.run_if(in_state(ClientState::Connected)),
                         )
                             .run_if(on_event::<NetcodeTransportError>()),
-                        client_handle_orders.run_if(on_event::<ClientOrder>()),
+                        client_handle_tasks.run_if(on_event::<ClientTask>()),
                         client_disconnect_on_exit
                             .run_if(on_event::<AppExit>())
                             .run_if(resource_exists::<NetcodeClientTransport>()),

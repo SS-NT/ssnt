@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, utils::HashMap};
 use bevy_egui::{egui, EguiContexts};
 use networking::{
     identity::{NetworkIdentities, NetworkIdentity},
@@ -7,12 +7,12 @@ use networking::{
     spawning::ClientControlled,
 };
 use serde::{Deserialize, Serialize};
-use utils::order::Orderer;
+use utils::task::{Task, TaskId, TaskStatus, Tasks};
 
 use crate::{body::HandsClient, GameState};
 
 use super::{
-    containers::{Container, MoveItemOrder},
+    containers::{Container, MoveItem},
     Item, StoredItemClient,
 };
 
@@ -25,10 +25,13 @@ impl Plugin for ClothingPlugin {
             .add_network_message::<EquipClothingMessage>();
 
         if is_server(app) {
-            app.add_systems(
+            app.init_resource::<Tasks<EquipClothing>>().add_systems(
                 Update,
-                handle_equip_clothing_message
-                    .run_if(on_event::<MessageEvent<EquipClothingMessage>>()),
+                (
+                    handle_equip_clothing_message
+                        .run_if(on_event::<MessageEvent<EquipClothingMessage>>()),
+                    process_equip_clothing.in_set(EquipClothingSystem),
+                ),
             );
         } else {
             app.add_systems(Update, client_clothing_ui.run_if(in_state(GameState::Game)));
@@ -39,7 +42,7 @@ impl Plugin for ClothingPlugin {
 /// An item that can be worn.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
-struct Clothing {
+pub struct Clothing {
     clothing_type: String,
     attachment_offset: Vec3,
 }
@@ -56,7 +59,7 @@ impl FromWorld for Clothing {
 /// A body part on which clothing can be worn.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
-struct ClothingHolder {
+pub struct ClothingHolder {
     clothing_type: String,
 }
 
@@ -68,6 +71,87 @@ impl FromWorld for ClothingHolder {
     }
 }
 
+pub struct EquipClothing {
+    pub creature: Entity,
+    pub clothing: Entity,
+    pub slot: Option<Entity>,
+}
+
+impl Task for EquipClothing {
+    type Result = Result<(), ()>;
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemSet)]
+pub struct EquipClothingSystem;
+
+#[doc(hidden)]
+#[derive(Default)]
+pub enum EquipClothingState {
+    #[default]
+    Initial,
+    Moving(TaskId<MoveItem>),
+}
+
+fn process_equip_clothing(
+    mut tasks: ResMut<Tasks<EquipClothing>>,
+    mut task_state: Local<HashMap<TaskId<EquipClothing>, EquipClothingState>>,
+    mut item_move: ResMut<Tasks<MoveItem>>,
+    clothing: Query<&Clothing>,
+    child_query: Query<&Children>,
+    clothing_holders: Query<&ClothingHolder>,
+) {
+    // Wow I reinvented a bad version of async, great
+    tasks.try_process(&mut task_state, |data, state| match state {
+        EquipClothingState::Initial => {
+            let Ok(clothing) = clothing.get(data.clothing) else {
+                return TaskStatus::Done(Err(()));
+            };
+            let slot_entity = match data.slot {
+                Some(s) => s,
+                None => {
+                    let Some(e) = child_query
+                        .iter_descendants(data.creature)
+                        .find(|entity| {
+                            clothing_holders
+                                .get(*entity)
+                                .map(|holder| holder.clothing_type == clothing.clothing_type)
+                                .ok()
+                                .unwrap_or_default()
+                        }) else { return TaskStatus::Done(Err(())) };
+                    e
+                }
+            };
+            let Ok(holder) = clothing_holders.get(slot_entity) else {
+                return TaskStatus::Done(Err(()));
+            };
+
+            if holder.clothing_type != clothing.clothing_type {
+                return TaskStatus::Done(Err(()));
+            }
+
+            let task = item_move.create(MoveItem {
+                item: data.clothing,
+                container: Some(slot_entity),
+                position: Some(UVec2::ZERO),
+            });
+            *state = EquipClothingState::Moving(task);
+
+            TaskStatus::Pending
+        }
+        EquipClothingState::Moving(task) => {
+            let Some(move_result) = item_move.result(*task) else {
+                 return TaskStatus::Pending;
+             };
+
+            if move_result.was_success() {
+                TaskStatus::Done(Ok(()))
+            } else {
+                TaskStatus::Done(Err(()))
+            }
+        }
+    });
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy)]
 struct EquipClothingMessage {
     body_part: NetworkIdentity,
@@ -76,14 +160,14 @@ struct EquipClothingMessage {
 
 fn client_clothing_ui(
     mut contexts: EguiContexts,
-    mut bodies: Query<(Entity, Option<&HandsClient>), With<ClientControlled>>,
+    bodies: Query<(Entity, Option<&HandsClient>), With<ClientControlled>>,
     child_query: Query<&Children>,
     clothing_holders: Query<(&NetworkIdentity, &ClothingHolder, Option<&Children>)>,
     clothing: Query<(&Clothing, &Item, &NetworkIdentity), With<StoredItemClient>>,
     identities: Res<NetworkIdentities>,
     mut sender: MessageSender,
 ) {
-    let Ok((body_entity, hands )) = bodies.get_single_mut() else {
+    let Ok((body_entity, hands)) = bodies.get_single() else {
         return;
     };
     let holders = child_query
@@ -133,7 +217,7 @@ fn handle_equip_clothing_message(
     holders: Query<(&ClothingHolder, &Container)>,
     clothes: Query<&Clothing>,
     identities: Res<NetworkIdentities>,
-    mut move_orderer: Orderer<MoveItemOrder>,
+    mut item_moves: ResMut<Tasks<MoveItem>>,
 ) {
     for event in messages.iter() {
         let message = &event.message;
@@ -163,7 +247,7 @@ fn handle_equip_clothing_message(
 
         // TODO: Verify sending client has access to body part and clothing
 
-        move_orderer.create(MoveItemOrder {
+        item_moves.create_ignore(MoveItem {
             item: clothing_entity,
             container: Some(holder_entity),
             position: Some(UVec2::ZERO),

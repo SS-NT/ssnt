@@ -56,7 +56,7 @@ impl Default for ColliderType {
     }
 }
 
-#[derive(Reflect, Serialize, Deserialize, Clone, Copy, Debug, Default)]
+#[derive(Reflect, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[reflect_value(Serialize, Deserialize)]
 pub enum ColliderGroup {
     #[default]
@@ -81,6 +81,22 @@ impl From<ColliderGroup> for CollisionGroups {
     }
 }
 
+impl TryFrom<CollisionGroups> for ColliderGroup {
+    type Error = ();
+
+    fn try_from(value: CollisionGroups) -> Result<Self, Self::Error> {
+        match (value.memberships, value.filters) {
+            (DEFAULT_GROUP, Group::ALL) => Ok(ColliderGroup::Default),
+            (Group::GROUP_2, Group::ALL) => Ok(ColliderGroup::CharacterColliders),
+            (LIMB_GROUP, RAYCASTING_GROUP) => Ok(ColliderGroup::AttachedLimbs),
+            _ => {
+                bevy::log::info!("Error converting collision groups {:?}", value);
+                Err(())
+            }
+        }
+    }
+}
+
 fn add_colliders(query: Query<(Entity, &Collider), Added<Collider>>, mut commands: Commands) {
     for (entity, loaded_collider) in query.iter() {
         let collider = match loaded_collider.kind {
@@ -90,7 +106,14 @@ fn add_colliders(query: Query<(Entity, &Collider), Added<Collider>>, mut command
         commands
             .entity(entity)
             .remove::<Collider>()
-            .insert((collider, CollisionGroups::from(loaded_collider.group)));
+            .insert(collider);
+        let group = loaded_collider.group;
+        commands.add(move |world: &mut World| {
+            let mut entity = world.entity_mut(entity);
+            if !entity.contains::<CollisionGroups>() {
+                entity.insert(CollisionGroups::from(group));
+            }
+        });
     }
 }
 
@@ -171,11 +194,11 @@ impl<'w, 's, 'a> PhysicsEntityCommands for EntityCommands<'w, 's, 'a> {
 #[component(storage = "SparseSet")]
 struct TemporarilySensor;
 
-struct SetPhysicsCommand {
-    entity: Entity,
-    enabled: bool,
-    disable_colliders: bool,
-    new_group: Option<ColliderGroup>,
+pub struct SetPhysicsCommand {
+    pub entity: Entity,
+    pub enabled: bool,
+    pub disable_colliders: bool,
+    pub new_group: Option<ColliderGroup>,
 }
 
 impl Command for SetPhysicsCommand {
@@ -190,6 +213,10 @@ impl Command for SetPhysicsCommand {
 
         if !self.disable_colliders && self.new_group.is_none() {
             return;
+        }
+
+        if let Some(group) = self.new_group {
+            root.insert(CollisionGroups::from(group));
         }
 
         // Find colliders

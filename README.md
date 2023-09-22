@@ -26,6 +26,8 @@ Then join your server with a client:
 ssnt.exe join 127.0.0.1:33998 Name
 ```
 
+Check out the [key bindings](docs/Keybindings.md).
+
 ## Donating
 
 Not yet. There will be an option to fund the development and hosting of SSNT some time later.

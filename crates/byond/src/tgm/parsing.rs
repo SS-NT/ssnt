@@ -49,7 +49,7 @@ fn chunk_definition(input: &str) -> IResult<&str, (UVec3, &str)> {
 pub fn tile_definitions(input: &str) -> IResult<&str, Vec<(&str, Tile)>> {
     ws(fold_many1(
         ws(tile_definition),
-        Vec::default(),
+        Vec::new,
         |mut map, (key, tile)| {
             // We assume each tile definition is unique
             map.push((key, tile));

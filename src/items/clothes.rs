@@ -9,7 +9,7 @@ use networking::{
 use serde::{Deserialize, Serialize};
 use utils::task::{Task, TaskId, TaskStatus, Tasks};
 
-use crate::{body::HandsClient, GameState};
+use crate::{body::HandsClient, ui::has_window, GameState};
 
 use super::{
     containers::{Container, MoveItem},
@@ -34,7 +34,12 @@ impl Plugin for ClothingPlugin {
                 ),
             );
         } else {
-            app.add_systems(Update, client_clothing_ui.run_if(in_state(GameState::Game)));
+            app.add_systems(
+                Update,
+                client_clothing_ui
+                    .run_if(in_state(GameState::Game))
+                    .run_if(has_window),
+            );
         }
     }
 }

@@ -14,6 +14,7 @@ use crate::{
     body::{Hand, Hands},
     camera::MainCamera,
     items::containers::Container,
+    ui::has_window,
 };
 
 use self::ranged::RangedPlugin;
@@ -37,7 +38,7 @@ impl Plugin for CombatPlugin {
                     client_toggle_combat_mode,
                     (
                         (client_calculate_aim, client_combat_input).chain(),
-                        client_combat_mode_ui,
+                        client_combat_mode_ui.run_if(has_window),
                     ),
                 )
                     .chain(),

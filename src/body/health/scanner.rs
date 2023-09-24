@@ -17,6 +17,7 @@ use crate::{
         ActiveInteraction, GenerateInteractionList, InteractionListEvents, InteractionOption,
         InteractionSpecificity, InteractionStatus,
     },
+    ui::has_window,
 };
 
 use super::{OrganicBody, OrganicHeart, MAX_BLOOD_OXYGEN};
@@ -38,7 +39,7 @@ impl Plugin for HealthScannerPlugin {
                 ),
             );
         } else {
-            app.add_systems(Update, health_scanner_ui);
+            app.add_systems(Update, health_scanner_ui.run_if(has_window));
         }
     }
 }

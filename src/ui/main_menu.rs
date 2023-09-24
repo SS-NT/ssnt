@@ -7,6 +7,8 @@ use networking::{ClientEvent, TargetServer, UserData};
 
 use crate::GameState;
 
+use super::has_window;
+
 pub struct MainMenuPlugin;
 
 impl Plugin for MainMenuPlugin {
@@ -14,7 +16,7 @@ impl Plugin for MainMenuPlugin {
         app.add_systems(
             Update,
             (
-                ui.run_if(in_state(GameState::MainMenu)),
+                ui.run_if(in_state(GameState::MainMenu)).run_if(has_window),
                 react_to_client_change,
             ),
         );

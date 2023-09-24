@@ -25,6 +25,7 @@ use crate::{
     camera::MainCamera,
     combat::ClientCombatModeStatus,
     items::containers::Container,
+    ui::has_window,
 };
 
 pub struct InteractionPlugin;
@@ -70,7 +71,11 @@ impl Plugin for InteractionPlugin {
                 Update,
                 (
                     client_request_interaction_list.in_set(InteractionSystem::Input),
-                    (client_receive_interactions, client_interaction_selection_ui).chain(),
+                    (
+                        client_receive_interactions,
+                        client_interaction_selection_ui.run_if(has_window),
+                    )
+                        .chain(),
                     client_progress_ui,
                 ),
             );

@@ -34,6 +34,7 @@ use crate::{
         containers::{Container, MoveItem},
         Item, StoredItem,
     },
+    ui::has_window,
 };
 
 mod health;
@@ -77,7 +78,10 @@ impl Plugin for BodyPlugin {
         } else {
             app.add_systems(
                 Update,
-                ((client_update_limbs, hand_ui).chain(), client_hands_keybind),
+                (
+                    (client_update_limbs, hand_ui.run_if(has_window)).chain(),
+                    client_hands_keybind,
+                ),
             );
         }
 

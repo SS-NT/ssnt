@@ -20,6 +20,7 @@ use crate::{
     camera::MainCamera,
     interaction::InteractionSystem,
     items::{Item, ItemAssets},
+    ui::has_window,
     GameState,
 };
 
@@ -195,7 +196,7 @@ impl Plugin for SpawningPlugin {
                 (
                     prepare_item_ui_data,
                     (
-                        spawning_ui,
+                        spawning_ui.run_if(has_window),
                         spawn_requesting.before(InteractionSystem::Input),
                     )
                         .chain()

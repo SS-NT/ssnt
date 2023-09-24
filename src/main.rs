@@ -63,8 +63,10 @@ enum ArgCommands {
         #[clap(long)]
         public_address: Option<IpAddr>,
     },
+    #[cfg(feature = "client")]
     /// join a game
     Join { address: SocketAddr, name: String },
+    #[cfg(feature = "client")]
     /// join a game using a connection token
     JoinToken {
         /// base64 encoded connection token
@@ -270,6 +272,7 @@ fn setup_client(
     ));
 
     // Connect with IP
+    #[cfg(feature = "client")]
     if let Some(ArgCommands::Join { address, name }) = &args.command {
         state.set(GameState::MainMenu);
         client_events.send(ClientEvent::Join(TargetServer::Raw(*address)));
@@ -279,6 +282,7 @@ fn setup_client(
     }
 
     // Connect with a token from the central server
+    #[cfg(feature = "client")]
     if let Some(ArgCommands::JoinToken { token }) = &args.command {
         state.set(GameState::MainMenu);
 

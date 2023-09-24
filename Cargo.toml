@@ -9,9 +9,12 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.dependencies]
-bevy = "0.11"
+bevy = { version = "0.11", default-features = false, features = ["bevy_asset", "bevy_scene", "bevy_pbr", "bevy_gltf", "bevy_sprite", "bevy_text", "bevy_render", "bevy_core_pipeline", "bevy_ui", "multi-threaded", "png", "hdr", "ktx2", "zstd", "filesystem_watcher", "bevy_gizmos", "tonemapping_luts", "default_font", "webgl2"] }
 bevy_rapier3d = "0.22.0"
 
+[features]
+default = ["client"]
+client = ["bevy/animation", "bevy/bevy_audio", "bevy/bevy_gilrs", "bevy/bevy_winit", "bevy/x11", "bevy/vorbis"]
 
 [dependencies]
 byond = { path = "crates/byond" }
@@ -19,7 +22,7 @@ maps = { path = "crates/maps" }
 networking = { path = "crates/networking" }
 physics = { path = "crates/physics" }
 utils = { path = "crates/utils" }
-bevy = { workspace = true, features = ["bevy_gltf"] }
+bevy = { workspace = true }
 bevy_egui = "0.21.0"
 bevy-inspector-egui = "0.19.0"
 bevy_rapier3d = { workspace = true, features = ["simd-stable"] }

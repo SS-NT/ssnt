@@ -1,6 +1,6 @@
 use bevy::{
     asset::AssetPathId,
-    ecs::query::QuerySingleError,
+    ecs::query::{Has, QuerySingleError},
     prelude::*,
     scene::DynamicScene,
     utils::{HashMap, HashSet, Uuid},
@@ -30,7 +30,9 @@ enum SpawnAssetIdentifier {
     Named(String),
     AssetPath(AssetPathId),
     /// Objects that are used as references and don't need an asset
-    Empty,
+    Empty {
+        in_world: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -72,6 +74,7 @@ fn send_spawn_messages(
             &NetworkIdentity,
             Option<&PrefabPath>,
             Option<&NetworkScene>,
+            Has<ComputedVisibility>,
         ),
         Without<NetworkedChild>,
     >,
@@ -83,7 +86,7 @@ fn send_spawn_messages(
     mut entity_events: EventWriter<ServerEntityEvent>,
     scenes: Res<Assets<DynamicScene>>,
 ) {
-    for (entity, identity, name, scene) in query.iter() {
+    for (entity, identity, name, scene, has_visibiliy) in query.iter() {
         // Only send scenes once they're loaded
         if let Some(scene) = scene {
             // TODO: Can we check for scene spawned instead of asset existence?
@@ -104,7 +107,9 @@ fn send_spawn_messages(
                         if with_parents.contains(entity) {
                             continue;
                         }
-                        SpawnAssetIdentifier::Empty
+                        SpawnAssetIdentifier::Empty {
+                            in_world: has_visibiliy,
+                        }
                     }
                     (None, Some(scene)) => SpawnAssetIdentifier::AssetPath(match scene.0.id() {
                         bevy::asset::HandleId::Id(_, _) => {
@@ -226,7 +231,11 @@ fn receive_spawn(
                             ..Default::default()
                         });
                     }
-                    SpawnAssetIdentifier::Empty => {}
+                    SpawnAssetIdentifier::Empty { in_world } => {
+                        if in_world {
+                            builder.insert(SpatialBundle::default());
+                        }
+                    }
                 }
 
                 let entity = builder.id();

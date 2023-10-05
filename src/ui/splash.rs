@@ -23,21 +23,21 @@ struct SplashTimer(Timer);
 struct SplashFadeElement(Entity);
 
 fn splash_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let background = asset_server.load("artwork/ProbablyNot_Spaced.png");
-    let logo = asset_server.load("artwork/logo.png");
+    let logo = asset_server.load("artwork/splash.png");
     let mut fade = None;
     // Display the logo
     commands
         .spawn((
-            ImageBundle {
+            NodeBundle {
                 style: Style {
                     // This will center the logo
                     margin: UiRect::all(Val::Auto),
                     width: Val::Percent(100.0),
                     height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
                     ..default()
                 },
-                image: UiImage::new(background),
+                background_color: BackgroundColor(Color::rgb_u8(21, 15, 43)),
                 ..default()
             },
             OnSplashScreen,
@@ -45,7 +45,7 @@ fn splash_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         .with_children(|parent| {
             parent.spawn(ImageBundle {
                 style: Style {
-                    margin: UiRect::all(Val::Auto),
+                    flex_shrink: 0.0,
                     ..default()
                 },
                 image: UiImage::new(logo),

@@ -3,7 +3,7 @@ use bevy_egui::{egui, EguiContexts};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_rapier3d::render::DebugRenderContext;
 
-use crate::ui::has_window;
+use crate::{ui::has_window, GameState};
 
 pub(crate) struct DebugPlugin;
 
@@ -20,7 +20,12 @@ impl Plugin for DebugPlugin {
                 WorldInspectorPlugin::new()
                     .run_if(|state: Res<DebugState>| state.inspector_enabled),
             ))
-            .add_systems(Update, (debug_menu, debug_watermark).run_if(has_window));
+            .add_systems(
+                Update,
+                (debug_menu, debug_watermark)
+                    .run_if(has_window)
+                    .run_if(in_state(GameState::Game)),
+            );
     }
 }
 

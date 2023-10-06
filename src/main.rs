@@ -122,7 +122,13 @@ fn main() {
         }
         NetworkRole::Client => {
             app.add_plugins((
-                DefaultPlugins,
+                DefaultPlugins.set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Space Station Nanotrasen".to_owned(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
                 networking_plugin,
                 camera::CameraPlugin,
                 EguiPlugin,

@@ -83,10 +83,7 @@ impl<T: Task + 'static> Tasks<T> {
         mut f: impl FnMut(&T, &mut S) -> TaskStatus<T::Result>,
     ) {
         self.pending.retain(|task| {
-            let result = f(
-                &task.data,
-                state.entry(task.id).or_insert_with(Default::default),
-            );
+            let result = f(&task.data, state.entry(task.id).or_default());
             match result {
                 TaskStatus::Done(t) => {
                     state.remove(&task.id);

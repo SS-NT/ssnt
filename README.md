@@ -20,6 +20,12 @@ For now you can host a local server:
 ssnt.exe host 127.0.0.1:33998
 ```
 
+Or using docker:
+
+```
+docker run -p 33998:33998/tcp -p 33998:33998/udp ss-nt/ssnt 0.0.0.0:33998 --public-address 127.0.0.1
+```
+
 Then join your server with a client:
 
 ```
@@ -53,6 +59,6 @@ SSNT uses the 3D models and textures made by the SS3D contributors, without them
 
 ## License
 
-The code is licensed as [AGPL 3.0](https://www.gnu.org/licenses/agpl-3.0.en.html). This means that you're free to use the code, but must allow users of it to acquire the source code. This is also true if you host a server with modified code.
+The code is licensed as [AGPL 3.0](https://www.gnu.org/licenses/agpl-3.0.en.html). This means that you're free to use the code, but must allow its users to acquire the source code. This is also true if you host a server with modified code.
 
 The assets under `assets/artwork`, `assets/models` and `assets/textures` are licensed as [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.en). All other assets are licensed as [CC0](https://creativecommons.org/public-domain/cc0/).

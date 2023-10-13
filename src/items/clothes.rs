@@ -114,15 +114,15 @@ fn process_equip_clothing(
             let slot_entity = match data.slot {
                 Some(s) => s,
                 None => {
-                    let Some(e) = child_query
-                        .iter_descendants(data.creature)
-                        .find(|entity| {
-                            clothing_holders
-                                .get(*entity)
-                                .map(|holder| holder.clothing_type == clothing.clothing_type)
-                                .ok()
-                                .unwrap_or_default()
-                        }) else { return TaskStatus::Done(Err(())) };
+                    let Some(e) = child_query.iter_descendants(data.creature).find(|entity| {
+                        clothing_holders
+                            .get(*entity)
+                            .map(|holder| holder.clothing_type == clothing.clothing_type)
+                            .ok()
+                            .unwrap_or_default()
+                    }) else {
+                        return TaskStatus::Done(Err(()));
+                    };
                     e
                 }
             };
@@ -145,8 +145,8 @@ fn process_equip_clothing(
         }
         EquipClothingState::Moving(task) => {
             let Some(move_result) = item_move.result(*task) else {
-                 return TaskStatus::Pending;
-             };
+                return TaskStatus::Pending;
+            };
 
             if move_result.was_success() {
                 TaskStatus::Done(Ok(()))

@@ -223,7 +223,10 @@ fn adjust_heart_rate(
             continue;
         }
 
-        let Some(body_entity) = parents.iter_ancestors(heart_entity).find(|e| bodies.contains(*e)) else {
+        let Some(body_entity) = parents
+            .iter_ancestors(heart_entity)
+            .find(|e| bodies.contains(*e))
+        else {
             continue;
         };
         let body = bodies.get(body_entity).unwrap();
@@ -296,7 +299,10 @@ fn heart_beat(
             pump_strength = ratio;
         };
 
-        let Some(body_entity) = parents.iter_ancestors(heart_entity).find(|e| bodies.contains(*e)) else {
+        let Some(body_entity) = parents
+            .iter_ancestors(heart_entity)
+            .find(|e| bodies.contains(*e))
+        else {
             continue;
         };
 

@@ -219,7 +219,10 @@ fn client_update_limbs(
             continue;
         }
 
-        let Some(body_entity) = parents.iter_ancestors(limb_entity).find(|&e| bodies.contains(e)) else {
+        let Some(body_entity) = parents
+            .iter_ancestors(limb_entity)
+            .find(|&e| bodies.contains(e))
+        else {
             continue;
         };
         let mut body = bodies.get_mut(body_entity).unwrap();
@@ -442,7 +445,10 @@ fn handle_hand_change_request(
     mut hands: Query<&mut Hands>,
 ) {
     for event in events.iter() {
-        let Some(controlled) = players.get(event.connection).and_then(|player| controls.controlled_entity(player.id)) else {
+        let Some(controlled) = players
+            .get(event.connection)
+            .and_then(|player| controls.controlled_entity(player.id))
+        else {
             continue;
         };
         let Ok(mut hands) = hands.get_mut(controlled) else {
@@ -729,7 +735,10 @@ fn prepare_drop_interaction(
             continue;
         };
 
-        let Some(_) = hand_query.iter_many(&body.limbs).find(|entity| container_entity == *entity) else {
+        let Some(_) = hand_query
+            .iter_many(&body.limbs)
+            .find(|entity| container_entity == *entity)
+        else {
             continue;
         };
 
@@ -764,7 +773,10 @@ fn drop_interaction(
             continue;
         };
 
-        let Some(_) = hand_query.iter_many(&body.limbs).find(|entity| container_entity == *entity) else {
+        let Some(_) = hand_query
+            .iter_many(&body.limbs)
+            .find(|entity| container_entity == *entity)
+        else {
             active.status = InteractionStatus::Canceled;
             continue;
         };

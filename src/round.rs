@@ -194,7 +194,7 @@ fn spawn_player_latejoin(
     mut spawning: ResMut<Tasks<SpawnCreature>>,
 ) {
     for event in messages.iter() {
-        let Some(player) =  players.get(event.connection) else {
+        let Some(player) = players.get(event.connection) else {
             continue;
         };
 
@@ -296,17 +296,17 @@ fn finalise_player_spawn(
             }
 
             let Some(connection) = players.get_connection(player_id) else {
-            return false;
-        };
+                return false;
+            };
 
             let Some(job) = selected_jobs.get(connection, &job_data) else {
-            return false;
-        };
+                return false;
+            };
 
             // TODO: Support multiple maps
             let Ok(main_map) = maps.get_single() else {
-            return false;
-        };
+                return false;
+            };
 
             let spawn_position = crate::job::get_spawn_position(main_map, job);
 

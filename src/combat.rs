@@ -179,9 +179,7 @@ fn client_calculate_aim(
         return;
     };
 
-    let Some(toi) =
-        ray.intersect_plane(Vec3::new(0.0, RANGED_AIM_HEIGHT, 0.0), Vec3::Y) else
-    {
+    let Some(toi) = ray.intersect_plane(Vec3::new(0.0, RANGED_AIM_HEIGHT, 0.0), Vec3::Y) else {
         return;
     };
     let target_position = ray.origin + ray.direction * toi;

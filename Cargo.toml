@@ -31,7 +31,7 @@ glam = "0.20.2"
 serde = { version = "*", features = ["derive"] }
 clap = { version = "3.0.13", features = ["derive"] }
 toml = "0.5.9"
-reqwest =  { version = "0.11.12", features = ["json"] }
+reqwest =  { version = "0.11.12", default-features = false, features = ["json", "rustls-tls"] }
 async-compat = "0.2.1"
 tokio = { version = "1.21.2", features = ["time"] }
 # Remove when https://github.com/bevyengine/bevy/pull/6578 is merged

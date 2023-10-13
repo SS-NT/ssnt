@@ -361,7 +361,9 @@ fn handle_interaction_execute_request(
     let (mut messages, mut sent_interactions) = state.get_mut(world);
     let mut to_execute = Vec::default();
     for event in messages.iter() {
-        let Some((_, (target, mut options))) = sent_interactions.map.remove_entry(&event.connection) else {
+        let Some((_, (target, mut options))) =
+            sent_interactions.map.remove_entry(&event.connection)
+        else {
             warn!(connection=?event.connection, "Received interaction execute request with no interaction list");
             continue;
         };
@@ -507,8 +509,8 @@ fn client_request_interaction_list(
     };
 
     let Some((entity, _)) =
-        rapier_context.cast_ray(ray.origin, ray.direction, 100.0, true, Default::default()) else
-    {
+        rapier_context.cast_ray(ray.origin, ray.direction, 100.0, true, Default::default())
+    else {
         return;
     };
 
@@ -616,7 +618,8 @@ fn client_progress_ui(
         return;
     };
 
-    let Some(screen_position) = camera.world_to_viewport(camera_transform, transform.translation()) else {
+    let Some(screen_position) = camera.world_to_viewport(camera_transform, transform.translation())
+    else {
         return;
     };
 

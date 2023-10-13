@@ -1,19 +1,26 @@
+#![allow(clippy::too_many_arguments)]
+
 use bevy::{prelude::*, utils::HashMap};
 use bevy_egui::{egui, EguiContexts};
 use networking::{
     identity::{NetworkIdentities, NetworkIdentity},
     is_server,
     messaging::{AppExt, MessageEvent, MessageSender},
-    spawning::ClientControlled,
+    spawning::{ClientControlled, ClientControls},
+    Players,
 };
 use serde::{Deserialize, Serialize};
 use utils::task::{Task, TaskId, TaskStatus, Tasks};
 
-use crate::{body::HandsClient, ui::has_window, GameState};
+use crate::{
+    body::{Hands, HandsClient},
+    ui::has_window,
+    GameState,
+};
 
 use super::{
     containers::{Container, MoveItem},
-    Item, StoredItemClient,
+    Item, StoredItem, StoredItemClient,
 };
 
 pub struct ClothingPlugin;
@@ -22,7 +29,8 @@ impl Plugin for ClothingPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Clothing>()
             .register_type::<ClothingHolder>()
-            .add_network_message::<EquipClothingMessage>();
+            .add_network_message::<EquipClothingMessage>()
+            .add_network_message::<UnequipClothingMessage>();
 
         if is_server(app) {
             app.init_resource::<Tasks<EquipClothing>>().add_systems(
@@ -30,6 +38,8 @@ impl Plugin for ClothingPlugin {
                 (
                     handle_equip_clothing_message
                         .run_if(on_event::<MessageEvent<EquipClothingMessage>>()),
+                    handle_unequip_clothing_message
+                        .run_if(on_event::<MessageEvent<UnequipClothingMessage>>()),
                     process_equip_clothing.in_set(EquipClothingSystem),
                 ),
             );
@@ -114,6 +124,7 @@ fn process_equip_clothing(
             let slot_entity = match data.slot {
                 Some(s) => s,
                 None => {
+                    // Try to find first matching clothing slot
                     let Some(e) = child_query.iter_descendants(data.creature).find(|entity| {
                         clothing_holders
                             .get(*entity)
@@ -163,11 +174,17 @@ struct EquipClothingMessage {
     clothing: NetworkIdentity,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy)]
+struct UnequipClothingMessage {
+    clothing: NetworkIdentity,
+}
+
 fn client_clothing_ui(
     mut contexts: EguiContexts,
     bodies: Query<(Entity, Option<&HandsClient>), With<ClientControlled>>,
     child_query: Query<&Children>,
     clothing_holders: Query<(&NetworkIdentity, &ClothingHolder, Option<&Children>)>,
+    items: Query<Entity, With<StoredItemClient>>,
     clothing: Query<(&Clothing, &Item, &NetworkIdentity), With<StoredItemClient>>,
     identities: Res<NetworkIdentities>,
     mut sender: MessageSender,
@@ -178,10 +195,11 @@ fn client_clothing_ui(
     let holders = child_query
         .iter_descendants(body_entity)
         .filter_map(|e| clothing_holders.get(e).ok());
-    let held_clothing = hands
+    let held_item = hands
         .and_then(|h| identities.get_entity(h.active_hand()))
         .and_then(|e| child_query.get(e).ok())
-        .and_then(|c| clothing.iter_many(c.iter()).next());
+        .and_then(|c| items.iter_many(c.iter()).next());
+    let held_clothing = held_item.and_then(|item| clothing.get(item).ok());
 
     egui::Window::new("Clothing")
         .anchor(egui::Align2::LEFT_BOTTOM, egui::Vec2::ZERO)
@@ -192,6 +210,7 @@ fn client_clothing_ui(
                     // Check if clothing is equipped on the slot
                     let clothing_in_slot =
                         holder_children.and_then(|children| clothing.iter_many(children).next());
+
                     // Label slot
                     ui.label(format!(
                         "{} - {}",
@@ -202,14 +221,25 @@ fn client_clothing_ui(
                             "empty"
                         }
                     ));
-                    if let Some((clothing, _, &clothing_id)) = held_clothing {
-                        if clothing.clothing_type == holder.clothing_type
-                            && ui.button("Equip").clicked()
-                        {
-                            sender.send_to_server(&EquipClothingMessage {
-                                body_part: *holder_id,
+
+                    if let Some((_, _, &clothing_id)) = clothing_in_slot {
+                        // Button to unequip worn clothing
+                        if held_item.is_none() && ui.button("Unequip").clicked() {
+                            sender.send_to_server(&UnequipClothingMessage {
                                 clothing: clothing_id,
                             });
+                        }
+                    } else {
+                        // Button to equip held clothing
+                        if let Some((clothing, _, &clothing_id)) = held_clothing {
+                            if clothing.clothing_type == holder.clothing_type
+                                && ui.button("Equip").clicked()
+                            {
+                                sender.send_to_server(&EquipClothingMessage {
+                                    body_part: *holder_id,
+                                    clothing: clothing_id,
+                                });
+                            }
                         }
                     }
                 });
@@ -255,6 +285,66 @@ fn handle_equip_clothing_message(
         item_moves.create_ignore(MoveItem {
             item: clothing_entity,
             container: Some(holder_entity),
+            position: Some(UVec2::ZERO),
+        });
+    }
+}
+
+fn handle_unequip_clothing_message(
+    mut messages: EventReader<MessageEvent<UnequipClothingMessage>>,
+    containers: Query<&Container>,
+    clothes: Query<(), (With<Clothing>, With<StoredItem>)>,
+    parents: Query<&Parent>,
+    players: Res<Players>,
+    controlled: Res<ClientControls>,
+    identities: Res<NetworkIdentities>,
+    hands: Query<&Hands>,
+    mut item_moves: ResMut<Tasks<MoveItem>>,
+) {
+    for event in messages.iter() {
+        let message = &event.message;
+        let Some(clothing_entity) = identities.get_entity(message.clothing) else {
+            continue;
+        };
+
+        // Verify the entity in question is a piece of clothing
+        if clothes.get(clothing_entity).is_err() {
+            continue;
+        }
+
+        let Some(player) = players.get(event.connection) else {
+            continue;
+        };
+
+        let Some(controlled_entity) = controlled.controlled_entity(player.id) else {
+            continue;
+        };
+
+        // Check if requested clothing is on player
+        if !parents
+            .iter_ancestors(clothing_entity)
+            .any(|e| controlled_entity == e)
+        {
+            continue;
+        }
+
+        let Ok(hand) = hands.get(controlled_entity) else {
+            continue;
+        };
+        let hand_entity = hand.active_hand();
+
+        let Ok(hand_container) = containers.get(hand_entity) else {
+            continue;
+        };
+
+        // Can only unequip if hand is empty
+        if !hand_container.is_empty() {
+            continue;
+        }
+
+        item_moves.create_ignore(MoveItem {
+            item: clothing_entity,
+            container: Some(hand_entity),
             position: Some(UVec2::ZERO),
         });
     }

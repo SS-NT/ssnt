@@ -1,0 +1,34 @@
+// simple owo accent
+(
+    name: "linux",
+    patterns: [
+        ("r", Simple("w")),
+        ("!", Simple("! owo")),
+        ("v", Simple("w")),
+        ("ni", Simple("nye")),
+        ("na", Simple("nya")),
+        ("ne", Simple("nye")),
+        ("no", Simple("nyo")),
+        ("nu", Simple("nyu")),
+        ("ove", Simple("uv")),
+        ("l", Simple("w")),
+        // 80% for prefix
+        ("^", Weights([
+            (8, Any([
+                Simple("Nya~ "),
+                Simple("Nnnnya~ "),
+            ])),
+            (2, Noop),
+        ])),
+        // 80% for suffix
+        ("$", Weights([
+            (8, Any([
+                Simple(" OwO"),
+                Simple(" UwU"),
+                Simple(" ~"),
+                Simple(" ~~"),
+            ])),
+            (2, Noop),
+        ])),
+    ],
+)

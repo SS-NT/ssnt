@@ -268,6 +268,12 @@ impl Accent {
         Ok(Self { name, severities })
     }
 
+    /// Returns all registered severities in ascending order. Note that there may be gaps
+    pub fn severities(&self) -> Vec<u64> {
+        self.severities.iter().map(|(k, _)| *k).collect()
+    }
+
+    /// Walks rules for given severity from top to bottom and applies them
     pub fn apply(&self, text: &str, severity: u64) -> String {
         // TODO: binary search? probably now worth
         //
@@ -444,6 +450,7 @@ mod tests {
         };
 
         assert_eq!(parsed, manual);
+        assert_eq!(parsed.severities(), manual.severities());
     }
 
     #[test]
@@ -855,7 +862,7 @@ mod tests {
             let accent =
                 Accent::from_str(&fs::read_to_string(filename).expect("reading file")).unwrap();
 
-            for severity in 0..=10 {
+            for severity in accent.severities() {
                 let _ = accent.apply(&sample_text, severity);
             }
         }

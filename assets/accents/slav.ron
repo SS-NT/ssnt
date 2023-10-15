@@ -1,0 +1,47 @@
+(
+    name: "slav",
+    words: [
+        ("my", Simple("our")),
+        ("friend", Simple("comrade")),
+        ("(enemy|foe)", Simple("american pig")),
+        ("(fuck|shit)", Any([
+            Simple("blyat"),
+            Simple("cyka"),
+        ])),
+        ("usa", Simple("американские захватчики")),
+        ("we are being attacked", Simple("нас атакуют")),
+    ],
+    patterns: [
+        (r"\b(a|the) +", Weights([
+            (1, Noop),
+            (1, Simple("")),
+        ])),
+        (r"\bha", Simple("ga")),
+        ("th", Any([
+            Simple("z"),
+            Simple("g"),
+        ])),
+        (r"\Bo?u", Any([
+            Simple("a"),
+            Simple("oo"),
+        ])),
+        ("w", Simple("v")),
+        ("$", Weights([
+            (1, Noop),
+            (1, Any([
+                Simple("cyka"),
+                Simple("blyat"),
+            ])),
+        ])),
+    ],
+    severities: {
+        1: Extend((
+            patterns: [
+                ("$", Any([
+                    Simple("cyka"),
+                    Simple("blyat"),
+                ])),
+            ],
+        )),
+    }
+)

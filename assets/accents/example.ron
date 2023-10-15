@@ -4,6 +4,7 @@
 // substitues pattern matches with replacements. all rules are applied from top to bottom
 // by default, m and i flags are added to every pattern which means ^ and $ match beginning
 // and end of line, regexses ignore case. you can opt out of these by doing "(?-mi)"
+// i is only added when pattern is fully composed of lowercase ascii letters
 (
     // accent name, the only required field
     name: "example",
@@ -20,7 +21,7 @@
         // occurences with "linux", case sensitive
         ("windows", Simple("linux")),
         // this replaces word "OS" with one of replacements, with equal probability
-        ("OS", Any([
+        ("os", Any([
             Simple("Ubuntu"),
             Simple("Arch"),
             Simple("Gentoo"),

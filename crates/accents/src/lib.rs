@@ -207,9 +207,15 @@ impl Accent {
     ) -> Result<Vec<Replacement>, String> {
         let mut replacements = Vec::with_capacity(words.len() + patterns.len());
 
-        for (i, (word, replacement)) in words.into_iter().enumerate() {
-            let word_regex = Regex::new(&format!(r"(?mi)\b{word}\b"))
-                .map_err(|err| format!("bad regex for word {}: {}: {}", i, word, err))?;
+        for (i, (pattern, replacement)) in words.into_iter().enumerate() {
+            // ignorecase only if input is lowercase
+            let regex_flags = if pattern.chars().all(|c| c.is_ascii_lowercase()) {
+                "mi"
+            } else {
+                "m"
+            };
+            let word_regex = Regex::new(&format!(r"(?{regex_flags})\b{pattern}\b"))
+                .map_err(|err| format!("bad regex for word {}: {}: {}", i, pattern, err))?;
 
             replacements.push(Replacement {
                 source: word_regex,
@@ -218,7 +224,13 @@ impl Accent {
         }
 
         for (i, (pattern, replacement)) in patterns.into_iter().enumerate() {
-            let word_regex = Regex::new(&format!(r"(?mi){pattern}"))
+            // ignorecase only if input is lowercase
+            let regex_flags = if pattern.chars().all(|c| c.is_ascii_lowercase()) {
+                "mi"
+            } else {
+                "m"
+            };
+            let word_regex = Regex::new(&format!(r"(?{regex_flags}){pattern}"))
                 .map_err(|err| format!("bad regex for pattern {}: {}: {}", i, pattern, err))?;
 
             replacements.push(Replacement {
@@ -543,7 +555,7 @@ mod tests {
                             cb: ReplacementCallback::Noop,
                         },
                         Replacement {
-                            source: Regex::new("(?mi)1").unwrap(),
+                            source: Regex::new("(?m)1").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                     ],
@@ -560,11 +572,11 @@ mod tests {
                             cb: ReplacementCallback::Noop,
                         },
                         Replacement {
-                            source: Regex::new("(?mi)1").unwrap(),
+                            source: Regex::new("(?m)1").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                         Replacement {
-                            source: Regex::new("(?mi)2").unwrap(),
+                            source: Regex::new("(?m)2").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                     ],
@@ -610,7 +622,7 @@ mod tests {
                             cb: ReplacementCallback::Noop,
                         },
                         Replacement {
-                            source: Regex::new("(?mi)1").unwrap(),
+                            source: Regex::new("(?m)1").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                     ],
@@ -623,7 +635,7 @@ mod tests {
                             cb: ReplacementCallback::Noop,
                         },
                         Replacement {
-                            source: Regex::new("(?mi)2").unwrap(),
+                            source: Regex::new("(?m)2").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                     ],
@@ -801,11 +813,11 @@ mod tests {
                             cb: ReplacementCallback::Simple("0".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?mi)[a-z]").unwrap(),
+                            source: Regex::new(r"(?m)[a-z]").unwrap(),
                             cb: ReplacementCallback::Simple("e".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?mi)[A-Z]").unwrap(),
+                            source: Regex::new(r"(?m)[A-Z]").unwrap(),
                             cb: ReplacementCallback::Weights(vec![
                                 (5, ReplacementCallback::Simple("E".to_owned())),
                                 (1, ReplacementCallback::Simple("Ē".to_owned())),
@@ -816,7 +828,7 @@ mod tests {
                             ]),
                         },
                         Replacement {
-                            source: Regex::new(r"(?mi)[0-9]").unwrap(),
+                            source: Regex::new(r"(?m)[0-9]").unwrap(),
                             cb: ReplacementCallback::Any(vec![ReplacementCallback::Weights(vec![
                                 (
                                     1,
@@ -842,15 +854,15 @@ mod tests {
                             cb: ReplacementCallback::Simple("1".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?mi)\bWindows\b").unwrap(),
+                            source: Regex::new(r"(?m)\bWindows\b").unwrap(),
                             cb: ReplacementCallback::Simple("Linux".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?mi)a+").unwrap(),
+                            source: Regex::new(r"(?m)a+").unwrap(),
                             cb: ReplacementCallback::Simple("multiple A's".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?mi)^").unwrap(),
+                            source: Regex::new(r"(?m)^").unwrap(),
                             cb: ReplacementCallback::Simple("start".to_owned()),
                         },
                     ],
@@ -867,7 +879,7 @@ mod tests {
                             cb: ReplacementCallback::Simple("2".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?mi)\bWindows\b").unwrap(),
+                            source: Regex::new(r"(?m)\bWindows\b").unwrap(),
                             cb: ReplacementCallback::Simple("Linux".to_owned()),
                         },
                         Replacement {
@@ -875,19 +887,19 @@ mod tests {
                             cb: ReplacementCallback::Simple("words".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?mi)a+").unwrap(),
+                            source: Regex::new(r"(?m)a+").unwrap(),
                             cb: ReplacementCallback::Simple("multiple A's".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?mi)^").unwrap(),
+                            source: Regex::new(r"(?m)^").unwrap(),
                             cb: ReplacementCallback::Simple("start".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?mi)b+").unwrap(),
+                            source: Regex::new(r"(?m)b+").unwrap(),
                             cb: ReplacementCallback::Simple("multiple B's".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?mi)$").unwrap(),
+                            source: Regex::new(r"(?m)$").unwrap(),
                             cb: ReplacementCallback::Simple("end".to_owned()),
                         },
                     ],

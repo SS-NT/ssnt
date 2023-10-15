@@ -2,10 +2,13 @@ use std::{borrow::Cow, collections::BTreeMap, str::FromStr};
 
 use rand::seq::SliceRandom;
 use regex::{Captures, Regex};
-use serde::Deserialize;
+
+mod ron_defs;
+
+use ron_defs::*;
 
 /// Receives match and provides replacement
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 enum ReplacementCallback {
     /// Do not replace
     Noop,
@@ -19,37 +22,11 @@ enum ReplacementCallback {
     Any(Vec<ReplacementCallback>),
     /// Selects replacement based on relative weights
     Weights(Vec<(u64, ReplacementCallback)>),
+    // TODO: see below
+    // Custom(fn taking Caps, severity and maybe other info),
 }
 
 impl ReplacementCallback {
-    /// Checks things to prevent runtime panics. Do not forget to call it!
-    ///
-    /// TODO: Should probably be done properly by using separate enum and do these checks after
-    /// creation
-    fn validate_self(&self) -> Result<(), String> {
-        match self {
-            Self::Any(targets) => {
-                if targets.is_empty() {
-                    Err("Empty Any".to_owned())
-                } else {
-                    Ok(())
-                }
-            }
-            Self::Weights(items) => {
-                if items.is_empty() {
-                    return Err("Empty Weights".to_owned());
-                }
-
-                if items.iter().map(|(i, _)| i).sum::<u64>() == 0 {
-                    return Err("Weights add up to 0".to_owned());
-                }
-
-                Ok(())
-            }
-            _ => Ok(()),
-        }
-    }
-
     fn replace(&self, caps: &Captures) -> String {
         match self {
             Self::Noop => caps[0].to_owned(),
@@ -72,6 +49,44 @@ impl ReplacementCallback {
                     .replace(caps)
             }
         }
+    }
+}
+
+impl TryFrom<ReplacementCallbackDef> for ReplacementCallback {
+    type Error = String;
+
+    // TODO: these should be in Deserialize implementation when/if it is done
+    fn try_from(accent_def: ReplacementCallbackDef) -> Result<Self, Self::Error> {
+        Ok(match accent_def {
+            ReplacementCallbackDef::Noop => Self::Noop,
+            ReplacementCallbackDef::Simple(v) => Self::Simple(v),
+            ReplacementCallbackDef::Any(items) => {
+                if items.is_empty() {
+                    return Err("Empty Any".to_owned());
+                }
+
+                let mut converted = Vec::with_capacity(items.len());
+                for item in items {
+                    converted.push(item.try_into()?);
+                }
+                ReplacementCallback::Any(converted)
+            }
+            ReplacementCallbackDef::Weights(items) => {
+                if items.is_empty() {
+                    return Err("Empty Weights".to_owned());
+                }
+
+                if items.iter().map(|(i, _)| i).sum::<u64>() == 0 {
+                    return Err("Weights add up to 0".to_owned());
+                }
+
+                let mut converted = Vec::with_capacity(items.len());
+                for (weight, item) in items {
+                    converted.push((weight, item.try_into()?));
+                }
+                Self::Weights(converted)
+            }
+        })
     }
 }
 
@@ -144,49 +159,99 @@ impl PartialEq for Replacement {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct WordsAndPatternsDefinition {
-    #[serde(default)]
+/// Either replaces everything from previous severity using `Replace` or adds new words and
+/// patterns to the end of previous ones with `Extend`
+#[derive(Debug)]
+struct SeverityBody {
     words: Vec<(String, ReplacementCallback)>,
-    #[serde(default)]
     patterns: Vec<(String, ReplacementCallback)>,
+}
+
+impl TryFrom<SeverityBodyDef> for SeverityBody {
+    type Error = String;
+
+    // TODO: these should be in Deserialize implementation when/if it is done
+    fn try_from(accent_def: SeverityBodyDef) -> Result<Self, Self::Error> {
+        let mut words = Vec::with_capacity(accent_def.words.len());
+        for (i, (pattern, callback_def)) in accent_def.words.into_iter().enumerate() {
+            let callback: ReplacementCallback = match callback_def.try_into() {
+                Err(err) => Err(format!("error in word {i}: {pattern}: {err}"))?,
+                Ok(callback) => callback,
+            };
+            words.push((pattern, callback));
+        }
+
+        let mut patterns = Vec::with_capacity(accent_def.patterns.len());
+        for (i, (pattern, callback_def)) in accent_def.patterns.into_iter().enumerate() {
+            let callback: ReplacementCallback = match callback_def.try_into() {
+                Err(err) => Err(format!("error in pattern {i}: {pattern}: {err}"))?,
+                Ok(callback) => callback,
+            };
+            patterns.push((pattern, callback));
+        }
+
+        Ok(Self { words, patterns })
+    }
 }
 
 /// Either replaces everything from previous severity using `Replace` or adds new words and
 /// patterns to the end of previous ones with `Extend`
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 enum Severity {
-    Replace(WordsAndPatternsDefinition),
-    Extend(WordsAndPatternsDefinition),
+    Replace(SeverityBody),
+    Extend(SeverityBody),
 }
 
-fn default_bool_true() -> bool {
-    true
-}
-
-#[derive(Debug, Deserialize)]
-struct AccentDefinition {
-    name: String,
-    #[serde(default = "default_bool_true")]
-    normalize_case: bool,
-    #[serde(default)]
-    words: Vec<(String, ReplacementCallback)>,
-    #[serde(default)]
-    patterns: Vec<(String, ReplacementCallback)>,
-    #[serde(default)]
-    severities: BTreeMap<u64, Severity>,
-}
-
-impl TryFrom<AccentDefinition> for Accent {
+impl TryFrom<SeverityDef> for Severity {
     type Error = String;
 
-    fn try_from(accent_def: AccentDefinition) -> Result<Self, Self::Error> {
+    // TODO: these should be in Deserialize implementation when/if it is done
+    fn try_from(severity_def: SeverityDef) -> Result<Self, Self::Error> {
+        Ok(match severity_def {
+            SeverityDef::Replace(body) => Self::Replace(body.try_into()?),
+            SeverityDef::Extend(body) => Self::Extend(body.try_into()?),
+        })
+    }
+}
+
+impl TryFrom<AccentDef> for Accent {
+    type Error = String;
+
+    // NOTE: this should all go away with custom Deserialize hopefully?
+    fn try_from(accent_def: AccentDef) -> Result<Self, Self::Error> {
+        let mut words = Vec::with_capacity(accent_def.words.len());
+        for (i, (pattern, callback_def)) in accent_def.words.into_iter().enumerate() {
+            let callback: ReplacementCallback = match callback_def.try_into() {
+                Err(err) => Err(format!("error in word {i}: {pattern}: {err}"))?,
+                Ok(callback) => callback,
+            };
+            words.push((pattern, callback));
+        }
+
+        let mut patterns = Vec::with_capacity(accent_def.patterns.len());
+        for (i, (pattern, callback_def)) in accent_def.patterns.into_iter().enumerate() {
+            let callback: ReplacementCallback = match callback_def.try_into() {
+                Err(err) => Err(format!("error in pattern {i}: {pattern}: {err}"))?,
+                Ok(callback) => callback,
+            };
+            patterns.push((pattern, callback));
+        }
+
+        let mut severities = BTreeMap::new();
+        for (severity_level, severity_def) in accent_def.severities.into_iter() {
+            let severity: Severity = match severity_def.try_into() {
+                Err(err) => Err(format!("error in severity {severity_level}: {err}"))?,
+                Ok(callback) => callback,
+            };
+            severities.insert(severity_level, severity);
+        }
+
         Self::new(
             accent_def.name,
             accent_def.normalize_case,
-            accent_def.words,
-            accent_def.patterns,
-            accent_def.severities,
+            words,
+            patterns,
+            severities,
         )
     }
 }
@@ -237,12 +302,6 @@ impl Accent {
                 source: word_regex,
                 cb: replacement,
             });
-        }
-
-        for (i, replacement) in replacements.iter().enumerate() {
-            if let Err(err) = replacement.cb.validate_self() {
-                return Err(format!("replacement {} invalid: {}", i, err));
-            }
         }
 
         Ok(replacements)
@@ -370,7 +429,7 @@ impl FromStr for Accent {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::try_from(
-            ron::from_str::<AccentDefinition>(s)
+            ron::from_str::<AccentDef>(s)
                 .map_err(|err| format!("unable to load accent definition: {}", err))?,
         )
     }

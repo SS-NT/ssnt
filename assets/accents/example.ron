@@ -2,6 +2,7 @@
 // regex flags: https://docs.rs/regex/latest/regex/#grouping-and-flags
 //
 // substitues pattern matches with replacements. all rules are applied from top to bottom
+// by default, m flag is added to every pattern which means ^ and $ match beginning and end of line
 (
     // accent name, the only required field
     name: "example",

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 
 use rand::seq::SliceRandom;
 use regex::{Captures, Regex};
@@ -86,7 +86,7 @@ impl Replacement {
     // try to learn something about strings and adjust case accordingly. all logic is currently
     // ascii only
     // tried using Cows but my computer exploded. TODO: try that again
-    fn normalize_case<'a>(old: &str, mut new: String) -> String {
+    fn normalize_case<'a>(old: &str, mut new: Cow<'a, str>) -> Cow<'a, str> {
         // no constraints if original was all lowercase
         if old.chars().all(|c| c.is_ascii_lowercase()) {
             return new;
@@ -103,7 +103,7 @@ impl Replacement {
                     return new;
                 }
 
-                if let Some(r) = new.get_mut(..1) {
+                if let Some(r) = new.to_mut().get_mut(..1) {
                     r.make_ascii_uppercase();
                 }
             }
@@ -117,7 +117,7 @@ impl Replacement {
                 return new;
             }
 
-            return new.to_ascii_uppercase();
+            return Cow::from(new.to_ascii_uppercase());
         }
 
         // any other more complex case
@@ -129,9 +129,9 @@ impl Replacement {
             .replace_all(text, |caps: &Captures| {
                 let new = self.cb.replace(caps);
                 if normalize_case {
-                    Self::normalize_case(text, new)
+                    Self::normalize_case(text, Cow::from(new))
                 } else {
-                    new
+                    Cow::from(new)
                 }
             })
             .to_string()
@@ -369,15 +369,15 @@ mod tests {
     #[test]
     fn normalize_case_input_lowercase() {
         assert_eq!(
-            Replacement::normalize_case("hello", "bye".to_owned()),
+            Replacement::normalize_case("hello", Cow::from("bye")),
             "bye"
         );
         assert_eq!(
-            Replacement::normalize_case("hello", "Bye".to_owned()),
+            Replacement::normalize_case("hello", Cow::from("Bye")),
             "Bye"
         );
         assert_eq!(
-            Replacement::normalize_case("hello", "bYE".to_owned()),
+            Replacement::normalize_case("hello", Cow::from("bYE")),
             "bYE"
         );
     }
@@ -385,17 +385,17 @@ mod tests {
     #[test]
     fn normalize_case_input_titled() {
         assert_eq!(
-            Replacement::normalize_case("Hello", "bye".to_owned()),
+            Replacement::normalize_case("Hello", Cow::from("bye")),
             "Bye"
         );
         // has case variation -- do not touch it
         assert_eq!(
-            Replacement::normalize_case("Hello", "bYe".to_owned()),
+            Replacement::normalize_case("Hello", Cow::from("bYe")),
             "bYe"
         );
         // not ascii uppercase
         assert_eq!(
-            Replacement::normalize_case("Привет", "bye".to_owned()),
+            Replacement::normalize_case("Привет", Cow::from("bye")),
             "bye"
         );
     }
@@ -403,21 +403,21 @@ mod tests {
     #[test]
     fn normalize_case_input_uppercase() {
         assert_eq!(
-            Replacement::normalize_case("HELLO", "bye".to_owned()),
+            Replacement::normalize_case("HELLO", Cow::from("bye")),
             "BYE"
         );
         // has case variation -- do not touch it
         assert_eq!(
-            Replacement::normalize_case("HELLO", "bYE".to_owned()),
+            Replacement::normalize_case("HELLO", Cow::from("bYE")),
             "bYE"
         );
         // not ascii uppercase
         assert_eq!(
-            Replacement::normalize_case("ПРИВЕТ", "bye".to_owned()),
+            Replacement::normalize_case("ПРИВЕТ", Cow::from("bye")),
             "bye"
         );
         assert_eq!(
-            Replacement::normalize_case("HELLO", "пока".to_owned()),
+            Replacement::normalize_case("HELLO", Cow::from("пока")),
             "пока"
         );
     }

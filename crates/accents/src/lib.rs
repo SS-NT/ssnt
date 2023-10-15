@@ -83,9 +83,57 @@ struct Replacement {
 }
 
 impl Replacement {
-    fn apply(&self, text: &str) -> String {
+    // try to learn something about strings and adjust case accordingly. all logic is currently
+    // ascii only
+    // tried using Cows but my computer exploded. TODO: try that again
+    fn normalize_case<'a>(old: &str, mut new: String) -> String {
+        // no constraints if original was all lowercase
+        if old.chars().all(|c| c.is_ascii_lowercase()) {
+            return new;
+        }
+
+        // if first letter is uppercase ascii and the rest are lowercase ascii, uppercase first
+        // letter of replacement
+        let mut iter = old.chars();
+        // TODO: let plus && is unstable, merge into single if when stable
+        if let Some(first) = iter.next() {
+            if first.is_ascii_uppercase() && iter.all(|c| c.is_ascii_lowercase()) {
+                // if there is case variation in replacement, better not touch it
+                if !new.chars().all(|c| c.is_ascii_lowercase()) {
+                    return new;
+                }
+
+                if let Some(r) = new.get_mut(..1) {
+                    r.make_ascii_uppercase();
+                }
+            }
+        }
+
+        // if original was all uppercase we force all uppercase for replacement. this is likely to
+        // give false positives on short inputs like "I" or abbreviations
+        if old.chars().all(|c| c.is_ascii_uppercase()) {
+            // if there is case variation in replacement, better not touch it
+            if !new.chars().all(|c| c.is_ascii_lowercase()) {
+                return new;
+            }
+
+            return new.to_ascii_uppercase();
+        }
+
+        // any other more complex case
+        new
+    }
+
+    fn apply(&self, text: &str, normalize_case: bool) -> String {
         self.source
-            .replace_all(text, |caps: &Captures| self.cb.replace(&caps))
+            .replace_all(text, |caps: &Captures| {
+                let new = self.cb.replace(caps);
+                if normalize_case {
+                    Self::normalize_case(text, new)
+                } else {
+                    new
+                }
+            })
             .to_string()
     }
 }
@@ -112,9 +160,15 @@ enum Severity {
     Extend(WordsAndPatternsDefinition),
 }
 
+fn default_bool_true() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize)]
 struct AccentDefinition {
     name: String,
+    #[serde(default = "default_bool_true")]
+    normalize_case: bool,
     #[serde(default)]
     words: Vec<(String, ReplacementCallback)>,
     #[serde(default)]
@@ -129,6 +183,7 @@ impl TryFrom<AccentDefinition> for Accent {
     fn try_from(accent_def: AccentDefinition) -> Result<Self, Self::Error> {
         Self::new(
             accent_def.name,
+            accent_def.normalize_case,
             accent_def.words,
             accent_def.patterns,
             accent_def.severities,
@@ -140,6 +195,7 @@ impl TryFrom<AccentDefinition> for Accent {
 #[derive(Debug, PartialEq)]
 pub struct Accent {
     pub name: String,
+    normalize_case: bool,
     // a copy of replacements for each severity level, sorted from lowest to highest
     severities: Vec<(u64, Vec<Replacement>)>,
 }
@@ -159,7 +215,7 @@ impl Accent {
         let mut replacements = Vec::with_capacity(words.len() + patterns.len());
 
         for (i, (word, replacement)) in words.into_iter().enumerate() {
-            let word_regex = Regex::new(&format!(r"(?m)\b{word}\b"))
+            let word_regex = Regex::new(&format!(r"(?mi)\b{word}\b"))
                 .map_err(|err| format!("bad regex for word {}: {}: {}", i, word, err))?;
 
             replacements.push(Replacement {
@@ -169,7 +225,7 @@ impl Accent {
         }
 
         for (i, (pattern, replacement)) in patterns.into_iter().enumerate() {
-            let word_regex = Regex::new(&format!(r"(?m){pattern}"))
+            let word_regex = Regex::new(&format!(r"(?mi){pattern}"))
                 .map_err(|err| format!("bad regex for pattern {}: {}: {}", i, pattern, err))?;
 
             replacements.push(Replacement {
@@ -220,6 +276,7 @@ impl Accent {
 
     fn new(
         name: String,
+        normalize_case: bool,
         mut words: Vec<(String, ReplacementCallback)>,
         mut patterns: Vec<(String, ReplacementCallback)>,
         severities_def: BTreeMap<u64, Severity>,
@@ -265,7 +322,11 @@ impl Accent {
             severities.push((severity, replacements));
         }
 
-        Ok(Self { name, severities })
+        Ok(Self {
+            name,
+            normalize_case,
+            severities,
+        })
     }
 
     /// Returns all registered severities in ascending order. Note that there may be gaps
@@ -292,7 +353,7 @@ impl Accent {
 
         // apply rules from top to bottom
         for replacement in replacements {
-            result = replacement.apply(&result);
+            result = replacement.apply(&result, self.normalize_case);
         }
 
         result
@@ -304,6 +365,62 @@ mod tests {
     use std::{fs, vec};
 
     use super::*;
+
+    #[test]
+    fn normalize_case_input_lowercase() {
+        assert_eq!(
+            Replacement::normalize_case("hello", "bye".to_owned()),
+            "bye"
+        );
+        assert_eq!(
+            Replacement::normalize_case("hello", "Bye".to_owned()),
+            "Bye"
+        );
+        assert_eq!(
+            Replacement::normalize_case("hello", "bYE".to_owned()),
+            "bYE"
+        );
+    }
+
+    #[test]
+    fn normalize_case_input_titled() {
+        assert_eq!(
+            Replacement::normalize_case("Hello", "bye".to_owned()),
+            "Bye"
+        );
+        // has case variation -- do not touch it
+        assert_eq!(
+            Replacement::normalize_case("Hello", "bYe".to_owned()),
+            "bYe"
+        );
+        // not ascii uppercase
+        assert_eq!(
+            Replacement::normalize_case("Привет", "bye".to_owned()),
+            "bye"
+        );
+    }
+
+    #[test]
+    fn normalize_case_input_uppercase() {
+        assert_eq!(
+            Replacement::normalize_case("HELLO", "bye".to_owned()),
+            "BYE"
+        );
+        // has case variation -- do not touch it
+        assert_eq!(
+            Replacement::normalize_case("HELLO", "bYE".to_owned()),
+            "bYE"
+        );
+        // not ascii uppercase
+        assert_eq!(
+            Replacement::normalize_case("ПРИВЕТ", "bye".to_owned()),
+            "bye"
+        );
+        assert_eq!(
+            Replacement::normalize_case("HELLO", "пока".to_owned()),
+            "пока"
+        );
+    }
 
     #[test]
     fn callback_none() {
@@ -358,14 +475,15 @@ mod tests {
     fn e() {
         let e = Accent::new(
             "E".to_owned(),
+            false,
             vec![],
             vec![
                 (
-                    r"[a-z0-9]".to_owned(),
+                    r"(?-i)[a-z]".to_owned(),
                     ReplacementCallback::Simple("e".to_owned()),
                 ),
                 (
-                    r"[A-Z]".to_owned(),
+                    r"(?-i)[A-Z]".to_owned(),
                     ReplacementCallback::Simple("E".to_owned()),
                 ),
             ],
@@ -411,16 +529,17 @@ mod tests {
 
         let manual = Accent {
             name: "extend".to_owned(),
+            normalize_case: true,
             severities: vec![
                 (
                     0,
                     vec![
                         Replacement {
-                            source: Regex::new(r"(?m)\ba\b").unwrap(),
+                            source: Regex::new(r"(?mi)\ba\b").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                         Replacement {
-                            source: Regex::new("(?m)1").unwrap(),
+                            source: Regex::new("(?mi)1").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                     ],
@@ -429,19 +548,19 @@ mod tests {
                     1,
                     vec![
                         Replacement {
-                            source: Regex::new(r"(?m)\ba\b").unwrap(),
+                            source: Regex::new(r"(?mi)\ba\b").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)\bb\b").unwrap(),
+                            source: Regex::new(r"(?mi)\bb\b").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                         Replacement {
-                            source: Regex::new("(?m)1").unwrap(),
+                            source: Regex::new("(?mi)1").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                         Replacement {
-                            source: Regex::new("(?m)2").unwrap(),
+                            source: Regex::new("(?mi)2").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                     ],
@@ -477,16 +596,17 @@ mod tests {
 
         let manual = Accent {
             name: "replace".to_owned(),
+            normalize_case: true,
             severities: vec![
                 (
                     0,
                     vec![
                         Replacement {
-                            source: Regex::new(r"(?m)\ba\b").unwrap(),
+                            source: Regex::new(r"(?mi)\ba\b").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                         Replacement {
-                            source: Regex::new("(?m)1").unwrap(),
+                            source: Regex::new("(?mi)1").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                     ],
@@ -495,11 +615,11 @@ mod tests {
                     1,
                     vec![
                         Replacement {
-                            source: Regex::new(r"(?m)\bb\b").unwrap(),
+                            source: Regex::new(r"(?mi)\bb\b").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                         Replacement {
-                            source: Regex::new("(?m)2").unwrap(),
+                            source: Regex::new("(?mi)2").unwrap(),
                             cb: ReplacementCallback::Noop,
                         },
                     ],
@@ -586,6 +706,7 @@ mod tests {
         let ron_string = r#"
 (
     name: "test",
+    normalize_case: true,
     words: [
         ("test", Simple("Testing in progress; Please ignore ...")),
         ("badword", Simple("")),
@@ -656,30 +777,31 @@ mod tests {
         let parsed = Accent::from_str(ron_string).unwrap();
         let manual = Accent {
             name: "test".to_owned(),
+            normalize_case: true,
             severities: vec![
                 (
                     0,
                     vec![
                         Replacement {
-                            source: Regex::new(r"(?m)\btest\b").unwrap(),
+                            source: Regex::new(r"(?mi)\btest\b").unwrap(),
                             cb: ReplacementCallback::Simple(
                                 "Testing in progress; Please ignore ...".to_owned(),
                             ),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)\bbadword\b").unwrap(),
+                            source: Regex::new(r"(?mi)\bbadword\b").unwrap(),
                             cb: ReplacementCallback::Simple("".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)\bdupe\b").unwrap(),
+                            source: Regex::new(r"(?mi)\bdupe\b").unwrap(),
                             cb: ReplacementCallback::Simple("0".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)[a-z]").unwrap(),
+                            source: Regex::new(r"(?mi)[a-z]").unwrap(),
                             cb: ReplacementCallback::Simple("e".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)[A-Z]").unwrap(),
+                            source: Regex::new(r"(?mi)[A-Z]").unwrap(),
                             cb: ReplacementCallback::Weights(vec![
                                 (5, ReplacementCallback::Simple("E".to_owned())),
                                 (1, ReplacementCallback::Simple("Ē".to_owned())),
@@ -690,7 +812,7 @@ mod tests {
                             ]),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)[0-9]").unwrap(),
+                            source: Regex::new(r"(?mi)[0-9]").unwrap(),
                             cb: ReplacementCallback::Any(vec![ReplacementCallback::Weights(vec![
                                 (
                                     1,
@@ -708,23 +830,23 @@ mod tests {
                     1,
                     vec![
                         Replacement {
-                            source: Regex::new(r"(?m)\breplaced\b").unwrap(),
+                            source: Regex::new(r"(?mi)\breplaced\b").unwrap(),
                             cb: ReplacementCallback::Simple("words".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)\bdupe\b").unwrap(),
+                            source: Regex::new(r"(?mi)\bdupe\b").unwrap(),
                             cb: ReplacementCallback::Simple("1".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)\bWindows\b").unwrap(),
+                            source: Regex::new(r"(?mi)\bWindows\b").unwrap(),
                             cb: ReplacementCallback::Simple("Linux".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)a+").unwrap(),
+                            source: Regex::new(r"(?mi)a+").unwrap(),
                             cb: ReplacementCallback::Simple("multiple A's".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)^").unwrap(),
+                            source: Regex::new(r"(?mi)^").unwrap(),
                             cb: ReplacementCallback::Simple("start".to_owned()),
                         },
                     ],
@@ -733,35 +855,35 @@ mod tests {
                     2,
                     vec![
                         Replacement {
-                            source: Regex::new(r"(?m)\breplaced\b").unwrap(),
+                            source: Regex::new(r"(?mi)\breplaced\b").unwrap(),
                             cb: ReplacementCallback::Simple("words".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)\bdupe\b").unwrap(),
+                            source: Regex::new(r"(?mi)\bdupe\b").unwrap(),
                             cb: ReplacementCallback::Simple("2".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)\bWindows\b").unwrap(),
+                            source: Regex::new(r"(?mi)\bWindows\b").unwrap(),
                             cb: ReplacementCallback::Simple("Linux".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)\badded\b").unwrap(),
+                            source: Regex::new(r"(?mi)\badded\b").unwrap(),
                             cb: ReplacementCallback::Simple("words".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)a+").unwrap(),
+                            source: Regex::new(r"(?mi)a+").unwrap(),
                             cb: ReplacementCallback::Simple("multiple A's".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)^").unwrap(),
+                            source: Regex::new(r"(?mi)^").unwrap(),
                             cb: ReplacementCallback::Simple("start".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)b+").unwrap(),
+                            source: Regex::new(r"(?mi)b+").unwrap(),
                             cb: ReplacementCallback::Simple("multiple B's".to_owned()),
                         },
                         Replacement {
-                            source: Regex::new(r"(?m)$").unwrap(),
+                            source: Regex::new(r"(?mi)$").unwrap(),
                             cb: ReplacementCallback::Simple("end".to_owned()),
                         },
                     ],
@@ -772,7 +894,7 @@ mod tests {
 
         // TODO: either patch rand::thread_rng somehow or change interface to pass rng directly?
         // let test_string = "Hello World! test 12 23";
-        // for severity in 0..=2 {
+        // for severity in manual.severities() {
         //     assert_eq!(parsed.apply(test_string, severity), manual.apply(test_string, severity));
         //  }
     }
@@ -800,15 +922,16 @@ mod tests {
 
         let manual = Accent {
             name: "dupes".to_owned(),
+            normalize_case: true,
             severities: vec![(
                 0,
                 vec![
                     Replacement {
-                        source: Regex::new(r"(?m)\bdupew\b").unwrap(),
+                        source: Regex::new(r"(?mi)\bdupew\b").unwrap(),
                         cb: ReplacementCallback::Simple("2".to_owned()),
                     },
                     Replacement {
-                        source: Regex::new(r"(?m)dupep").unwrap(),
+                        source: Regex::new(r"(?mi)dupep").unwrap(),
                         cb: ReplacementCallback::Simple("2".to_owned()),
                     },
                 ],
@@ -852,7 +975,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_all_included_accents() {
+    fn included_accents() {
         let sample_text = fs::read_to_string("tests/sample_text.txt").expect("reading sample text");
 
         for file in fs::read_dir("accents").expect("read symlinked accents folder") {

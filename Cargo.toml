@@ -17,6 +17,7 @@ default = ["client"]
 client = ["bevy/animation", "bevy/bevy_audio", "bevy/bevy_gilrs", "bevy/bevy_winit", "bevy/x11", "bevy/vorbis"]
 
 [dependencies]
+accents = { path = "crates/accents" }
 byond = { path = "crates/byond" }
 maps = { path = "crates/maps" }
 networking = { path = "crates/networking" }

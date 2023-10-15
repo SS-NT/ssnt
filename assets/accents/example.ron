@@ -2,10 +2,15 @@
 // regex flags: https://docs.rs/regex/latest/regex/#grouping-and-flags
 //
 // substitues pattern matches with replacements. all rules are applied from top to bottom
-// by default, m flag is added to every pattern which means ^ and $ match beginning and end of line
+// by default, m and i flags are added to every pattern which means ^ and $ match beginning
+// and end of line, regexses ignore case. you can opt out of these by doing "(?-mi)"
 (
     // accent name, the only required field
     name: "example",
+
+    // on by default, tries to match input case with output after each rule
+    // for example, if you replaced "HELLO" with "bye", it would use "BYE" instead
+    normalize_case: true,
 
     // pairs of (regex, replacement)
     // this is same as `patterns` except that each regex is surrounded with \b to avoid copypasting.

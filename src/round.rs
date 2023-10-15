@@ -299,6 +299,14 @@ fn finalise_player_spawn(
                 return false;
             };
 
+            let Some(name) = players
+                .players()
+                .get(&connection)
+                .map(|p| p.username.clone())
+            else {
+                return false;
+            };
+
             let Some(job) = selected_jobs.get(connection, &job_data) else {
                 return false;
             };
@@ -320,6 +328,7 @@ fn finalise_player_spawn(
                     cells: Default::default(),
                 },
                 Transform::from_translation(spawn_position),
+                crate::communication::SpeechName(name),
             ));
 
             controls.give_control(*player_id, *player_entity);

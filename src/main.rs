@@ -4,6 +4,7 @@ mod admin;
 mod body;
 mod camera;
 mod combat;
+mod communication;
 mod components;
 mod config;
 mod construction;
@@ -159,6 +160,7 @@ fn main() {
         interaction::InteractionPlugin,
         construction::ConstructionPlugin,
         combat::CombatPlugin,
+        communication::CommunicationPlugin,
     ))
     .insert_resource(args)
     .add_systems(Startup, setup_shared)

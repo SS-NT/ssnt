@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::BTreeMap};
+use std::{borrow::Cow, collections::BTreeMap, str::FromStr};
 
 use rand::seq::SliceRandom;
 use regex::{Captures, Regex};
@@ -201,13 +201,6 @@ pub struct Accent {
 }
 
 impl Accent {
-    pub fn from_str(ron: &str) -> Result<Self, String> {
-        Self::try_from(
-            ron::from_str::<AccentDefinition>(ron)
-                .map_err(|err| format!("unable to load accent definition: {}", err))?,
-        )
-    }
-
     fn make_replacements(
         words: Vec<(String, ReplacementCallback)>,
         patterns: Vec<(String, ReplacementCallback)>,
@@ -357,6 +350,17 @@ impl Accent {
         }
 
         result
+    }
+}
+
+impl FromStr for Accent {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(
+            ron::from_str::<AccentDefinition>(s)
+                .map_err(|err| format!("unable to load accent definition: {}", err))?,
+        )
     }
 }
 

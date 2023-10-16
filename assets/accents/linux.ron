@@ -1,8 +1,7 @@
 (
     name: "linux",
     patterns: [
-        ("[rlv]", Simple("w")),
-        ("[RLV]", Simple("W")),
+        ("(?i)[rlv]", Simple("w")),
         ("ove", Simple("uv")),
         ("ni", Simple("nye")),
         ("na", Simple("nya")),
@@ -76,7 +75,7 @@
                 Simple("zaazaa "),
                 Simple("(=；ｪ；=) "),
             ])),
-            (8, Noop),
+            (9, Noop),
         ])),
         // 80% for ending
         ("$", Weights([

@@ -518,8 +518,8 @@
         ("turds", Simple("jobbies")),
         ("turd", Simple("jobbie")),
         ("turn", Simple("caw")),
-        ("TVs", Simple("tellies")),
-        ("TV", Simple("telly")),
+        ("tvs", Simple("tellies")),
+        ("tv", Simple("telly")),
         ("two", Simple("twa")),
         ("understand", Simple("ken")),
         ("until", Simple("`til")),
@@ -648,8 +648,8 @@
         ])),
     ],
     patterns: [
-        (r"\bfuck", Simple("fook")),
-        ("h?ou", Simple("oo")),
+        (r"(?i)\bfuck", Simple("fook")),
+        ("(?i)h?ou", Simple("oo")),
         ("ow", Simple("ou")),
         ("$", Weights([
             (2, Simple(" ye daft cunt")),

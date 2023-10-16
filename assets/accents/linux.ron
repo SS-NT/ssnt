@@ -2,6 +2,7 @@
     name: "linux",
     patterns: [
         ("[rlv]", Simple("w")),
+        ("[RLV]", Simple("W")),
         ("ove", Simple("uv")),
         ("ni", Simple("nye")),
         ("na", Simple("nya")),
@@ -9,9 +10,9 @@
         ("ne", Simple("nye")),
         ("nu", Simple("nyu")),
         ("!", Simple("! owo")),
-        // 20% for prefix
+        // 10% for prefix
         ("^", Weights([
-            (2, Any([
+            (1, Any([
                 Simple("!!! "),
                 Simple("(=^‥^=) "),
                 Simple("~~ "),
@@ -19,7 +20,6 @@
                 Simple("ヾ(=｀ω´=)ノ” "),
                 Simple(":3 "),
                 Simple("ama "),
-                Simple("baka "),
                 Simple("baka "),
                 Simple("boop "),
                 Simple("burunya "),
@@ -88,7 +88,6 @@
                 Simple(" ヾ(=｀ω´=)ノ”"),
                 Simple(" :3"),
                 Simple(" ama"),
-                Simple(" baka"),
                 Simple(" baka"),
                 Simple(" boop"),
                 Simple(" burunya"),

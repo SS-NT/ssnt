@@ -47,7 +47,7 @@ impl ReplacementCallback {
     // try to learn something about strings and adjust case accordingly. all logic is currently
     // ascii only
     // tried using Cows but my computer exploded. TODO: try that again
-    fn normalize_case<'a>(old: &str, new: &SimpleString) -> String {
+    fn normalize_case(old: &str, new: &SimpleString) -> String {
         let mut body = new.body.clone();
 
         // assume lowercase ascii is "weakest" form. anything else returns as is
@@ -88,7 +88,7 @@ impl ReplacementCallback {
             Self::Noop => caps[0].to_owned(),
             Self::Simple(string) => {
                 if normalize_case {
-                    Self::normalize_case(&caps[0], &string)
+                    Self::normalize_case(&caps[0], string)
                 } else {
                     string.body.clone()
                 }

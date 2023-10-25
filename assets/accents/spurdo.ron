@@ -1,71 +1,74 @@
 (
     name: "spurdo",
-    words: [
-        ("epic", Simple("ebin")),
-        (r":?\)", Any([
-            Simple(":D"),
-            Simple(":DD"),
-            Simple(":DDD"),
-        ])),
-    ],
-    patterns: [
-        ("xc", Simple("gg")),
-        ("c", Simple("g")),
-        ("k", Simple("g")),
-        ("t", Simple("d")),
-        ("p", Simple("b")),
-        ("x", Simple("gs")),
-        (r"\Bng\b", Simple("gn")),
-        ("$", Weights([
-            (1, Noop),
-            (1, Any([
+    description: ":D",
+    rules: (
+        words: [
+            ("epic", Simple("ebin")),
+            (r":?\)", Any([
                 Simple(":D"),
                 Simple(":DD"),
                 Simple(":DDD"),
-                Simple(":DDDD"),
-                Simple(":DDDDD"),
             ])),
-        ])),
-    ],
-    severities: {
-        1: Extend((
-            patterns: [
-                ("$", Weights([
-                    (1, Noop),
-                    (2, Any([
+        ],
+        patterns: [
+            ("xc", Simple("gg")),
+            ("c", Simple("g")),
+            ("k", Simple("g")),
+            ("t", Simple("d")),
+            ("p", Simple("b")),
+            ("x", Simple("gs")),
+            (r"\Bng\b", Simple("gn")),
+            ("$", Weights([
+                (1, Noop),
+                (1, Any([
+                    Simple(":D"),
+                    Simple(":DD"),
+                    Simple(":DDD"),
+                    Simple(":DDDD"),
+                    Simple(":DDDDD"),
+                ])),
+            ])),
+        ],
+        severities: {
+            1: Extend((
+                patterns: [
+                    ("$", Weights([
+                        (1, Noop),
+                        (2, Any([
+                            Simple(":DD"),
+                            Simple(":DDD"),
+                            Simple(":DDDD"),
+                            Simple(":DDDDD"),
+                            Simple(":DDDDDD"),
+                        ])),
+                    ])),
+                ],
+                words: [
+                    (r":?\)", Any([
                         Simple(":DD"),
                         Simple(":DDD"),
+                        Simple(":DDDD"),
+                    ])),
+                ],
+            )),
+            2: Extend((
+                patterns: [
+                    ("$", Any([
+                        Simple(":DDDD"),
+                        Simple(":DDDDD"),
+                        Simple(":DDDDDD"),
+                        Simple(":DDDDDDD"),
+                        Simple(":DDDDDDDD"),
+                    ])),
+                ],
+                words: [
+                    (r":?\)", Any([
                         Simple(":DDDD"),
                         Simple(":DDDDD"),
                         Simple(":DDDDDD"),
                     ])),
-                ])),
-            ],
-            words: [
-                (r":?\)", Any([
-                    Simple(":DD"),
-                    Simple(":DDD"),
-                    Simple(":DDDD"),
-                ])),
-            ],
-        )),
-        2: Extend((
-            patterns: [
-                ("$", Any([
-                    Simple(":DDDD"),
-                    Simple(":DDDDD"),
-                    Simple(":DDDDDD"),
-                    Simple(":DDDDDDD"),
-                    Simple(":DDDDDDDD"),
-                ])),
-            ],
-            words: [
-                (r":?\)", Any([
-                    Simple(":DDDD"),
-                    Simple(":DDDDD"),
-                    Simple(":DDDDDD"),
-                ])),
-            ],
-        )),
-    },
+                ],
+            )),
+        },
+    ),
 )

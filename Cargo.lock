@@ -22,9 +22,7 @@ checksum = "c71b1793ee61086797f5c80b6efa2b8ffa6d5dd703f118545808a7f2e27f7046"
 name = "accents"
 version = "0.1.0"
 dependencies = [
- "log",
- "rand",
- "regex",
+ "pink_accents",
  "ron",
  "serde",
 ]
@@ -3428,6 +3426,18 @@ name = "pin-utils"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
+
+[[package]]
+name = "pink_accents"
+version = "0.0.1"
+source = "git+https://github.com/Fogapod/pink_accents?rev=fee5774c8dba0e600d5120e2030b405ccb89b184#fee5774c8dba0e600d5120e2030b405ccb89b184"
+dependencies = [
+ "log",
+ "rand",
+ "regex",
+ "ron",
+ "serde",
+]
 
 [[package]]
 name = "pkg-config"

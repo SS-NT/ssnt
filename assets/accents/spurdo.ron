@@ -12,8 +12,7 @@
         ],
         patterns: [
             ("xc", Simple("gg")),
-            ("c", Simple("g")),
-            ("k", Simple("g")),
+            ("c|k", Simple("g")),
             ("t", Simple("d")),
             ("p", Simple("b")),
             ("x", Simple("gs")),

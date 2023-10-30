@@ -1,3 +1,4 @@
+// TODO: should progressively get worse with higher severity, ideally without copypaste here
 (
     name: "linux",
     description: "OwO speak",

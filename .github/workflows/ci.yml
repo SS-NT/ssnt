@@ -70,5 +70,9 @@ jobs:
         with:
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha
+            spacestationnt/ssnt:cache
+          cache-to:
+            type=gha,mode=max
+            type=registry,ref=spacestationnt/ssnt:cache,mode=max

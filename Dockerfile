@@ -9,7 +9,9 @@ RUN : \
         # Ctrl+C handler
         dumb-init
 
-COPY . .
+COPY src src
+COPY crates crates
+COPY Cargo.* .
 
 RUN cargo chef prepare --recipe-path recipe.json
 

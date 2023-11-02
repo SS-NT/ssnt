@@ -53,9 +53,6 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: spacestationnt/ssnt
-          tags: |
-            # latest tag for main branch. by default it only sets latest for tags
-            type=raw,value=latest,enable={{is_default_branch}}
       - name: Login to Docker Hub
         if: ${{ github.event_name == 'push' }}
         uses: docker/login-action@v3

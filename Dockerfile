@@ -4,8 +4,7 @@ WORKDIR /build
 FROM chef AS planner
 
 RUN : \
-    && apk upgrade \
-    && apk add \
+    && apk add --no-cache \
         # Ctrl+C handler
         dumb-init
 

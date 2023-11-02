@@ -17,6 +17,7 @@ pub struct TopDownCamera {
 }
 
 impl TopDownCamera {
+    #[cfg(feature = "client")]
     pub fn new(target: Entity) -> Self {
         Self {
             target,

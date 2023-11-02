@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [ "main" ]
+    tags: [ "*" ]
   pull_request:
     branches: [ "main" ]
 
@@ -10,8 +11,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  fmt:
-    name: Formatting
+  formatting:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -25,10 +25,7 @@ jobs:
           args: --all -- --check
 
   check:
-    name: Check
     runs-on: ubuntu-latest
-    env:
-      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
       - uses: actions/checkout@v3
       - uses: actions-rs/toolchain@v1
@@ -36,8 +33,6 @@ jobs:
           toolchain: stable
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "default"
       - name: Install native system dependencies
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev
         if: runner.os == 'linux'
@@ -48,3 +43,33 @@ jobs:
           command: clippy
           args: -- -D warnings
 
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: spacestationnt/ssnt
+          tags: |
+            # latest tag for main branch. by default it only sets latest for tags
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Login to Docker Hub
+        if: ${{ github.event_name == 'push' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: |
+            type=gha
+            spacestationnt/ssnt:cache
+          cache-to:
+            type=gha,mode=max
+            type=registry,ref=spacestationnt/ssnt:cache,mode=max

@@ -27,20 +27,22 @@ use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::scene::ScenePlugin;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
-use bevy_egui::EguiPlugin;
 use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
 use bevy_rapier3d::prelude::Collider;
 use byond::tgm::TgmLoader;
-use camera::TopDownCamera;
 use clap::{Parser, Subcommand};
 use config::ServerConfig;
 use futures_lite::future;
 use maps::TileMapData;
 use networking::identity::EntityCommandsExt as NetworkingEntityCommandsExt;
-use networking::spawning::ClientControlled;
-use networking::{
-    ClientEvent, ConnectToken, NetworkRole, NetworkingPlugin, ServerAuthentication, TargetServer,
-    UserData,
+use networking::{NetworkRole, NetworkingPlugin, ServerAuthentication};
+
+#[cfg(feature = "client")]
+use {
+    bevy_egui::EguiPlugin,
+    camera::TopDownCamera,
+    networking::spawning::ClientControlled,
+    networking::{ClientEvent, ConnectToken, TargetServer, UserData},
 };
 
 /// How many ticks the server runs per second
@@ -63,8 +65,10 @@ enum ArgCommands {
         #[clap(long)]
         public_address: Option<IpAddr>,
     },
+    #[cfg(feature = "client")]
     /// join a game
     Join { address: SocketAddr, name: String },
+    #[cfg(feature = "client")]
     /// join a game using a connection token
     JoinToken {
         /// base64 encoded connection token
@@ -122,6 +126,7 @@ fn main() {
             .add_systems(Update, (convert_tgm_map, create_tilemap_from_converted));
         }
         NetworkRole::Client => {
+            #[cfg(feature = "client")]
             app.add_plugins((
                 DefaultPlugins.set(WindowPlugin {
                     primary_window: Some(Window {
@@ -144,6 +149,8 @@ fn main() {
             .add_systems(Startup, setup_client)
             .add_systems(Update, (set_camera_target, clean_entities_on_disconnect))
             .add_state::<GameState>();
+            #[cfg(not(feature = "client"))]
+            panic!("Compiled without client support");
         }
     };
     app.add_plugins((
@@ -241,10 +248,12 @@ fn setup_server(args: Res<Args>, server_config: Res<ServerConfig>, mut commands:
             commands.insert_resource(server);
             commands.insert_resource(transport);
         }
+        #[cfg(feature = "client")]
         _ => panic!("Missing commandline argument"),
     };
 }
 
+#[cfg(feature = "client")]
 fn setup_client(
     mut commands: Commands,
     args: Res<Args>,
@@ -293,6 +302,7 @@ fn setup_client(
     }
 }
 
+#[cfg(feature = "client")]
 /// Delete all entities when leaving a server, except entities with [`KeepOnServerChange`].
 fn clean_entities_on_disconnect(
     mut events: EventReader<ClientEvent>,
@@ -319,6 +329,7 @@ fn clean_entities_on_disconnect(
     }
 }
 
+#[cfg(feature = "client")]
 fn set_camera_target(
     query: Query<Entity, Added<ClientControlled>>,
     mut camera: Query<&mut TopDownCamera, Without<ClientControlled>>,

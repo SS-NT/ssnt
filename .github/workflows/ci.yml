@@ -68,8 +68,13 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: |
-            type=gha
+            # merges (main branch) use docker hub cache
+            ${{ github.event_name != 'push' && 'type=gha' || '' }}
+            # main branch only uses docker hub cache because it is main branch itself while PRs use it for
+            # faster initial compilation
             spacestationnt/ssnt:cache
           cache-to: |
-            type=gha,mode=max
+            # merges (main branch) use docker hub cache. do not push to github
+            ${{ github.event_name != 'push' && 'type=gha,mode=max' || '' }}
+            # only push cache to docker hub on merge. docker dies early if this is enabled without logging in
             ${{ github.event_name == 'push' && 'type=registry,ref=spacestationnt/ssnt:cache,mode=max' || '' }}

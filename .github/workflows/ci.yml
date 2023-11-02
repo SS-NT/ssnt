@@ -72,4 +72,4 @@ jobs:
             spacestationnt/ssnt:cache
           cache-to: |
             type=gha,mode=max
-            type=registry,ref=spacestationnt/ssnt:cache,mode=max
+            ${{ github.event_name == 'push' && 'type=registry,ref=spacestationnt/ssnt:cache,mode=max' || '' }}

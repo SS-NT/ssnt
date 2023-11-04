@@ -82,8 +82,8 @@ jobs:
         platform: [linux, windows]
         include:
           - platform: linux
-            archive-command: tar zcvf ssnt.tar
-            output-path: ssnt.tar
+            archive-command: tar zcvf ssnt.tar.gz
+            output-path: ssnt.tar.gz
           - platform: windows
             archive-command: zip -r ssnt.zip
             output-path: ssnt.zip

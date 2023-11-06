@@ -3430,7 +3430,7 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 [[package]]
 name = "pink_accents"
 version = "0.0.1"
-source = "git+https://github.com/Fogapod/pink_accents?rev=fee5774c8dba0e600d5120e2030b405ccb89b184#fee5774c8dba0e600d5120e2030b405ccb89b184"
+source = "git+https://github.com/Fogapod/pink_accents?rev=c4e64c428de4f67e0aaa50083ec7cb8fd2da54cc#c4e64c428de4f67e0aaa50083ec7cb8fd2da54cc"
 dependencies = [
  "log",
  "rand",

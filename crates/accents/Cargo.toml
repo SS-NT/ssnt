@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 serde = "1.0.189"
 ron = "0.8.1"
-pink_accents = { git = "https://github.com/Fogapod/pink_accents", rev = "fee5774c8dba0e600d5120e2030b405ccb89b184" }
+pink_accents = { git = "https://github.com/Fogapod/pink_accents", rev = "c4e64c428de4f67e0aaa50083ec7cb8fd2da54cc" }

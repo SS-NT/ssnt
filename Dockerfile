@@ -24,10 +24,12 @@ COPY crates crates
 
 RUN cargo build --release --no-default-features
 
-FROM scratch
+FROM scratch as runtime
+
+ENV RUST_BACKTRACE=full
 
 COPY --from=builder /build/target/release/ssnt .
 COPY --from=planner /usr/bin/dumb-init .
 COPY assets assets
 
-ENTRYPOINT ["./dumb-init", "--", "./ssnt", "host"]
+ENTRYPOINT ["./dumb-init", "--", "./ssnt", "host", "0.0.0.0:33998"]

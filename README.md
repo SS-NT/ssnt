@@ -22,8 +22,8 @@ ssnt.exe host 127.0.0.1:33998
 
 Or using docker:
 
-```
-docker run -p 33998:33998/tcp -p 33998:33998/udp spacestationnt/ssnt 0.0.0.0:33998 --public-address 127.0.0.1
+```sh
+docker run -p 33998:33998/udp spacestationnt/ssnt --public-address 127.0.0.1
 ```
 
 Then join your server with a client:

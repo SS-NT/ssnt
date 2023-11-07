@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 bevy = { workspace = true }
 bevy_rapier3d = { workspace = true }
-serde = { version = "*", features = ["derive"] }
+serde = { workspace = true }

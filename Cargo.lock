@@ -3447,9 +3447,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pink_accents"
-version = "0.0.1"
+version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "887ab76d3a91c71f3bb01844afd1daec7d32cb5b31e8702a862de1602034874f"
+checksum = "e6e80cfaedb0b1dce1333274ab17d5ade9e7f49332a802ce19e86dc96f5852ad"
 dependencies = [
  "log",
  "rand",

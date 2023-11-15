@@ -1,4 +1,3 @@
-// TODO: uppercasing everything after certain severity (or even from 0)
 (
     name: "clown",
     description: "Loud and honking",
@@ -12,6 +11,7 @@
         severities: {
             1: Extend((
                 patterns: [
+                    (".+", Uppercase(Original)),
                     ("$", Any([
                         Simple(" HONK HONK!"),
                         Simple(" HONK HONK HONK!"),

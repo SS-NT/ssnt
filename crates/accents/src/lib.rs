@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde::Deserialize;
 
 use pink_accents::Accent as PinkAccent;
@@ -14,7 +16,7 @@ impl Accent {
         self.rules.severities()
     }
 
-    pub fn apply(&self, text: &str, severity: u64) -> String {
+    pub fn apply<'a>(&self, text: &'a str, severity: u64) -> Cow<'a, str> {
         self.rules.apply(text, severity)
     }
 }

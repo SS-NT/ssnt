@@ -78,7 +78,7 @@
                     Simple("zaazaa "),
                     Simple("(=；ｪ；=) "),
                 ])),
-                (9, Noop),
+                (9, Original),
             ])),
             // 80% for ending
             ("$", Weights([
@@ -146,8 +146,8 @@
                     Simple(" zaazaa"),
                     Simple(" (=；ｪ；=)"),
                 ])),
-                (2, Noop),
+                (2, Original),
             ])),
         ],
-    ),
+    )
 )

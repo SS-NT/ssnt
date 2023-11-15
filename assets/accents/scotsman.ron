@@ -655,7 +655,7 @@
             ("ow", Simple("ou")),
             ("$", Weights([
                 (2, Simple(" ye daft cunt")),
-                (8, Noop),
+                (8, Original),
             ])),
         ],
         severities: {
@@ -663,7 +663,7 @@
                 patterns: [
                     ("$", Weights([
                         (1, Simple(" ye daft cunt")),
-                        (1, Noop),
+                        (1, Original),
                     ])),
                 ],
             )),
@@ -672,6 +672,6 @@
                     ("$", Simple(" ye daft cunt")),
                 ],
             )),
-        },
-    ),
+        }
+    )
 )

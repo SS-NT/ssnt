@@ -12,19 +12,20 @@
         ],
         patterns: [
             ("xc", Simple("gg")),
-            ("c|k", Simple("g")),
+            ("c", Simple("g")),
+            ("k", Simple("g")),
             ("t", Simple("d")),
             ("p", Simple("b")),
             ("x", Simple("gs")),
             (r"\Bng\b", Simple("gn")),
             ("$", Weights([
-                (1, Noop),
+                (1, Original),
                 (1, Any([
-                    Simple(":D"),
-                    Simple(":DD"),
-                    Simple(":DDD"),
-                    Simple(":DDDD"),
-                    Simple(":DDDDD"),
+                    Simple(" :D"),
+                    Simple(" :DD"),
+                    Simple(" :DDD"),
+                    Simple(" :DDDD"),
+                    Simple(" :DDDDD"),
                 ])),
             ])),
         ],
@@ -32,13 +33,13 @@
             1: Extend((
                 patterns: [
                     ("$", Weights([
-                        (1, Noop),
+                        (1, Original),
                         (2, Any([
-                            Simple(":DD"),
-                            Simple(":DDD"),
-                            Simple(":DDDD"),
-                            Simple(":DDDDD"),
-                            Simple(":DDDDDD"),
+                            Simple(" :DD"),
+                            Simple(" :DDD"),
+                            Simple(" :DDDD"),
+                            Simple(" :DDDDD"),
+                            Simple(" :DDDDDD"),
                         ])),
                     ])),
                 ],
@@ -53,11 +54,11 @@
             2: Extend((
                 patterns: [
                     ("$", Any([
-                        Simple(":DDDD"),
-                        Simple(":DDDDD"),
-                        Simple(":DDDDDD"),
-                        Simple(":DDDDDDD"),
-                        Simple(":DDDDDDDD"),
+                        Simple(" :DDDD"),
+                        Simple(" :DDDDD"),
+                        Simple(" :DDDDDD"),
+                        Simple(" :DDDDDDD"),
+                        Simple(" :DDDDDDDD"),
                     ])),
                 ],
                 words: [
@@ -69,5 +70,5 @@
                 ],
             )),
         },
-    ),
+    )
 )

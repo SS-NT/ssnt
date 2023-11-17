@@ -29,7 +29,7 @@
                 ])),
             ])),
         ],
-        severities: {
+        intensities: {
             1: Extend((
                 patterns: [
                     ("$", Weights([

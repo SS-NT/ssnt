@@ -19,15 +19,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c71b1793ee61086797f5c80b6efa2b8ffa6d5dd703f118545808a7f2e27f7046"
 
 [[package]]
-name = "accents"
-version = "0.1.0"
-dependencies = [
- "pink_accents",
- "ron",
- "serde",
-]
-
-[[package]]
 name = "accesskit"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3447,9 +3438,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pink_accents"
-version = "0.0.5"
+version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6e80cfaedb0b1dce1333274ab17d5ade9e7f49332a802ce19e86dc96f5852ad"
+checksum = "65f034662e061cece617080f65b7d8e8f5416607794b0c4eb00ae1287edc014a"
 dependencies = [
  "log",
  "rand",
@@ -4051,6 +4042,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "speech"
+version = "0.1.0"
+dependencies = [
+ "pink_accents",
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "spin"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4089,7 +4089,6 @@ dependencies = [
 name = "ssnt"
 version = "0.1.0"
 dependencies = [
- "accents",
  "async-compat",
  "base64 0.13.1",
  "bevy",
@@ -4109,6 +4108,7 @@ dependencies = [
  "reqwest",
  "serde",
  "smallvec",
+ "speech",
  "tokio",
  "toml",
  "utils",

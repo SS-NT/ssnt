@@ -12,8 +12,8 @@ pub struct Accent {
 }
 
 impl Accent {
-    pub fn severities(&self) -> Vec<u64> {
-        self.rules.severities()
+    pub fn intensities(&self) -> Vec<u64> {
+        self.rules.intensities()
     }
 
     pub fn apply<'a>(&self, text: &'a str, severity: u64) -> Cow<'a, str> {

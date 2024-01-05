@@ -9,7 +9,7 @@ use crate::{
     time::ServerNetworkTime,
     variable::*,
     visibility::NetworkVisibilities,
-    NetworkManager, NetworkSet,
+    ConnectionId, NetworkManager, NetworkSet,
 };
 
 /// A message that contains data for a component.
@@ -51,25 +51,41 @@ fn send_networked_component_changed<S: NetworkedToClient + Component, C: Network
     server_time: Res<ServerNetworkTime>,
     mut sender: MessageSender,
     mut param: bevy::ecs::system::StaticSystemParam<S::Param>,
+    mut observer_cache: Local<HashSet<ConnectionId>>,
 ) {
     for (identity, mut component) in components.iter_mut() {
-        let visibility = match visibilities.visibility.get(identity) {
-            Some(v) => v,
-            None => continue,
-        };
+        let maybe_visibility = visibilities.visibility.get(identity);
+        let explicit_observers = component.limit_observers();
+        // Skip if no observer data
+        if maybe_visibility.is_none() && explicit_observers.is_none() {
+            continue;
+        }
 
         // Check if component networked state changes
-        if !component.update_state(server_time.current_tick()) {
+        if !component.is_added() && !component.update_state(server_time.current_tick()) {
+            continue;
+        }
+
+        // Get relevant observers
+        observer_cache.clear();
+        if let Some(explicit) = explicit_observers {
+            observer_cache.extend(explicit);
+        } else {
+            observer_cache.extend(maybe_visibility.unwrap().observers().copied());
+        }
+
+        // Skip if not observed
+        if observer_cache.is_empty() {
             continue;
         }
 
         let component_id = registry
             .get_id(&C::TYPE_UUID)
             .expect("Networked component incorrectly registered");
+        let priority = component.priority();
         if S::receiver_matters() {
             // Serialize component for every receiver
-            let priority = component.priority();
-            for connection in visibility.observers() {
+            for connection in observer_cache.iter() {
                 let data = match component.serialize(&mut param, Some(*connection), None) {
                     Some(d) => d,
                     None => continue,
@@ -86,21 +102,18 @@ fn send_networked_component_changed<S: NetworkedToClient + Component, C: Network
                 );
             }
         } else {
-            let new_observers: HashSet<_> = visibility.observers().copied().collect();
-            if !new_observers.is_empty() {
-                let Some(data) = component.serialize(&mut param, None, None) else {
-                    continue;
-                };
-                sender.send_with_priority(
-                    &NetworkedComponentMessage {
-                        identity: *identity,
-                        component_id,
-                        data,
-                    },
-                    MessageReceivers::Set(new_observers),
-                    component.priority(),
-                );
-            }
+            let Some(data) = component.serialize(&mut param, None, None) else {
+                continue;
+            };
+            sender.send_with_priority(
+                &NetworkedComponentMessage {
+                    identity: *identity,
+                    component_id,
+                    data,
+                },
+                MessageReceivers::Set(observer_cache.clone()),
+                priority,
+            );
         }
     }
 }

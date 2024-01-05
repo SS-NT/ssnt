@@ -1,0 +1,49 @@
+(
+    entities: {
+        0: (
+            components: {
+                "bevy_transform::components::transform::Transform": (
+                ),
+                "networking::transform::NetworkTransform": (
+                ),
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
+                    id: "models/ghost.glb#Mesh0/Primitive0"
+                ),
+                "bevy_asset::handle::Handle<bevy_pbr::pbr_material::StandardMaterial>": (
+                    id: "models/ghost.glb#Material0"
+                ),
+                "ssnt::Player": (),
+                "ssnt::body::Body": (
+                ),
+                "physics::RigidBody": (
+                    kind: Dynamic
+                ),
+                "bevy_rapier3d::dynamics::rigid_body::ReadMassProperties": (()),
+                "bevy_rapier3d::dynamics::rigid_body::Velocity": (),
+                "bevy_rapier3d::dynamics::rigid_body::LockedAxes": (
+                    bits: 56
+                ),
+                "bevy_hierarchy::components::children::Children": ([
+                    1,
+                ]),
+            }
+        ),
+        // Basic collider
+       1: (
+            components: {
+                "bevy_hierarchy::components::parent::Parent": (0),
+                "bevy_transform::components::transform::Transform": (
+                    translation: (
+                        x: 0.0,
+                        y: 0.65,
+                        z: 0.0,
+                    ),
+                ),
+                "physics::Collider": (
+                    kind: Capsule (hy: 0.5, r: 0.18),
+                    group: CharacterColliders,
+                )
+            }
+        ),
+    }
+)

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use utils::task::{Task, TaskId, TaskStatus, Tasks};
 
 use crate::{
-    body::{Hands, HandsClient},
+    body::{ClientHeldItem, Hands},
     ui::has_window,
     GameState,
 };
@@ -181,24 +181,20 @@ struct UnequipClothingMessage {
 
 fn client_clothing_ui(
     mut contexts: EguiContexts,
-    bodies: Query<(Entity, Option<&HandsClient>), With<ClientControlled>>,
+    bodies: Query<Entity, With<ClientControlled>>,
     child_query: Query<&Children>,
     clothing_holders: Query<(&NetworkIdentity, &ClothingHolder, Option<&Children>)>,
-    items: Query<Entity, With<StoredItemClient>>,
     clothing: Query<(&Clothing, &Item, &NetworkIdentity), With<StoredItemClient>>,
-    identities: Res<NetworkIdentities>,
+    held_item: ClientHeldItem,
     mut sender: MessageSender,
 ) {
-    let Ok((body_entity, hands)) = bodies.get_single() else {
+    let Ok(body_entity) = bodies.get_single() else {
         return;
     };
     let holders = child_query
         .iter_descendants(body_entity)
         .filter_map(|e| clothing_holders.get(e).ok());
-    let held_item = hands
-        .and_then(|h| identities.get_entity(h.active_hand()))
-        .and_then(|e| child_query.get(e).ok())
-        .and_then(|c| items.iter_many(c.iter()).next());
+    let held_item = held_item.get();
     let held_clothing = held_item.and_then(|item| clothing.get(item).ok());
 
     egui::Window::new("Clothing")

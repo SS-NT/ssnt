@@ -1,4 +1,7 @@
-use bevy::{prelude::*, utils::HashMap};
+use bevy::{
+    prelude::*,
+    utils::{HashMap, HashSet},
+};
 use networking::{
     identity::NetworkIdentity,
     is_server,
@@ -19,13 +22,14 @@ impl Plugin for ContainerPlugin {
             .register_type::<DisplayContainer>();
         if is_server(app) {
             app.init_resource::<Tasks<MoveItem>>()
+                .init_resource::<ContainerItems>()
                 .add_systems(
                     PreUpdate,
                     item_in_container_visibility
                         .in_set(NetworkSet::ServerVisibility)
                         .after(VisibilitySystem::GridVisibility),
                 )
-                .add_systems(Update, do_item_move);
+                .add_systems(Update, (cleanup_deleted_entities, do_item_move).chain());
         }
     }
 }
@@ -101,6 +105,13 @@ impl Container {
 #[reflect(Component)]
 pub struct DisplayContainer;
 
+/// Resource to keep track of which containers have which item
+#[derive(Resource, Default)]
+struct ContainerItems {
+    items_to_container: HashMap<Entity, Entity>,
+    containers_to_items: HashMap<Entity, HashSet<Entity>>,
+}
+
 /// An event requesting to move an item from or into a container.
 #[derive(Debug)]
 pub struct MoveItem {
@@ -127,6 +138,7 @@ fn do_item_move(
     mut tasks: ResMut<Tasks<MoveItem>>,
     mut containers: Query<&mut Container>,
     mut items: Query<(Entity, &Item, Option<&mut StoredItem>)>,
+    mut container_items: ResMut<ContainerItems>,
     global_transforms: Query<&GlobalTransform>,
     only_items: Query<&Item>,
     mut commands: Commands,
@@ -140,7 +152,15 @@ fn do_item_move(
         // Remove from old container if it exists
         if let Some(stored) = stored.as_mut() {
             let mut container = containers.get_mut(*stored.container).unwrap();
+
+            // Remove from container
             container.remove_item(item_entity);
+            if let Some(items) = container_items
+                .containers_to_items
+                .get_mut(&*stored.container)
+            {
+                items.remove(&item_entity);
+            }
         }
 
         let Some(container_entity) = data.container else {
@@ -155,6 +175,8 @@ fn do_item_move(
                 if let Ok(transform) = global_transforms.get(item_entity) {
                     entity_commands.insert(Transform::from(*transform));
                 }
+
+                container_items.items_to_container.remove(&item_entity);
             }
             return MoveItemResult { success: true };
         };
@@ -181,6 +203,15 @@ fn do_item_move(
             });
         }
 
+        container_items
+            .items_to_container
+            .insert(item_entity, container_entity);
+        container_items
+            .containers_to_items
+            .entry(container_entity)
+            .or_default()
+            .insert(item_entity);
+
         // TODO: Do all containers nest their items? Probably...
         commands
             .entity(container.attach_to.unwrap_or(container_entity))
@@ -193,6 +224,39 @@ fn do_item_move(
 
         MoveItemResult { success: true }
     });
+}
+
+fn cleanup_deleted_entities(
+    mut deleted_items: RemovedComponents<StoredItem>,
+    mut deleted_containers: RemovedComponents<Container>,
+    mut container_items: ResMut<ContainerItems>,
+    mut containers: Query<&mut Container>,
+) {
+    // Clean when item was deleted
+    for item_entity in deleted_items.iter() {
+        let Some(container_entity) = container_items.items_to_container.remove(&item_entity) else {
+            continue;
+        };
+
+        let Ok(mut container) = containers.get_mut(container_entity) else {
+            continue;
+        };
+        container.remove_item(item_entity);
+        if let Some(items) = container_items
+            .containers_to_items
+            .get_mut(&container_entity)
+        {
+            items.remove(&item_entity);
+        }
+    }
+
+    // Clean when container was deleted
+    for container_entity in deleted_containers.iter() {
+        container_items
+            .containers_to_items
+            .remove(&container_entity);
+        // TODO: Do we need to do anything to the items? I assume the container was removed using `despawn_recursive`
+    }
 }
 
 /// Influences the network visibility of items that are stored in a container.

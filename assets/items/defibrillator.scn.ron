@@ -1,0 +1,39 @@
+(
+    entities: {
+        0: (
+            components: {
+                "bevy_transform::components::transform::Transform": (
+                ),
+                "networking::transform::NetworkTransform": (
+                ),
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
+                    id: "models/items/defibrillator.glb#Mesh1/Primitive0"
+                ),
+                "ssnt::items::Item": (
+                    name: "Defibrillator"
+                ),
+                "ssnt::body::health::items::Defibrillator": (
+                ),
+                "physics::RigidBody": (
+                    kind: Dynamic
+                ),
+                "bevy_hierarchy::components::children::Children": ([1]),
+            }
+        ),
+        1: (
+            components: {
+                "bevy_hierarchy::components::parent::Parent": (0),
+                "bevy_transform::components::transform::Transform": (
+                    translation: (
+                        x: 0.0,
+                        y: 0.0,
+                        z: -0.15,
+                    ),
+                ),
+                "physics::Collider": (
+                    kind: Cuboid (hx: 0.2, hy: 0.23, hz: 0.15)
+                )
+            }
+        )
+    }
+)

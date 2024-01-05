@@ -69,6 +69,8 @@ impl Plugin for RoundPlugin {
             player_scene,
             player_model: is_client(app)
                 .then(|| app.world.resource::<AssetServer>().load("models/human.glb")),
+            ghost_model: is_client(app)
+                .then(|| app.world.resource::<AssetServer>().load("models/ghost.glb")),
         });
     }
 }
@@ -152,6 +154,8 @@ struct PlayerAssets {
     player_scene: Handle<DynamicScene>,
     #[allow(dead_code)]
     player_model: Option<Handle<Scene>>,
+    #[allow(dead_code)]
+    ghost_model: Option<Handle<Scene>>,
 }
 
 #[derive(Resource, Default)]
@@ -329,6 +333,7 @@ fn finalise_player_spawn(
                 },
                 Transform::from_translation(spawn_position),
                 crate::communication::SpeechName(name),
+                networking::transform::ClientMovement,
             ));
 
             controls.give_control(*player_id, *player_entity);

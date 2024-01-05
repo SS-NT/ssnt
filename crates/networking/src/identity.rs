@@ -83,7 +83,7 @@ impl Command for NetworkCommand {
         let mut entity = world.entity_mut(self.entity);
         entity.insert(NetworkIdentity(id));
 
-        if !entity.contains::<InGrid>() {
+        if !entity.contains::<InGrid>() && entity.contains::<Transform>() {
             entity.insert(InGrid::default());
         }
     }

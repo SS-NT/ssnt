@@ -5,8 +5,12 @@ use bevy::{
     transform::TransformSystem,
     utils::{HashMap, HashSet, Uuid},
 };
+use smallvec::SmallVec;
 
-use crate::{identity::NetworkIdentity, ConnectionId, NetworkManager, NetworkSet, Players};
+use crate::{
+    identity::NetworkIdentity, spawning::ClientControls, ConnectionId, NetworkManager, NetworkSet,
+    Players,
+};
 
 /// Allows players to observe networked objects in range
 #[derive(Component)]
@@ -329,6 +333,36 @@ fn update_visibility(mut visibilities: ResMut<NetworkVisibilities>) {
     }
 }
 
+/// Mark an entity as always being visible for certain entities.
+#[derive(Component)]
+pub struct AlwaysVisible(pub SmallVec<[Entity; 1]>);
+
+impl AlwaysVisible {
+    pub fn single(entity: Entity) -> Self {
+        Self([entity].into())
+    }
+}
+
+fn always_visible(
+    query: Query<(&AlwaysVisible, &NetworkIdentity)>,
+    mut visibilities: ResMut<NetworkVisibilities>,
+    controls: Res<ClientControls>,
+    players: Res<Players>,
+) {
+    for (always, identity) in query.iter() {
+        let visibility = visibilities.visibility.entry(*identity).or_default();
+        // For each observing entity try to add their player to observers
+        for observer in always
+            .0
+            .iter()
+            .flat_map(|entity| controls.controlling_player(*entity))
+            .flat_map(|uuid| players.get_connection(&uuid))
+        {
+            visibility.add_observer(observer);
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemSet)]
 pub enum VisibilitySystem {
     UpdateGrid,
@@ -355,6 +389,7 @@ impl Plugin for VisibilityPlugin {
                     (
                         update_visibility,
                         grid_visibility.in_set(VisibilitySystem::GridVisibility),
+                        always_visible,
                     )
                         .chain()
                         .in_set(NetworkSet::ServerVisibility),

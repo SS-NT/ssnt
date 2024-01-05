@@ -4,7 +4,7 @@ use bevy::{
     ecs::{
         entity::{EntityMapper, MapEntities},
         reflect::ReflectMapEntities,
-        system::EntityCommands,
+        system::{EntityCommands, SystemParam},
     },
     prelude::*,
     reflect::TypeUuid,
@@ -32,12 +32,13 @@ use crate::{
     },
     items::{
         containers::{Container, MoveItem},
-        Item, StoredItem,
+        Item, StoredItem, StoredItemClient,
     },
     ui::has_window,
 };
 
-mod health;
+mod ghost;
+pub mod health;
 
 pub struct BodyPlugin;
 
@@ -85,7 +86,7 @@ impl Plugin for BodyPlugin {
             );
         }
 
-        app.add_plugins(health::HealthPlugin);
+        app.add_plugins((health::HealthPlugin, ghost::GhostPlugin));
 
         app.insert_resource(BodyAssets {
             scenes: app
@@ -278,6 +279,24 @@ pub struct HandsClient {
 impl HandsClient {
     pub fn active_hand(&self) -> NetworkIdentity {
         *self.active_hand
+    }
+}
+
+/// Get the item currently held by the player with their active hand
+#[derive(SystemParam)]
+pub struct ClientHeldItem<'w, 's> {
+    client_body: Query<'w, 's, &'static HandsClient, With<ClientControlled>>,
+    child_query: Query<'w, 's, &'static Children>,
+    items: Query<'w, 's, Entity, With<StoredItemClient>>,
+    identities: Res<'w, NetworkIdentities>,
+}
+
+impl<'w, 's> ClientHeldItem<'w, 's> {
+    pub fn get(&self) -> Option<Entity> {
+        let hands = self.client_body.get_single().ok()?;
+        let active_hand = self.identities.get_entity(hands.active_hand())?;
+        let children = self.child_query.get(active_hand).ok()?;
+        self.items.iter_many(children.iter()).next()
     }
 }
 

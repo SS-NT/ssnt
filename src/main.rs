@@ -138,7 +138,6 @@ fn main() {
                 networking_plugin,
                 camera::CameraPlugin,
                 EguiPlugin,
-                ui::UiPlugin,
                 debug::DebugPlugin,
             ))
             .insert_resource(ClearColor(Color::rgb(
@@ -169,6 +168,7 @@ fn main() {
         combat::CombatPlugin,
         communication::CommunicationPlugin,
     ))
+    .add_plugins((ui::UiPlugin,))
     .insert_resource(args)
     .add_systems(Startup, setup_shared)
     .run();

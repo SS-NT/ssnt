@@ -20,7 +20,7 @@ use crate::{
     ui::has_window,
 };
 
-use super::{OrganicBody, OrganicHeart, MAX_BLOOD_OXYGEN};
+use super::{OrganicBody, OrganicBodyPart, OrganicBrain, OrganicHeart, MAX_BLOOD_OXYGEN};
 
 pub struct HealthScannerPlugin;
 
@@ -73,6 +73,7 @@ struct Vitals {
     oxygen_in_blood: f32,
     oxygen_capacity: f32,
     max_oxygen_capacity: f32,
+    brain_integrity: Option<f32>,
 }
 
 fn collect_vitals(
@@ -80,6 +81,7 @@ fn collect_vitals(
     identities: Res<NetworkIdentities>,
     bodies: Query<(&Body, &OrganicBody)>,
     hearts: Query<&OrganicHeart>,
+    brains: Query<(&OrganicBrain, Option<&OrganicBodyPart>)>,
     time: Res<Time>,
 ) {
     for mut scanner in scanners.iter_mut() {
@@ -106,6 +108,12 @@ fn collect_vitals(
             .next()
             .map(|heart| heart.heart_rate)
             .unwrap_or_default();
+
+        let brain_integrity = brains
+            .iter_many(&body.limbs)
+            .next()
+            .map(|(_, part)| part.map(|p| p.integrity).unwrap_or(1.0));
+
         let vitals = Vitals {
             blood: organic_body.blood,
             blood_capacity: organic_body.blood_capacity,
@@ -113,6 +121,7 @@ fn collect_vitals(
             bpm,
             oxygen_capacity: organic_body.oxygen_capacity(),
             max_oxygen_capacity: organic_body.blood_capacity * MAX_BLOOD_OXYGEN,
+            brain_integrity,
         };
         *scanner.vitals = Some(vitals);
     }
@@ -168,6 +177,11 @@ fn health_scanner_ui(
                             vitals.oxygen_in_blood,
                             vitals.max_oxygen_capacity
                         ));
+                        if let Some(integrity) = vitals.brain_integrity {
+                            ui.label(format!("Brain integrity: {:.0}%", integrity * 100.0,));
+                        } else {
+                            ui.label("Brain integrity: N/A");
+                        }
                     } else {
                         ui.label("No vitals available");
                     }

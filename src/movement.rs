@@ -1,15 +1,20 @@
 use std::time::Duration;
 
 use crate::{
+    body::{
+        health::{BrainState, BrainStateEvent},
+        Body,
+    },
     camera::{MainCamera, TopDownCamera},
     combat::{ClientCombatModeStatus, CombatModeClient},
     Player,
 };
-use bevy::{math::Vec3Swizzles, prelude::*, time::common_conditions::on_timer};
+use bevy::{ecs::query::Has, math::Vec3Swizzles, prelude::*, time::common_conditions::on_timer};
 use bevy_rapier3d::prelude::{ExternalForce, ReadMassProperties, Velocity};
 use networking::{
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     spawning::{ClientControlled, ClientControls},
+    transform::{ClientMovement, ClientMovementClient},
     NetworkManager, NetworkSet, Players, ServerEvent,
 };
 use serde::{Deserialize, Serialize};
@@ -24,13 +29,22 @@ pub fn movement_system(
             &Velocity,
             Option<&mut ExternalForce>,
             &ReadMassProperties,
+            Has<ClientMovementClient>,
         ),
         With<ClientControlled>,
     >,
     camera_query: Query<&TopDownCamera, With<MainCamera>>,
     mut commands: Commands,
 ) {
-    for (entity, mut player, velocity, forces, mass_properties) in query.iter_mut() {
+    for (entity, mut player, velocity, forces, mass_properties, can_move) in query.iter_mut() {
+        // Reset force if we can't move
+        if !can_move {
+            if let Some(mut forces) = forces {
+                forces.force = Vec3::ZERO;
+            }
+            continue;
+        }
+
         let axis_x = movement_axis(&keyboard_input, KeyCode::W, KeyCode::S);
         let axis_z = movement_axis(&keyboard_input, KeyCode::D, KeyCode::A);
 
@@ -90,7 +104,10 @@ const COMBAT_ROTATION_RADIANS_PER_SECOND: f32 = 10.0;
 
 fn character_rotation_system(
     time: Res<Time>,
-    mut query: Query<(&Player, &mut Transform, Option<&CombatModeClient>), With<ClientControlled>>,
+    mut query: Query<
+        (&Player, &mut Transform, Option<&CombatModeClient>),
+        (With<ClientControlled>, With<ClientMovementClient>),
+    >,
     combat_mode: ClientCombatModeStatus,
 ) {
     let is_combat = combat_mode.is_enabled();
@@ -149,7 +166,14 @@ fn movement_axis(input: &Res<Input<KeyCode>>, plus: KeyCode, minus: KeyCode) -> 
 
 fn send_movement_update(
     // Require client control and already having a position from the server
-    query: Query<&Transform, (With<ClientControlled>, With<ForcePositionReceived>)>,
+    query: Query<
+        &Transform,
+        (
+            With<ClientControlled>,
+            With<ClientMovementClient>,
+            With<ForcePositionReceived>,
+        ),
+    >,
     mut sender: MessageSender,
 ) {
     for transform in query.iter() {
@@ -164,7 +188,7 @@ fn send_movement_update(
 }
 
 fn handle_movement_message(
-    mut query: Query<&mut Transform>,
+    mut query: Query<&mut Transform, With<ClientMovement>>,
     controls: Res<ClientControls>,
     players: Res<Players>,
     mut messages: EventReader<MessageEvent<MovementMessage>>,
@@ -203,17 +227,18 @@ fn handle_movement_message(
 fn handle_force_position_client(
     mut query: Query<Entity, (With<ClientControlled>, With<Transform>)>,
     mut messages: EventReader<MessageEvent<ForcePositionMessage>>,
-    mut current: Local<Option<(u8, ForcePositionMessage)>>,
+    mut current: Local<Option<(f32, ForcePositionMessage)>>,
+    time: Res<Time>,
     mut commands: Commands,
 ) {
     if let Some(event) = messages.iter().last() {
-        *current = Some((0, event.message.clone()));
+        *current = Some((time.raw_elapsed_seconds(), event.message.clone()));
     }
 
     if let Ok(entity) = query.get_single_mut() {
-        if let Some((count, message)) = current.as_mut() {
+        if let Some((start_time, message)) = current.as_mut() {
             // Mfw I can't be bothered to fix this properly
-            if *count >= 5 {
+            if *start_time + 0.5 <= time.raw_elapsed_seconds() {
                 *current = None;
                 return;
             }
@@ -225,8 +250,8 @@ fn handle_force_position_client(
                     rotation: message.rotation,
                     ..Default::default()
                 },
+                Velocity::default(),
             ));
-            *count += 1;
         }
     }
 }
@@ -280,10 +305,65 @@ struct ClientAuthoritativeTransform {
 }
 
 // Maintaining this movement code is getting exponentially more painful.
-fn restore_client_position(mut query: Query<(&mut Transform, &ClientAuthoritativeTransform)>) {
+fn restore_client_position(
+    mut query: Query<(&mut Transform, &ClientAuthoritativeTransform), With<ClientMovement>>,
+) {
     for (mut transform, target_transform) in query.iter_mut() {
         transform.translation = target_transform.position;
         transform.rotation = target_transform.rotation;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prevent_movement_when_unconcious(
+    mut reader: EventReader<BrainStateEvent>,
+    bodies: Query<&Body>,
+    mut transforms: Query<&mut Transform>,
+    parents: Query<&Parent>,
+    controls: Res<ClientControls>,
+    players: Res<Players>,
+    mut sender: MessageSender,
+    mut commands: Commands,
+) {
+    for event in reader.iter() {
+        let Some(body_entity) = parents
+            .iter_ancestors(event.brain)
+            .find(|e| bodies.contains(*e))
+        else {
+            continue;
+        };
+        let Ok(mut transform) = transforms.get_mut(body_entity) else {
+            continue;
+        };
+        let mut entity = commands.entity(body_entity);
+        match event.new_state {
+            BrainState::Conscious => {
+                entity.insert((
+                    ClientMovement,
+                    bevy_rapier3d::prelude::LockedAxes::ROTATION_LOCKED_X
+                        | bevy_rapier3d::prelude::LockedAxes::ROTATION_LOCKED_Z,
+                ));
+                transform.rotation = Quat::IDENTITY;
+
+                // Force position on client
+                if let Some(uuid) = controls.controlling_player(body_entity) {
+                    if let Some(connection) = players.get_connection(&uuid) {
+                        sender.send(
+                            &ForcePositionMessage {
+                                position: transform.translation,
+                                rotation: transform.rotation,
+                            },
+                            MessageReceivers::Single(connection),
+                        );
+                    }
+                }
+            }
+            BrainState::Unconscious | BrainState::Dead => {
+                entity
+                    .remove::<ClientMovement>()
+                    .insert(bevy_rapier3d::prelude::LockedAxes::default());
+            }
+        };
     }
 }
 
@@ -319,14 +399,21 @@ impl Plugin for MovementPlugin {
                 ),
             );
         } else {
-            app.add_systems(Update, (handle_movement_message, force_position_on_rejoin))
-                .add_systems(
-                    PostUpdate,
-                    // To prevent server physics simulation messing up the position before sending
-                    restore_client_position
-                        .after(bevy_rapier3d::plugin::PhysicsSet::Writeback)
-                        .before(NetworkSet::ServerSyncPhysics),
-                );
+            app.add_systems(
+                Update,
+                (
+                    handle_movement_message,
+                    force_position_on_rejoin,
+                    prevent_movement_when_unconcious.run_if(on_event::<BrainStateEvent>()),
+                ),
+            )
+            .add_systems(
+                PostUpdate,
+                // To prevent server physics simulation messing up the position before sending
+                restore_client_position
+                    .after(bevy_rapier3d::plugin::PhysicsSet::Writeback)
+                    .before(NetworkSet::ServerSyncPhysics),
+            );
         }
     }
 }

@@ -1,10 +1,7 @@
 use std::{sync::Mutex, time::Duration};
 
 use bevy::{
-    ecs::{query::QuerySingleError, system::SystemState},
-    prelude::*,
-    reflect::TypeUuid,
-    utils::HashMap,
+    ecs::query::QuerySingleError, prelude::*, reflect::TypeUuid, utils::HashMap,
     window::PrimaryWindow,
 };
 use bevy_egui::{egui, EguiContexts};
@@ -19,6 +16,7 @@ use networking::{
     ConnectionId, Networked, Players,
 };
 use serde::{Deserialize, Serialize};
+use utils::task::{Task, Tasks};
 
 use crate::{
     body::{Hand, Hands},
@@ -42,6 +40,7 @@ impl Plugin for InteractionPlugin {
         if is_server(app) {
             app.init_resource::<SentInteractionLists>()
                 .init_resource::<InteractionListEvents>()
+                .init_resource::<Tasks<ExecuteInteraction>>()
                 .configure_sets(
                     Update,
                     (GenerateInteractionList
@@ -62,6 +61,7 @@ impl Plugin for InteractionPlugin {
                         handle_completed_interaction_list,
                         handle_default_interaction_request_execution,
                         handle_interaction_execute_request,
+                        run_interactions,
                         clear_completed_interactions,
                     )
                         .chain(),
@@ -216,6 +216,18 @@ struct ActiveInteractionClient {
     estimate_duration: ServerVar<Option<f32>>,
 }
 
+/// Task to execute a specific interaction.
+pub struct ExecuteInteraction {
+    pub entity: Entity,
+    pub target: Entity,
+    pub interaction: Box<dyn Reflect>,
+}
+
+impl Task for ExecuteInteraction {
+    // TODO: Actual result
+    type Result = ();
+}
+
 fn begin_interaction_list(
     mut orders: EventReader<InteractionListOrder>,
     mut interaction_lists: ResMut<InteractionListEvents>,
@@ -351,15 +363,12 @@ fn handle_default_interaction_request_execution(
 }
 
 fn handle_interaction_execute_request(
-    world: &mut World,
-    state: &mut SystemState<(
-        EventReader<MessageEvent<InteractionExecuteRequest>>,
-        ResMut<SentInteractionLists>,
-    )>,
-    lookup_state: &mut SystemState<(Res<ClientControls>, Res<Players>, Res<Time>)>,
+    mut messages: EventReader<MessageEvent<InteractionExecuteRequest>>,
+    mut sent_interactions: ResMut<SentInteractionLists>,
+    controls: Res<ClientControls>,
+    players: Res<Players>,
+    mut execute: ResMut<Tasks<ExecuteInteraction>>,
 ) {
-    let (mut messages, mut sent_interactions) = state.get_mut(world);
-    let mut to_execute = Vec::default();
     for event in messages.iter() {
         let Some((_, (target, mut options))) =
             sent_interactions.map.remove_entry(&event.connection)
@@ -383,11 +392,7 @@ fn handle_interaction_execute_request(
             &option.text, target
         );
 
-        to_execute.push((event.connection, target, option));
-    }
-
-    for (connection, target, option) in to_execute.into_iter() {
-        let (controls, players, time) = lookup_state.get(world);
+        let connection = event.connection;
         let Some(player) = players.get(connection).map(|p| p.id) else {
             warn!(connection=?connection, "Received interaction execute request from connection without player data");
             continue;
@@ -397,41 +402,49 @@ fn handle_interaction_execute_request(
             continue;
         };
 
-        let started = time.elapsed_seconds();
-
-        if world
-            .entity(player_entity)
-            .get::<ActiveInteraction>()
-            .is_some()
-        {
-            // TODO: Cancel running interaction, then start new one
-            warn!(connection=?connection, player=?player, "Starting new interaction while performing one not yet supported");
-            continue;
-        }
-
-        // Add the interaction component to the players entity
-        let cloned_registry = world.resource::<AppTypeRegistry>().clone();
-        let registry = cloned_registry.read();
-        let registration = registry
-            .get_with_name(option.interaction.type_name())
-            .expect("Interaction must be registered with app.register_type::<T>()");
-        let reflect_component = registration
-            .data::<ReflectComponent>()
-            .expect("Interaction must #[reflect(Component)]");
-        reflect_component.insert(
-            &mut world.entity_mut(player_entity),
-            option.interaction.as_ref(),
-        );
-
-        // Record active interaction
-        world.entity_mut(player_entity).insert(ActiveInteraction {
-            started,
-            estimate_duration: None.into(),
+        execute.create_ignore(ExecuteInteraction {
+            entity: player_entity,
             target,
-            status: InteractionStatus::Running,
-            reflect_component: reflect_component.clone(),
+            interaction: option.interaction,
         });
     }
+}
+
+fn run_interactions(world: &mut World) {
+    let started = world.resource::<Time>().elapsed_seconds();
+
+    world.resource_scope(|world, mut tasks: Mut<Tasks<ExecuteInteraction>>| {
+        tasks.process(|task| {
+            if world.entity(task.entity).contains::<ActiveInteraction>() {
+                // TODO: Cancel running interaction, then start new one
+                warn!("Starting new interaction while performing one not yet supported");
+                return;
+            }
+
+            // Add the interaction component to the players entity
+            let cloned_registry = world.resource::<AppTypeRegistry>().clone();
+            let registry = cloned_registry.read();
+            let registration = registry
+                .get_with_name(task.interaction.type_name())
+                .expect("Interaction must be registered with app.register_type::<T>()");
+            let reflect_component = registration
+                .data::<ReflectComponent>()
+                .expect("Interaction must #[reflect(Component)]");
+            reflect_component.insert(
+                &mut world.entity_mut(task.entity),
+                task.interaction.as_ref(),
+            );
+
+            // Record active interaction
+            world.entity_mut(task.entity).insert(ActiveInteraction {
+                started,
+                estimate_duration: None.into(),
+                target: task.target,
+                status: InteractionStatus::Running,
+                reflect_component: reflect_component.clone(),
+            });
+        });
+    });
 }
 
 fn clear_completed_interactions(

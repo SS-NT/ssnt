@@ -1,0 +1,39 @@
+(
+    entities: {
+        0: (
+            components: {
+                "bevy_transform::components::transform::Transform": (
+                ),
+                "networking::transform::NetworkTransform": (
+                ),
+                "bevy_asset::handle::Handle<bevy_render::mesh::mesh::Mesh>": (
+                    id: "models/items/blood bag.glb#Mesh0/Primitive0"
+                ),
+                "ssnt::items::Item": (
+                    name: "Blood Bag"
+                ),
+                "ssnt::body::health::items::BloodTransfusion": (
+                ),
+                "physics::RigidBody": (
+                    kind: Dynamic
+                ),
+                "bevy_hierarchy::components::children::Children": ([1]),
+            }
+        ),
+        1: (
+            components: {
+                "bevy_hierarchy::components::parent::Parent": (0),
+                "bevy_transform::components::transform::Transform": (
+                    translation: (
+                        x: 0.0,
+                        y: 0.05,
+                        z: 0.0,
+                    ),
+                ),
+                "physics::Collider": (
+                    kind: Cuboid (hx: 0.11, hy: 0.06, hz: 0.17)
+                )
+            }
+        )
+    }
+)

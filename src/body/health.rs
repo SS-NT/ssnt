@@ -1,11 +1,13 @@
-use bevy::prelude::*;
+use bevy::{ecs::query::Has, prelude::*};
 use networking::is_server;
 
 use crate::combat::damage::*;
 
 use super::Body;
 
+mod items;
 mod scanner;
+mod ui;
 
 pub struct HealthPlugin;
 
@@ -17,18 +19,24 @@ impl Plugin for HealthPlugin {
             .register_type::<OrganicHeart>()
             .register_type::<OrganicBrain>();
         if is_server(app) {
-            app.add_event::<HeartBeat>().add_systems(
-                Update,
-                (
-                    (heart_beat, adjust_heart_rate).chain(),
-                    breathing,
-                    lung_gas_exchange,
-                    receive_damage,
-                    brain_live,
-                ),
-            );
+            app.add_event::<HeartBeat>()
+                .add_event::<BrainStateEvent>()
+                .add_systems(
+                    Update,
+                    (
+                        (heart_beat, adjust_heart_rate).chain(),
+                        breathing,
+                        lung_gas_exchange,
+                        receive_damage,
+                        brain_live,
+                    ),
+                );
         }
-        app.add_plugins(scanner::HealthScannerPlugin);
+        app.add_plugins((
+            scanner::HealthScannerPlugin,
+            items::HealthItemsPlugin,
+            ui::HealthUiPlugin,
+        ));
     }
 }
 
@@ -83,6 +91,9 @@ struct OrganicBodyPart {
     /// How much oxygen this body part can retain.
     /// `oxygen_consumed` will max out at this value.
     oxygen_capacity: f32,
+    /// How damaged the body part is.
+    /// 1 is fully capable, 0 is unusable
+    integrity: f32,
 }
 
 impl FromWorld for OrganicBodyPart {
@@ -90,6 +101,7 @@ impl FromWorld for OrganicBodyPart {
         Self {
             oxygen_consumed: 0.0,
             oxygen_capacity: 0.0015,
+            integrity: 1.0,
         }
     }
 }
@@ -113,6 +125,14 @@ impl OrganicBodyPart {
         let consumed = amount.min(self.oxygen_consumed);
         self.oxygen_consumed -= consumed;
         consumed
+    }
+
+    fn damage(&mut self, amount: f32) {
+        self.integrity = (self.integrity - amount).max(0.0)
+    }
+
+    fn unusable(&self) -> bool {
+        self.integrity <= 0.01
     }
 }
 
@@ -211,13 +231,26 @@ impl OrganicBrain {
     }
 }
 
+#[derive(Event)]
+pub struct BrainStateEvent {
+    pub brain: Entity,
+    pub new_state: BrainState,
+}
+
+#[derive(PartialEq, Eq)]
+pub enum BrainState {
+    Conscious,
+    Unconscious,
+    Dead,
+}
+
 fn adjust_heart_rate(
     mut hearts: Query<(Entity, &mut OrganicHeart, Option<&OrganicBodyPart>)>,
     bodies: Query<&Body>,
-    body_parts: Query<&OrganicBodyPart>,
+    body_parts: Query<(&OrganicBodyPart, Has<OrganicBrain>)>,
     parents: Query<&Parent>,
 ) {
-    for (heart_entity, mut heart, heart_part) in hearts.iter_mut() {
+    'outer: for (heart_entity, mut heart, heart_part) in hearts.iter_mut() {
         // Do not adjust heart rate if in cardiac arrest
         if heart.heart_rate == 0 {
             continue;
@@ -234,9 +267,15 @@ fn adjust_heart_rate(
         let mut average_oxygen = 0.0;
         let mut average_count = 0;
         let mut iter = body_parts.iter_many(&body.limbs);
-        while let Some(part) = iter.fetch_next() {
+        while let Some((part, is_brain)) = iter.fetch_next() {
             average_count += 1;
             average_oxygen += part.oxygen_saturation();
+
+            // No heart beat if braindead
+            if is_brain && part.unusable() {
+                heart.heart_rate = 0;
+                continue 'outer;
+            }
         }
         average_oxygen /= average_count as f32;
 
@@ -423,10 +462,16 @@ const BRAIN_CONSUMPTION: f32 = 0.00081;
 const BRAIN_UPDATE_INTERVAL: f32 = 0.2;
 
 fn brain_live(
-    mut brains: Query<(&mut OrganicBrain, Option<&mut OrganicBodyPart>)>,
+    mut brains: Query<(Entity, &mut OrganicBrain, Option<&mut OrganicBodyPart>)>,
+    mut state_events: EventWriter<BrainStateEvent>,
     time: Res<Time>,
 ) {
-    for (mut brain, part) in brains.iter_mut() {
+    for (brain_entity, mut brain, part) in brains.iter_mut() {
+        // Braindead... lol
+        if part.as_ref().map(|p| p.unusable()).unwrap_or_default() {
+            continue;
+        }
+        // Not time to think yet
         if brain.last_think + BRAIN_UPDATE_INTERVAL > time.elapsed_seconds() {
             continue;
         }
@@ -450,13 +495,26 @@ fn brain_live(
             let now_unconcious = oxygen_average < 0.2;
             if now_unconcious != brain.unconcious {
                 brain.unconcious = now_unconcious;
-                if now_unconcious {
-                    bevy::log::debug!("Fell unconcious");
-                } else {
-                    bevy::log::debug!("Awoken");
+                state_events.send(BrainStateEvent {
+                    brain: brain_entity,
+                    new_state: if now_unconcious {
+                        BrainState::Unconscious
+                    } else {
+                        BrainState::Conscious
+                    },
+                });
+            }
+
+            // Cause brain damage / brain death on low oxygen
+            if oxygen_average < 0.05 {
+                part.damage(pondering_time * 0.1);
+                if part.unusable() {
+                    state_events.send(BrainStateEvent {
+                        brain: brain_entity,
+                        new_state: BrainState::Dead,
+                    });
                 }
             }
-            // TODO: Cause brain damage / brain death
         } else {
             if brain.unconcious {
                 brain.unconcious = false;
@@ -488,6 +546,16 @@ impl LacerationSize {
             LacerationSize::Small => 0.05,
             LacerationSize::Medium => 0.20,
             LacerationSize::Large => 0.40,
+        }
+    }
+}
+
+impl std::fmt::Display for LacerationSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            LacerationSize::Small => write!(f, "Small"),
+            LacerationSize::Medium => write!(f, "Medium"),
+            LacerationSize::Large => write!(f, "Large"),
         }
     }
 }

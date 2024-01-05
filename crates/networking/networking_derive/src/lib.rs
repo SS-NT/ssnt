@@ -13,7 +13,7 @@ use syn::{
 };
 
 #[derive(Debug, FromDeriveInput)]
-#[darling(attributes(networked), supports(struct_named))]
+#[darling(attributes(networked), supports(struct_named, struct_unit))]
 struct NetworkedInput {
     ident: Ident,
     data: ast::Data<darling::util::Ignored, NetworkedFieldInput>,

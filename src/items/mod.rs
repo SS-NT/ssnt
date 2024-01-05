@@ -74,7 +74,7 @@ impl StoredItem {
 #[derive(Component, Default, Networked, TypeUuid)]
 #[uuid = "7a30823e-ab38-4bca-ba3a-4bab1328d2df"]
 #[networked(server = "StoredItem")]
-struct StoredItemClient {
+pub struct StoredItemClient {
     container: ServerVar<NetworkIdentity>,
     visible: ServerVar<bool>,
 }

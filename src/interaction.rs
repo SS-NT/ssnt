@@ -177,7 +177,9 @@ pub enum InteractionStatus {
 pub enum InteractionSpecificity {
     /// The interaction is available on a limited set of specific objects.
     Specific,
-    // The interaction is available on many objects.
+    // The interaction is available on a class of objects.
+    Common,
+    // The interaction is available on most objects.
     Generic,
 }
 

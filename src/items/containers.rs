@@ -14,6 +14,8 @@ use utils::task::{Task, Tasks};
 
 use super::{Item, StoredItem};
 
+mod ui;
+
 pub struct ContainerPlugin;
 
 impl Plugin for ContainerPlugin {
@@ -31,6 +33,8 @@ impl Plugin for ContainerPlugin {
                 )
                 .add_systems(Update, (cleanup_deleted_entities, do_item_move).chain());
         }
+
+        app.add_plugins(ui::ContainerUiPlugin);
     }
 }
 
@@ -82,17 +86,36 @@ impl Container {
         for (&other_position, &entity) in self.items.iter() {
             let other_item = items_query.get(entity).unwrap();
 
-            let x_overlap = (position.x as i32 - other_position.x as i32).unsigned_abs() * 2
-                < item.size.x + other_item.size.x;
-            let y_overlap = (position.y as i32 - other_position.y as i32).unsigned_abs() * 2
-                < item.size.y + other_item.size.y;
-
+            let x_overlap = (other_position.x..(other_position.x + other_item.size.x))
+                .contains(&position.x)
+                || (position.x..(position.x + item.size.x)).contains(&other_position.x);
+            let y_overlap = (other_position.y..(other_position.y + other_item.size.y))
+                .contains(&position.y)
+                || (position.y..(position.y + item.size.y)).contains(&other_position.y);
             if x_overlap && y_overlap {
                 return false;
             }
         }
 
         true
+    }
+
+    fn find_space(&self, items_query: &Query<&Item>, item: &Item) -> Option<UVec2> {
+        let mut current = UVec2::ZERO;
+        while current.x < self.size.x && current.y < self.size.y {
+            // TODO: This is very inefficient <3
+            if self.can_fit(items_query, item, current) {
+                return Some(current);
+            }
+
+            current += UVec2::X;
+            if current.x >= self.size.x {
+                current.x = 0;
+                current.y += 1;
+            }
+        }
+
+        None
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&UVec2, &Entity)> {
@@ -149,6 +172,11 @@ fn do_item_move(
             return MoveItemResult { success: false };
         };
 
+        if data.container == Some(data.item) {
+            error!(task = ?data, "Tried to store a container inside itself");
+            return MoveItemResult { success: false };
+        }
+
         // Remove from old container if it exists
         if let Some(stored) = stored.as_mut() {
             let mut container = containers.get_mut(*stored.container).unwrap();
@@ -186,7 +214,9 @@ fn do_item_move(
             return MoveItemResult { success: false };
         };
 
-        let position = data.position.expect("Automatic position not supported yet");
+        let position = data
+            .position
+            .unwrap_or_else(|| container.find_space(&only_items, item).unwrap_or_default());
         if !container.can_fit(&only_items, item, position) {
             warn!(task = ?data, "Failed to move item because it does not fit in the container");
             return MoveItemResult { success: false };
@@ -195,10 +225,12 @@ fn do_item_move(
         container.insert_item_unchecked(data.item, position);
         if let Some(stored) = stored.as_mut() {
             *stored.container = container_entity;
+            *stored.slot = position;
             *stored.visible = container.items_visible;
         } else {
             commands.entity(data.item).insert(StoredItem {
                 container: container_entity.into(),
+                slot: position.into(),
                 visible: container.items_visible.into(),
             });
         }

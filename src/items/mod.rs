@@ -56,6 +56,7 @@ pub struct StoredItem {
         with = "Self::network_container(Res<'static, NetworkIdentities>) -> NetworkIdentity"
     )]
     container: NetworkVar<Entity>,
+    slot: NetworkVar<UVec2>,
     visible: NetworkVar<bool>,
 }
 
@@ -76,6 +77,7 @@ impl StoredItem {
 #[networked(server = "StoredItem")]
 pub struct StoredItemClient {
     container: ServerVar<NetworkIdentity>,
+    slot: ServerVar<UVec2>,
     visible: ServerVar<bool>,
 }
 

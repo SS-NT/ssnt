@@ -16,7 +16,7 @@
                     clothing_type: "back",
                 ),
                 "ssnt::items::containers::Container": (
-                    size: (x: 10, y: 10),
+                    size: (x: 6, y: 5),
                 ),
                 "physics::RigidBody": (
                     kind: Dynamic

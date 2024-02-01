@@ -10,7 +10,8 @@
                     id: "models/items/enforcer.glb#Mesh0/Primitive0"
                 ),
                 "ssnt::items::Item": (
-                    name: "Enforcer Handgun"
+                    name: "Enforcer Handgun",
+                    size: (x: 3, y: 2),
                 ),
                 "ssnt::combat::ranged::Gun": (
                 ),

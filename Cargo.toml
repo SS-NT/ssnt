@@ -10,6 +10,7 @@ members = ["crates/*"]
 
 [workspace.dependencies]
 bevy = { version = "0.11", default-features = false, features = ["bevy_asset", "bevy_scene", "bevy_pbr", "bevy_gltf", "bevy_sprite", "bevy_text", "bevy_render", "bevy_core_pipeline", "bevy_ui", "multi-threaded", "png", "hdr", "ktx2", "zstd", "filesystem_watcher", "bevy_gizmos", "tonemapping_luts", "default_font", "webgl2"] }
+bevy_common_assets = { version = "0.7.0", features = ["ron"] }
 bevy_rapier3d = "0.22.0"
 
 [features]
@@ -21,12 +22,13 @@ byond = { path = "crates/byond" }
 maps = { path = "crates/maps" }
 networking = { path = "crates/networking" }
 physics = { path = "crates/physics" }
+speech = { path = "crates/speech" }
 utils = { path = "crates/utils" }
 bevy = { workspace = true }
+bevy_common_assets = { workspace = true }
 bevy_egui = "0.21.0"
 bevy-inspector-egui = "0.19.0"
 bevy_rapier3d = { workspace = true, features = ["simd-stable"] }
-bevy_common_assets = { version = "0.7.0", features = ["ron"] }
 cfg-if = "1.0.0"
 futures-lite = "1.4.0"
 log = "0.4.8"

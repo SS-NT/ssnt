@@ -163,6 +163,7 @@ fn main() {
         body::BodyPlugin,
         round::RoundPlugin,
         job::JobPlugin,
+        speech::SpeechPlugin,
         interaction::InteractionPlugin,
         construction::ConstructionPlugin,
         combat::CombatPlugin,

@@ -3,7 +3,6 @@ use bevy::{
     reflect::{TypePath, TypeUuid},
 };
 use bevy_common_assets::ron::RonAssetPlugin;
-use std::borrow::Cow;
 
 use serde::Deserialize;
 pub struct SpeechPlugin;
@@ -20,8 +19,11 @@ impl Plugin for SpeechPlugin {
 pub struct AccentDefinition {
     pub name: String,
     pub description: String,
-    #[serde(flatten)]
-    accent: sayit::Accent,
+
+    // serde(flatten) is currently broken and is likely unsolvable until this is resolved:
+    // https://github.com/serde-rs/serde/issues/1183
+    // #[serde(flatten)]
+    pub body: sayit::Accent,
 }
 
 #[derive(Resource)]
@@ -43,28 +45,11 @@ fn load_assets(mut commands: Commands, server: ResMut<AssetServer>) {
     commands.insert_resource(assets);
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Accent {
-    pub name: String,
-    pub description: String,
-    accent: sayit::Accent,
-}
-
-impl Accent {
-    pub fn intensities(&self) -> Vec<u64> {
-        self.accent.intensities()
-    }
-
-    pub fn apply<'a>(&self, text: &'a str, intensity: u64) -> Cow<'a, str> {
-        self.accent.say_it(text, intensity)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::fs;
+
+    use crate::AccentDefinition;
 
     #[test]
     fn included_accents_can_be_parsed() {
@@ -81,8 +66,9 @@ mod tests {
 
             println!("parsing {}", path.display());
 
-            let _ = ron::from_str::<Accent>(&fs::read_to_string(path).expect("reading file"))
-                .expect("parsing ron definition");
+            let _ =
+                ron::from_str::<AccentDefinition>(&fs::read_to_string(path).expect("reading file"))
+                    .expect("parsing ron definition");
         }
     }
 }

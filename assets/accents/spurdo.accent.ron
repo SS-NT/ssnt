@@ -1,86 +1,88 @@
 (
     name: "Spurdo",
     description: "Finnish accent",
-    accent: {
-        "main": (
-            rules: {
-                r"\bepic\b": {"Literal": "ebin"},
-                r"\b:?\)\b": {"Any": [
-                    {"Literal": ":D"},
-                    {"Literal": ":DD"},
-                    {"Literal": ":DDD"},
-                ]},
-                r"\Bng\b": {"Literal": "gn"},
-                "xc": {"Literal": "gg"},
-                "c": {"Literal": "g"},
-                "k": {"Literal": "g"},
-                "t": {"Literal": "d"},
-                "p": {"Literal": "b"},
-                "x": {"Literal": "gs"},
-            },
-        ),
-        "ending": (
-            rules: {
-                "$": {"Weights": {
-                    1: {"Original": ()},
-                    1: {"Any": [
-                        {"Literal": " :D"},
-                        {"Literal": " :DD"},
-                        {"Literal": " :DDD"},
-                        {"Literal": " :DDDD"},
-                        {"Literal": " :DDDDD"},
-                    ]},
-                }},
-            },
-        ),
-    },
-    intensities: {
-        1: Extend({
+    body: (
+        accent: {
             "main": (
                 rules: {
+                    r"\bepic\b": {"Literal": "ebin"},
                     r"\b:?\)\b": {"Any": [
+                        {"Literal": ":D"},
                         {"Literal": ":DD"},
                         {"Literal": ":DDD"},
-                        {"Literal": ":DDDD"},
                     ]},
+                    r"\Bng\b": {"Literal": "gn"},
+                    "xc": {"Literal": "gg"},
+                    "c": {"Literal": "g"},
+                    "k": {"Literal": "g"},
+                    "t": {"Literal": "d"},
+                    "p": {"Literal": "b"},
+                    "x": {"Literal": "gs"},
                 },
             ),
             "ending": (
                 rules: {
                     "$": {"Weights": {
                         1: {"Original": ()},
-                        2: {"Any": [
+                        1: {"Any": [
+                            {"Literal": " :D"},
                             {"Literal": " :DD"},
                             {"Literal": " :DDD"},
                             {"Literal": " :DDDD"},
                             {"Literal": " :DDDDD"},
-                            {"Literal": " :DDDDDD"},
                         ]},
                     }},
                 },
             ),
-        }),
-        2: Extend({
-            "main": (
-                rules: {
-                    r"\b:?\)\b": {"Any": [
-                        {"Literal": ":DDDD"},
-                        {"Literal": ":DDDDD"},
-                        {"Literal": ":DDDDDD"},
-                    ]},
-                },
-            ),
-            "ending": (
-                rules: {
-                    "$": {"Any": [
-                        {"Literal": " :DDDD"},
-                        {"Literal": " :DDDDD"},
-                        {"Literal": " :DDDDDD"},
-                        {"Literal": " :DDDDDDD"},
-                        {"Literal": " :DDDDDDDD"},
-                    ]},
-                },
-            ),
-        }),
-    },
+        },
+        intensities: {
+            1: Extend({
+                "main": (
+                    rules: {
+                        r"\b:?\)\b": {"Any": [
+                            {"Literal": ":DD"},
+                            {"Literal": ":DDD"},
+                            {"Literal": ":DDDD"},
+                        ]},
+                    },
+                ),
+                "ending": (
+                    rules: {
+                        "$": {"Weights": {
+                            1: {"Original": ()},
+                            2: {"Any": [
+                                {"Literal": " :DD"},
+                                {"Literal": " :DDD"},
+                                {"Literal": " :DDDD"},
+                                {"Literal": " :DDDDD"},
+                                {"Literal": " :DDDDDD"},
+                            ]},
+                        }},
+                    },
+                ),
+            }),
+            2: Extend({
+                "main": (
+                    rules: {
+                        r"\b:?\)\b": {"Any": [
+                            {"Literal": ":DDDD"},
+                            {"Literal": ":DDDDD"},
+                            {"Literal": ":DDDDDD"},
+                        ]},
+                    },
+                ),
+                "ending": (
+                    rules: {
+                        "$": {"Any": [
+                            {"Literal": " :DDDD"},
+                            {"Literal": " :DDDDD"},
+                            {"Literal": " :DDDDDD"},
+                            {"Literal": " :DDDDDDD"},
+                            {"Literal": " :DDDDDDDD"},
+                        ]},
+                    },
+                ),
+            }),
+        },
+    ),
 )

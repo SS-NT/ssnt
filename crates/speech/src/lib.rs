@@ -20,6 +20,7 @@ impl Plugin for SpeechPlugin {
 pub struct AccentDefinition {
     pub name: String,
     pub description: String,
+    #[serde(flatten)]
     accent: sayit::Accent,
 }
 

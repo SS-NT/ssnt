@@ -1,0 +1,2 @@
+# Ron language is not supported by github
+*.ron     linguist-language=Rust

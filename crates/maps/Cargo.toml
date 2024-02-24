@@ -9,6 +9,6 @@ edition = "2021"
 networking = { path = "../networking" }
 bevy = { workspace = true }
 bevy_rapier3d = { workspace = true }
-serde = { version = "*", features = ["derive"] }
+serde = { workspace = true }
 enum-map = "2.4.1"
 arrayvec = "0.7.2"

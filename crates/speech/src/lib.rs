@@ -5,6 +5,7 @@ use bevy::{
 use bevy_common_assets::ron::RonAssetPlugin;
 
 use serde::Deserialize;
+
 pub struct SpeechPlugin;
 
 impl Plugin for SpeechPlugin {

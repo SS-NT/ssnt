@@ -12,36 +12,37 @@ members = ["crates/*"]
 bevy = { version = "0.11", default-features = false, features = ["bevy_asset", "bevy_scene", "bevy_pbr", "bevy_gltf", "bevy_sprite", "bevy_text", "bevy_render", "bevy_core_pipeline", "bevy_ui", "multi-threaded", "png", "hdr", "ktx2", "zstd", "filesystem_watcher", "bevy_gizmos", "tonemapping_luts", "default_font", "webgl2"] }
 bevy_common_assets = { version = "0.7.0", features = ["ron"] }
 bevy_rapier3d = "0.22.0"
+serde = { version = "*", features = ["derive"] }
 
 [features]
 default = ["client"]
 client = ["bevy/animation", "bevy/bevy_audio", "bevy/bevy_gilrs", "bevy/bevy_winit", "bevy/x11", "bevy/vorbis"]
 
 [dependencies]
-byond = { path = "crates/byond" }
-maps = { path = "crates/maps" }
-networking = { path = "crates/networking" }
-physics = { path = "crates/physics" }
-speech = { path = "crates/speech" }
-utils = { path = "crates/utils" }
+async-compat = "0.2.1"
+base64 = "0.13.0"
 bevy = { workspace = true }
 bevy_common_assets = { workspace = true }
 bevy_egui = "0.21.0"
 bevy-inspector-egui = "0.19.0"
 bevy_rapier3d = { workspace = true, features = ["simd-stable"] }
+byond = { path = "crates/byond" }
 cfg-if = "1.0.0"
-futures-lite = "1.4.0"
-log = "0.4.8"
-glam = "0.20.2"
-serde = { version = "*", features = ["derive"] }
 clap = { version = "3.0.13", features = ["derive"] }
-toml = "0.5.9"
+futures-lite = "1.4.0"
+glam = "0.20.2"
+log = "0.4.8"
+maps = { path = "crates/maps" }
+networking = { path = "crates/networking" }
+physics = { path = "crates/physics" }
 reqwest =  { version = "0.11.12", default-features = false, features = ["json", "rustls-tls"] }
-async-compat = "0.2.1"
-tokio = { version = "1.21.2", features = ["time"] }
 # Remove when https://github.com/bevyengine/bevy/pull/6578 is merged
+serde = { workspace = true }
 smallvec = "*"
-base64 = "0.13.0"
+speech = { path = "crates/speech" }
+tokio = { version = "1.21.2", features = ["time"] }
+toml = "0.5.9"
+utils = { path = "crates/utils" }
 
 [patch.crates-io]
 bevy = { git = "https://github.com/Alainx277/bevy", branch = "ssnt" }

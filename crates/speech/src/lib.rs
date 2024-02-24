@@ -67,9 +67,10 @@ mod tests {
 
             println!("parsing {}", path.display());
 
-            let _ =
-                ron::from_str::<AccentDefinition>(&fs::read_to_string(path).expect("reading file"))
-                    .expect("parsing ron definition");
+            assert!(ron::from_str::<AccentDefinition>(
+                &fs::read_to_string(path).expect("reading file")
+            )
+            .is_ok());
         }
     }
 }

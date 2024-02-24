@@ -306,16 +306,19 @@ fn client_chat_box(
             ui.separator();
             ui.horizontal_wrapped(|ui| {
                 for (handle_id, accent) in accent_data.iter() {
-                    let mut has_accent = data.selected_accents.contains(&handle_id);
+                    let has_accent = data.selected_accents.contains(&handle_id);
+                    let mut button_active = has_accent;
 
-                    let mut response = ui.toggle_value(&mut has_accent, &accent.name);
+                    let mut response = ui.toggle_value(&mut button_active, &accent.name);
                     if response.clicked() {
                         if has_accent {
+                            if let Some(index) =
+                                data.selected_accents.iter().position(|i| *i == handle_id)
+                            {
+                                data.selected_accents.remove(index);
+                            }
+                        } else {
                             data.selected_accents.push(handle_id);
-                        } else if let Some(index) =
-                            data.selected_accents.iter().position(|i| *i == handle_id)
-                        {
-                            data.selected_accents.remove(index);
                         }
                         response.mark_changed();
                     }

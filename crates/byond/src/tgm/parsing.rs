@@ -152,7 +152,8 @@ where
 
 /// Parses an assignment in the form of `left = right`, ignoring whitespace.
 ///
-/// ```
+/// ```ignore
+/// # // docs cant see and test `assignment` (probably because not pub)
 /// assert_eq!(assignment(tag("you"), tag("awesome"))("you= awesome"), Ok(("you= awesome", ("you", "awesome"))))
 /// ```
 fn assignment<'a, FL: 'a, FR: 'a, L, R, E: 'a + ParseError<&'a str> + ContextError<&'a str>>(

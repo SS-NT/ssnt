@@ -3864,9 +3864,9 @@ dependencies = [
 
 [[package]]
 name = "sayit"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85e5332a4fc919e7abd4f18e9f0cf3be9c7ebbeba2dd173b7f7d9f8bdb2fc898"
+checksum = "e563ce1f720e5d69a89e96e1f278d265939093de984878c77f879f08fd98b9e2"
 dependencies = [
  "dyn-clone",
  "fastrand 2.0.1",

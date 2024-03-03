@@ -1,6 +1,10 @@
-use std::ops::Range;
+use std::{borrow::Cow, ops::Range};
 
-use bevy::{prelude::*, utils::HashMap};
+use bevy::{
+    asset::{AssetPathId, HandleId},
+    prelude::*,
+    utils::HashMap,
+};
 use bevy_egui::{egui, EguiContexts};
 use networking::{
     identity::{NetworkIdentities, NetworkIdentity},
@@ -10,6 +14,7 @@ use networking::{
     Players,
 };
 use serde::{Deserialize, Serialize};
+use speech::AccentDefinition;
 
 use crate::{camera::MainCamera, ui::has_window, GameState};
 
@@ -181,6 +186,8 @@ pub struct SpeechName(pub String);
 struct SpeakMessage {
     text: String,
     kind: ChatKind,
+    // these are manually selected by user for now
+    selected_accents: Vec<(AssetPathId, u64)>,
 }
 
 /// Server message when someone said something
@@ -196,6 +203,7 @@ fn handle_speech(
     controlled: Res<ClientControls>,
     identities: Res<NetworkIdentities>,
     names: Query<AnyOf<(&SpeechName, &Name)>>,
+    accent_data: Res<Assets<AccentDefinition>>,
     mut sender: MessageSender,
 ) {
     for event in messages.iter() {
@@ -214,7 +222,22 @@ fn handle_speech(
             _ => "Unknown".to_owned(),
         };
 
-        let text = event.message.text.as_str();
+        let text = event
+            .message
+            .selected_accents
+            .iter()
+            .filter_map(|(handle_id, intensity)| {
+                accent_data
+                    .get(&accent_data.get_handle(*handle_id))
+                    .map(|accent| (accent, intensity))
+            })
+            .fold(
+                Cow::Borrowed(&event.message.text),
+                |acc, (accent, intensity)| {
+                    Cow::Owned(accent.body.say_it(&acc, *intensity).into_owned())
+                },
+            );
+        let text = text.as_ref();
 
         // TODO: Use chat kind (ex. OOC)
 
@@ -252,6 +275,8 @@ struct ClientChat {
     history: egui::text::LayoutJob,
     bubbles: HashMap<NetworkIdentity, SpeechBubble>,
     bubble_id: usize,
+    // these are manually selected by user for now
+    selected_accents: Vec<HandleId>,
 }
 
 struct SpeechBubble {
@@ -265,6 +290,7 @@ fn client_chat_box(
     mut data: ResMut<ClientChat>,
     mut keyboard: ResMut<Input<KeyCode>>,
     mut sender: MessageSender,
+    accent_data: Res<Assets<AccentDefinition>>,
 ) {
     egui::Window::new("Chat")
         .anchor(egui::Align2::RIGHT_BOTTOM, egui::Vec2::ZERO)
@@ -275,6 +301,30 @@ fn client_chat_box(
                 // This is probably expensive?
                 ui.label(data.history.clone());
             });
+
+            // accent list
+            ui.separator();
+            ui.horizontal_wrapped(|ui| {
+                for (handle_id, accent) in accent_data.iter() {
+                    let has_accent = data.selected_accents.contains(&handle_id);
+                    let mut button_active = has_accent;
+
+                    let mut response = ui.toggle_value(&mut button_active, &accent.name);
+                    if response.clicked() {
+                        if has_accent {
+                            if let Some(index) =
+                                data.selected_accents.iter().position(|i| *i == handle_id)
+                            {
+                                data.selected_accents.remove(index);
+                            }
+                        } else {
+                            data.selected_accents.push(handle_id);
+                        }
+                        response.mark_changed();
+                    }
+                }
+            });
+            ui.separator();
 
             let response = egui::TextEdit::singleline(&mut data.input_chat)
                 .hint_text("Talk")
@@ -295,6 +345,15 @@ fn client_chat_box(
                     sender.send_to_server(&SpeakMessage {
                         text: std::mem::take(&mut data.input_chat),
                         kind: ChatKind::Local,
+                        selected_accents: data
+                            .selected_accents
+                            .iter()
+                            .map(|handle| match handle {
+                                HandleId::Id(_, _) => panic!("Accent must be asset"),
+                                // accent intensity is hardcoded to 0 for now
+                                HandleId::AssetPathId(id) => (id.to_owned(), 0),
+                            })
+                            .collect(),
                     });
                 }
                 data.input_chat.clear();

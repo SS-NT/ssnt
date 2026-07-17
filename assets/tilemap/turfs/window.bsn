@@ -1,0 +1,23 @@
+bevy_transform::components::transform::Transform
+ssnt::construction::WrenchDeconstructable
+bevy_mesh::components::Mesh3d("models/tilemap/walls windows.glb#Mesh22/Primitive0")
+maps::adjacency::TilemapAdjacency {
+    category: "wall",
+    meshes: maps::adjacency::AdjacencyVariants<bevy_asset::handle::Handle<bevy_mesh::mesh::Mesh>> {
+        default: "models/tilemap/walls windows.glb#Mesh22/Primitive0",
+        o: "models/tilemap/walls windows.glb#Mesh22/Primitive0",
+        u: "models/tilemap/walls windows.glb#Mesh21/Primitive0",
+        i: "models/tilemap/walls windows.glb#Mesh18/Primitive0",
+        l: "models/tilemap/walls windows.glb#Mesh0/Primitive0",
+        t: "models/tilemap/walls windows.glb#Mesh1/Primitive0",
+        x: "models/tilemap/walls windows.glb#Mesh2/Primitive0",
+    },
+}
+bevy_ecs::hierarchy::Children [
+    bevy_transform::components::transform::Transform {
+        translation: glam::Vec3 { x: 0.0, y: 1.0, z: 0.0 },
+    }
+    physics::Collider {
+        kind: physics::ColliderType::Cuboid { hx: 0.5, hy: 1.0, hz: 0.5 },
+    },
+]

@@ -41,11 +41,11 @@ impl Plugin for HealthItemsPlugin {
 }
 
 #[derive(Component, Default, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 pub struct HealingItem;
 
 #[derive(Component, Default, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct HealOrganicLaceration {}
 
 #[derive(Component, Reflect)]
@@ -75,7 +75,7 @@ fn apply_medicine_interaction(
     for (interaction, mut active) in query.iter_mut() {
         active.set_initial_duration(Duration::from_millis(1000));
 
-        if active.start_time() + 1.0 > time.elapsed_seconds() {
+        if active.start_time() + 1.0 > time.elapsed_secs() {
             continue;
         }
 
@@ -96,7 +96,7 @@ fn apply_medicine_interaction(
         }
 
         if heal {
-            commands.entity(interaction.wound).despawn_recursive();
+            commands.entity(interaction.wound).despawn();
         }
 
         active.status = InteractionStatus::Completed;
@@ -104,7 +104,7 @@ fn apply_medicine_interaction(
 }
 
 #[derive(Component, Default, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct BloodTransfusion {}
 
 #[derive(Component, Reflect)]
@@ -117,7 +117,7 @@ struct TransfuseInteraction {
 impl FromWorld for TransfuseInteraction {
     fn from_world(_: &mut World) -> Self {
         Self {
-            item: Entity::from_raw(0),
+            item: Entity::PLACEHOLDER,
         }
     }
 }
@@ -164,20 +164,20 @@ fn transfusion_interaction(
 
         active.set_initial_duration(TRANSFUSION_DURATION);
 
-        if active.start_time() + TRANSFUSION_DURATION.as_secs_f32() > time.elapsed_seconds() {
+        if active.start_time() + TRANSFUSION_DURATION.as_secs_f32() > time.elapsed_secs() {
             continue;
         }
 
         let capacity = body.blood_capacity;
         body.set_blood(capacity);
 
-        commands.entity(interaction.item).despawn_recursive();
+        commands.entity(interaction.item).despawn();
         active.status = InteractionStatus::Completed;
     }
 }
 
 #[derive(Component, Default, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct Defibrillator {}
 
 #[derive(Component, Reflect)]
@@ -190,7 +190,7 @@ struct DefibrillateInteraction {
 impl FromWorld for DefibrillateInteraction {
     fn from_world(_: &mut World) -> Self {
         Self {
-            item: Entity::from_raw(0),
+            item: Entity::PLACEHOLDER,
         }
     }
 }
@@ -246,7 +246,7 @@ fn defibrillate_interaction(
 
         active.set_initial_duration(DEFIBRILLATE_DURATION);
 
-        if active.start_time() + DEFIBRILLATE_DURATION.as_secs_f32() > time.elapsed_seconds() {
+        if active.start_time() + DEFIBRILLATE_DURATION.as_secs_f32() > time.elapsed_secs() {
             continue;
         }
 

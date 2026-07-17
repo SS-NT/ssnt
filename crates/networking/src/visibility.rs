@@ -1,11 +1,12 @@
 use bevy::{
     math::{IVec2, Vec2, Vec3Swizzles},
+    platform::collections::{HashMap, HashSet},
     prelude::*,
     time::Time,
-    transform::TransformSystem,
-    utils::{HashMap, HashSet, Uuid},
+    transform::TransformSystems,
 };
 use smallvec::SmallVec;
+use uuid::Uuid;
 
 use crate::{
     identity::NetworkIdentity, spawning::ClientControls, ConnectionId, NetworkManager, NetworkSet,
@@ -295,7 +296,7 @@ fn grid_visibility(
         };
 
         // Update the cells the observer sees
-        let current_time = time.raw_elapsed_seconds();
+        let current_time = time.elapsed_secs();
         for position in
             grid.relevant_positions(position, UVec2::new(observer.range, observer.range))
         {
@@ -374,7 +375,7 @@ pub(crate) struct VisibilityPlugin;
 impl Plugin for VisibilityPlugin {
     fn build(&self, app: &mut App) {
         if app
-            .world
+            .world()
             .get_resource::<NetworkManager>()
             .unwrap()
             .is_server()
@@ -398,7 +399,7 @@ impl Plugin for VisibilityPlugin {
                     PostUpdate,
                     global_grid_update
                         .in_set(VisibilitySystem::UpdateGrid)
-                        .after(TransformSystem::TransformPropagate),
+                        .after(TransformSystems::Propagate),
                 );
         }
     }

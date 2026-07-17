@@ -37,15 +37,15 @@ impl TopDownCamera {
 
 pub fn top_down_camera_input_system(
     mut camera_query: Query<&mut TopDownCamera>,
-    keyboard_input: Res<Input<KeyCode>>,
-    mut mouse_wheel: EventReader<MouseWheel>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut mouse_wheel: MessageReader<MouseWheel>,
 ) {
-    let scroll_amount: f32 = mouse_wheel.iter().map(|e| e.y).sum();
+    let scroll_amount: f32 = mouse_wheel.read().map(|e| e.y).sum();
     for mut camera in camera_query.iter_mut() {
         let mut rotation = None;
-        if keyboard_input.just_pressed(KeyCode::Q) {
+        if keyboard_input.just_pressed(KeyCode::KeyQ) {
             rotation = Some(-1.0);
-        } else if keyboard_input.just_pressed(KeyCode::E) {
+        } else if keyboard_input.just_pressed(KeyCode::KeyE) {
             rotation = Some(1.0);
         }
 
@@ -66,7 +66,7 @@ pub fn top_down_camera_update_system(
     target_query: Query<&Transform, Without<TopDownCamera>>,
 ) {
     for (mut camera, mut transform) in camera_query.iter_mut() {
-        let interpolate = time.delta_seconds() * 10.0;
+        let interpolate = time.delta_secs() * 10.0;
         camera.current_angle =
             camera.current_angle * (1.0 - interpolate) + camera.target_angle * interpolate;
         camera.current_zoom =

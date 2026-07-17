@@ -1,72 +1,64 @@
-use bevy::{
-    prelude::*,
-    scene::{DynamicEntity, DynamicScene},
-};
+use bevy::{asset::AssetApp, light::NotShadowCaster, prelude::*};
 use networking::is_client;
-
-fn dyn_entity_has_component<T: Reflect>(entity: &DynamicEntity) -> bool {
-    entity.components.iter().any(|c| c.represents::<T>())
-}
-
-fn modify_loaded_scenes(
-    mut scenes: ResMut<Assets<DynamicScene>>,
-    mut events: EventReader<AssetEvent<DynamicScene>>,
-    client_assets: Option<Res<ClientSceneAssets>>,
-) {
-    for event in events.iter() {
-        if let AssetEvent::Created { handle } = event {
-            let scene = scenes.get_mut(handle).unwrap();
-
-            for dynamic_entity in &mut scene.entities {
-                // Add a global transform to all entities
-                // This will probably change at some point, so we don't add it when it's not needed
-                dynamic_entity
-                    .components
-                    .push(Box::<GlobalTransform>::default());
-
-                // Add some extra components on client
-                if let Some(assets) = client_assets.as_ref() {
-                    // Add a material if it contains a mesh and doesn't have one
-                    if dyn_entity_has_component::<Handle<Mesh>>(dynamic_entity)
-                        && !dyn_entity_has_component::<Handle<StandardMaterial>>(dynamic_entity)
-                    {
-                        dynamic_entity
-                            .components
-                            .push(Box::new(assets.default_material.clone()));
-                    }
-
-                    // Add components for visibility
-                    dynamic_entity.components.push(Box::<Visibility>::default());
-                    dynamic_entity
-                        .components
-                        .push(Box::<ComputedVisibility>::default());
-                }
-            }
-        }
-    }
-}
 
 #[derive(Resource)]
 struct ClientSceneAssets {
     default_material: Handle<StandardMaterial>,
 }
 
+fn initialize_scene_meshes(
+    mut commands: Commands,
+    new_meshes: Query<
+        (
+            Entity,
+            Has<MeshMaterial3d<StandardMaterial>>,
+            Has<Visibility>,
+        ),
+        Added<Mesh3d>,
+    >,
+    assets: Res<ClientSceneAssets>,
+) {
+    for (entity, has_material, has_visibility) in &new_meshes {
+        let mut entity = commands.entity(entity);
+        if !has_material {
+            entity.insert(MeshMaterial3d(assets.default_material.clone()));
+        }
+        if !has_visibility {
+            entity.insert(Visibility::default());
+        }
+    }
+}
+
 pub struct ScenePlugin;
 
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            modify_loaded_scenes.after(bevy::asset::update_asset_storage_system::<DynamicScene>),
-        );
+        if !app.world().contains_resource::<Assets<Mesh>>() {
+            app.init_asset::<Mesh>();
+        }
+        if !app.world().contains_resource::<Assets<StandardMaterial>>() {
+            app.init_asset::<StandardMaterial>();
+        }
+        app.register_asset_reflect::<Mesh>()
+            .register_asset_reflect::<StandardMaterial>()
+            .register_type::<Mesh3d>()
+            .register_type::<MeshMaterial3d<StandardMaterial>>()
+            .register_type::<Visibility>()
+            .register_type::<PointLight>()
+            .register_type::<NotShadowCaster>()
+            .register_type::<Transform>()
+            .register_type::<GlobalTransform>()
+            .register_type::<Vec3>()
+            .register_type::<Quat>()
+            .register_type::<UVec2>();
 
         if is_client(app) {
-            app.insert_resource(ClientSceneAssets {
-                default_material: app
-                    .world
-                    .resource::<AssetServer>()
-                    .load("models/items/wrenches.glb#Material0"),
-            });
+            let default_material = app
+                .world()
+                .resource::<AssetServer>()
+                .load("models/items/wrenches.glb#Material0/std");
+            app.insert_resource(ClientSceneAssets { default_material })
+                .add_systems(Update, initialize_scene_meshes);
         }
     }
 }

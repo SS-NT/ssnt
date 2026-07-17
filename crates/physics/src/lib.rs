@@ -24,8 +24,60 @@ impl Plugin for PhysicsPlugin {
             .register_type::<ColliderGroup>()
             .register_type::<RigidBody>()
             .register_type::<RigidBodyType>()
+            .register_type::<Frozen>()
             .register_type::<bevy_rapier3d::dynamics::ReadMassProperties>()
-            .add_systems(Update, (add_colliders, add_rigidbodies));
+            .add_systems(Update, (add_colliders, add_rigidbodies))
+            .add_systems(
+                PostUpdate,
+                guard_disabled_body_colliders
+                    .before(bevy_rapier3d::plugin::PhysicsSet::SyncBackend),
+            );
+    }
+}
+
+/// A collider that participates in solver contacts must never sit on a disabled rigid
+/// body: rapier pulls disabled bodies out of the island set, so a starting contact trips
+/// `rb.is_fixed() || active_island_id != MAX` in `step_simulation`.
+fn guard_disabled_body_colliders(
+    colliders: Query<
+        (Entity, Option<&CollisionGroups>),
+        (With<RapierCollider>, Without<ColliderDisabled>),
+    >,
+    bodies: Query<(), With<RapierRigidBody>>,
+    disabled: Query<(), With<RigidBodyDisabled>>,
+    parents: Query<&ChildOf>,
+    names: Query<&Name>,
+    mut commands: Commands,
+) {
+    let attached: CollisionGroups = ColliderGroup::AttachedLimbs.into();
+    for (collider, groups) in &colliders {
+        if groups
+            .is_some_and(|g| g.memberships == attached.memberships && g.filters == attached.filters)
+        {
+            continue;
+        }
+        // The owning body is this entity or its nearest ancestor with a rigid body.
+        let mut owner = collider;
+        let body = loop {
+            if bodies.contains(owner) {
+                break Some(owner);
+            }
+            match parents.get(owner) {
+                Ok(child_of) => owner = child_of.parent(),
+                Err(_) => break None,
+            }
+        };
+        let Some(body) = body.filter(|&b| disabled.contains(b)) else {
+            continue;
+        };
+        warn!(
+            ?collider,
+            ?body,
+            name = ?names.get(body).ok(),
+            ?groups,
+            "enabled solver collider on a disabled rigid body; disabling it to avoid the rapier island assertion"
+        );
+        commands.entity(collider).insert(ColliderDisabled);
     }
 }
 
@@ -33,14 +85,14 @@ impl Plugin for PhysicsPlugin {
 /// A collider component which can be loaded from scenes.
 /// It will be replaced by an actual physics collider once loaded.
 #[derive(Component, Reflect, Default)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct Collider {
     kind: ColliderType,
     group: ColliderGroup,
 }
 
 #[derive(Reflect, Serialize, Deserialize, Clone, Debug)]
-#[reflect_value(Serialize, Deserialize)]
+#[reflect(Serialize, Deserialize, Default)]
 enum ColliderType {
     Cuboid { hx: Real, hy: Real, hz: Real },
     Capsule { hy: Real, r: Real },
@@ -57,7 +109,7 @@ impl Default for ColliderType {
 }
 
 #[derive(Reflect, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[reflect_value(Serialize, Deserialize)]
+#[reflect(Serialize, Deserialize, Default)]
 pub enum ColliderGroup {
     #[default]
     Default,
@@ -108,23 +160,41 @@ fn add_colliders(query: Query<(Entity, &Collider), Added<Collider>>, mut command
             .remove::<Collider>()
             .insert(collider);
         let group = loaded_collider.group;
-        commands.add(move |world: &mut World| {
+        commands.queue(move |world: &mut World| {
+            // Create the collider as disabled if the owning body is disabled to avoid physics engine crashes
+            let mut owner = entity;
+            let disabled = loop {
+                let e = world.entity(owner);
+                if e.contains::<RigidBodyDisabled>() {
+                    break true;
+                }
+                if e.contains::<RapierRigidBody>() {
+                    break false;
+                }
+                match e.get::<ChildOf>() {
+                    Some(child_of) => owner = child_of.parent(),
+                    None => break false,
+                }
+            };
             let mut entity = world.entity_mut(entity);
             if !entity.contains::<CollisionGroups>() {
                 entity.insert(CollisionGroups::from(group));
+            }
+            if disabled {
+                entity.insert(ColliderDisabled);
             }
         });
     }
 }
 
 #[derive(Component, Reflect, Default)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct RigidBody {
     kind: RigidBodyType,
 }
 
 #[derive(Reflect, Serialize, Deserialize, Clone, Debug, Default)]
-#[reflect_value(Serialize, Deserialize)]
+#[reflect(Serialize, Deserialize, Default)]
 enum RigidBodyType {
     #[default]
     Dynamic,
@@ -132,10 +202,19 @@ enum RigidBodyType {
 
 fn add_rigidbodies(query: Query<(Entity, &RigidBody), Added<RigidBody>>, mut commands: Commands) {
     for (entity, loaded_rigidbody) in query.iter() {
-        let body = match loaded_rigidbody.kind {
-            RigidBodyType::Dynamic => RapierRigidBody::Dynamic,
-        };
-        commands.entity(entity).remove::<RigidBody>().insert(body);
+        let kind = loaded_rigidbody.kind.clone();
+        commands.queue(move |world: &mut World| {
+            let mut entity = world.entity_mut(entity);
+            entity.remove::<RigidBody>();
+            let body = if entity.contains::<Frozen>() {
+                RapierRigidBody::KinematicPositionBased
+            } else {
+                match kind {
+                    RigidBodyType::Dynamic => RapierRigidBody::Dynamic,
+                }
+            };
+            entity.insert(body);
+        });
     }
 }
 
@@ -147,7 +226,7 @@ pub trait PhysicsEntityCommands {
     fn unfreeze(&mut self, new_group: Option<ColliderGroup>) -> &mut Self;
 }
 
-impl<'w, 's, 'a> PhysicsEntityCommands for EntityCommands<'w, 's, 'a> {
+impl<'a> PhysicsEntityCommands for EntityCommands<'a> {
     fn enable_physics(&mut self) -> &mut Self {
         self.set_physics(true)
     }
@@ -158,7 +237,7 @@ impl<'w, 's, 'a> PhysicsEntityCommands for EntityCommands<'w, 's, 'a> {
 
     fn set_physics(&mut self, enabled: bool) -> &mut Self {
         let entity = self.id();
-        self.commands().add(SetPhysicsCommand {
+        self.commands().queue(SetPhysicsCommand {
             entity,
             enabled,
             disable_colliders: true,
@@ -169,10 +248,9 @@ impl<'w, 's, 'a> PhysicsEntityCommands for EntityCommands<'w, 's, 'a> {
 
     fn freeze(&mut self, new_group: Option<ColliderGroup>) -> &mut Self {
         let entity = self.id();
-        self.commands().add(SetPhysicsCommand {
+        self.commands().queue(FreezeCommand {
             entity,
-            enabled: false,
-            disable_colliders: false,
+            frozen: true,
             new_group,
         });
         self
@@ -180,14 +258,81 @@ impl<'w, 's, 'a> PhysicsEntityCommands for EntityCommands<'w, 's, 'a> {
 
     fn unfreeze(&mut self, new_group: Option<ColliderGroup>) -> &mut Self {
         let entity = self.id();
-        self.commands().add(SetPhysicsCommand {
+        self.commands().queue(FreezeCommand {
             entity,
-            enabled: true,
-            disable_colliders: false,
+            frozen: false,
             new_group,
         });
         self
     }
+}
+
+/// An attached, immobile body (e.g. a limb) whose collider stays live so raycasts hit it.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+pub struct Frozen;
+
+/// Freezes/unfreezes a body
+pub struct FreezeCommand {
+    pub entity: Entity,
+    pub frozen: bool,
+    pub new_group: Option<ColliderGroup>,
+}
+
+impl Command for FreezeCommand {
+    type Out = ();
+
+    fn apply(self, world: &mut World) {
+        let mut root = world.entity_mut(self.entity);
+        root.remove::<RigidBodyDisabled>();
+        if self.frozen {
+            root.insert((RapierRigidBody::KinematicPositionBased, Frozen));
+        } else {
+            root.remove::<Frozen>();
+            root.insert(RapierRigidBody::Dynamic);
+        }
+
+        let Some(group) = self.new_group else {
+            return;
+        };
+        root.insert(CollisionGroups::from(group));
+
+        for entity_id in body_colliders(world, self.entity) {
+            world
+                .entity_mut(entity_id)
+                .insert(CollisionGroups::from(group));
+        }
+    }
+}
+
+/// Colliders belonging to `root`'s own rigid body: `root` plus its descendants, without
+/// crossing into nested rigid bodies.
+fn body_colliders(world: &mut World, root: Entity) -> Vec<Entity> {
+    let mut state: SystemState<(
+        Query<&Children>,
+        Query<(), With<RapierCollider>>,
+        Query<(), Or<(With<RapierRigidBody>, With<RigidBody>)>>,
+    )> = SystemState::new(world);
+    let (children, has_collider, is_body) = state.get(world).unwrap();
+
+    let mut result = Vec::new();
+    let mut stack = vec![root];
+    while let Some(entity) = stack.pop() {
+        if has_collider.contains(entity) {
+            result.push(entity);
+        }
+        let Ok(kids) = children.get(entity) else {
+            continue;
+        };
+        for child in kids.iter() {
+            // A nested body owns the colliders below it; don't descend into it.
+            if is_body.contains(child) {
+                continue;
+            }
+            stack.push(child);
+        }
+    }
+    result
 }
 
 #[derive(Component)]
@@ -202,6 +347,8 @@ pub struct SetPhysicsCommand {
 }
 
 impl Command for SetPhysicsCommand {
+    type Out = ();
+
     fn apply(self, world: &mut World) {
         let mut root = world.entity_mut(self.entity);
 
@@ -219,22 +366,7 @@ impl Command for SetPhysicsCommand {
             root.insert(CollisionGroups::from(group));
         }
 
-        // Find colliders
-        let mut colliders = Vec::new();
-        let mut children_system_state: SystemState<(Query<&Children>,)> = SystemState::new(world);
-        let (child_query,) = children_system_state.get(world);
-        for child_entity in child_query
-            .iter_descendants(self.entity)
-            .chain(std::iter::once(self.entity))
-        {
-            let child = world.entity(child_entity);
-            if !child.contains::<RapierCollider>() {
-                continue;
-            }
-            colliders.push(child_entity);
-        }
-
-        for entity_id in colliders {
+        for entity_id in body_colliders(world, self.entity) {
             let mut entity = world.entity_mut(entity_id);
             if self.disable_colliders {
                 if self.enabled {

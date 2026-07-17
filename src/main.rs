@@ -97,6 +97,19 @@ fn main() {
                 }
             };
 
+            // The headless server has no glTF loader, so `.bsn` scenes referencing `.glb#…`
+            // mesh/material handles would never reach `LoadedWithDependencies` due to load failures.
+            // We ignore those components here.
+            app.insert_resource(bevy::scene::BsnIgnoredComponents(
+                [
+                    "bevy_mesh::components::Mesh3d".to_owned(),
+                    "bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>".to_owned(),
+                    "maps::adjacency::TilemapAdjacency".to_owned(),
+                ]
+                .into_iter()
+                .collect(),
+            ));
+
             let runner =
                 ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1f64 / SERVER_TPS as f64));
             app.add_plugins((
@@ -104,24 +117,13 @@ fn main() {
                 TransformPlugin,
                 AssetPlugin::default(),
                 LogPlugin::default(),
+                bevy::state::app::StatesPlugin,
                 ScenePlugin,
-                HierarchyPlugin,
                 networking_plugin,
             ))
-            .add_asset::<byond::tgm::TileMap>()
-            .add_asset::<Mesh>() // TODO: remove once no longer needed by rapier
-            .add_asset::<Scene>() // TODO: remove once no longer needed by rapier
-            // Register types used in scenes manually.
-            // The server will not do anything with them, but needs it so it can load scene files.
-            .register_type::<bevy::pbr::PointLight>()
-            .register_type::<bevy::pbr::CubemapVisibleEntities>()
-            .register_type::<bevy::render::primitives::CubemapFrusta>()
-            .register_type::<bevy::render::view::Visibility>()
-            .register_type::<bevy::render::view::ComputedVisibility>()
-            .register_type::<Handle<bevy::pbr::StandardMaterial>>()
-            .register_type::<bevy::pbr::NotShadowCaster>()
+            .init_asset::<byond::tgm::TileMap>()
             .register_type::<Vec<Entity>>()
-            .add_asset_loader(TgmLoader)
+            .register_asset_loader(TgmLoader)
             .add_systems(Startup, (setup_server, config::server_startup))
             .add_systems(Update, (convert_tgm_map, create_tilemap_from_converted));
         }
@@ -137,17 +139,20 @@ fn main() {
                 }),
                 networking_plugin,
                 camera::CameraPlugin,
-                EguiPlugin,
+                EguiPlugin {
+                    enable_multipass_for_primary_context: false,
+                    ..Default::default()
+                },
                 debug::DebugPlugin,
             ))
-            .insert_resource(ClearColor(Color::rgb(
+            .insert_resource(ClearColor(Color::srgb(
                 44.0 / 255.0,
                 68.0 / 255.0,
                 107.0 / 255.0,
             )))
             .add_systems(Startup, setup_client)
             .add_systems(Update, (set_camera_target, clean_entities_on_disconnect))
-            .add_state::<GameState>();
+            .init_state::<GameState>();
             #[cfg(not(feature = "client"))]
             panic!("Compiled without client support");
         }
@@ -189,7 +194,7 @@ enum GameState {
 struct KeepOnServerChange;
 
 #[derive(Component, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 pub struct Player {
     pub target_velocity: Vec2,
     pub acceleration: f32,
@@ -219,7 +224,7 @@ pub struct Map {
 fn setup_shared(mut commands: Commands) {
     // Spawn ground plane
     commands.spawn((
-        TransformBundle::from(Transform::from_xyz(0.0, -0.5, 0.0)),
+        Transform::from_xyz(0.0, -0.5, 0.0),
         Collider::cuboid(1000.0, 0.5, 1000.0),
         KeepOnServerChange,
     ));
@@ -257,11 +262,11 @@ fn setup_server(args: Res<Args>, server_config: Res<ServerConfig>, mut commands:
 fn setup_client(
     mut commands: Commands,
     args: Res<Args>,
-    mut client_events: EventWriter<ClientEvent>,
+    mut client_events: MessageWriter<ClientEvent>,
     mut state: ResMut<NextState<GameState>>,
 ) {
     // TODO: Replace with on-station lights
-    commands.insert_resource(AmbientLight {
+    commands.insert_resource(GlobalAmbientLight {
         brightness: 0.1,
         ..Default::default()
     });
@@ -269,10 +274,8 @@ fn setup_client(
     let temporary_camera_target = commands.spawn(GlobalTransform::default()).id();
 
     commands.spawn((
-        Camera3dBundle {
-            transform: Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
-            ..Default::default()
-        },
+        Camera3d::default(),
+        Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
         TopDownCamera::new(temporary_camera_target),
         camera::MainCamera,
         KeepOnServerChange,
@@ -281,7 +284,7 @@ fn setup_client(
     // Connect with IP
     if let Some(ArgCommands::Join { address, name }) = &args.command {
         state.set(GameState::MainMenu);
-        client_events.send(ClientEvent::Join(TargetServer::Raw(*address)));
+        client_events.write(ClientEvent::Join(TargetServer::Raw(*address)));
         commands.insert_resource(UserData {
             username: name.clone(),
         });
@@ -294,7 +297,7 @@ fn setup_client(
         let token_data = base64::decode(token).expect("invalid token: not valid base64");
         let mut reader = std::io::Cursor::new(token_data);
         let token = ConnectToken::read(&mut reader).expect("invalid token: not a connection token");
-        client_events.send(ClientEvent::Join(TargetServer::Token(Box::new(token))));
+        client_events.write(ClientEvent::Join(TargetServer::Token(Box::new(token))));
 
         commands.insert_resource(UserData {
             username: "Change me".to_owned(),
@@ -305,19 +308,19 @@ fn setup_client(
 #[cfg(feature = "client")]
 /// Delete all entities when leaving a server, except entities with [`KeepOnServerChange`].
 fn clean_entities_on_disconnect(
-    mut events: EventReader<ClientEvent>,
+    mut events: MessageReader<ClientEvent>,
     to_delete: Query<
         Entity,
         (
             With<Transform>,
-            Without<Parent>,
+            Without<ChildOf>,
             Without<KeepOnServerChange>,
         ),
     >,
     mut commands: Commands,
 ) {
     let has_disconnected = events
-        .iter()
+        .read()
         .any(|e| matches!(e, ClientEvent::Disconnected(_)));
     if !has_disconnected {
         return;
@@ -325,7 +328,7 @@ fn clean_entities_on_disconnect(
 
     // TODO: Optimize deletion?
     for entity in to_delete.iter() {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).despawn();
     }
 }
 
@@ -335,7 +338,7 @@ fn set_camera_target(
     mut camera: Query<&mut TopDownCamera, Without<ClientControlled>>,
 ) {
     for entity in query.iter() {
-        if let Ok(mut camera) = camera.get_single_mut() {
+        if let Ok(mut camera) = camera.single_mut() {
             camera.target = entity;
         }
     }
@@ -371,7 +374,7 @@ fn create_tilemap_from_converted(
             commands
                 .entity(entity)
                 .remove::<ConvertByondMap>()
-                .insert((map_data, SpatialBundle::default()))
+                .insert((map_data, Transform::default(), Visibility::default()))
                 .networked();
             info!("Map conversion finished and applied (entity={:?})", entity);
         }

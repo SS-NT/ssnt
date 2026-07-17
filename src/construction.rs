@@ -32,11 +32,11 @@ const DECONSTRUCT_TIME: Duration = Duration::from_secs(2);
 
 /// Marks an object as a wrench tool.
 #[derive(Component, Reflect, Default)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct Wrench;
 
 #[derive(Component, Reflect, Default)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct WrenchDeconstructable;
 
 #[derive(Component, Reflect)]
@@ -50,7 +50,7 @@ struct WrenchDeconstructInteraction {
 impl Default for WrenchDeconstructInteraction {
     fn default() -> Self {
         Self {
-            target: Entity::from_raw(0),
+            target: Entity::PLACEHOLDER,
         }
     }
 }
@@ -97,7 +97,7 @@ fn execute_deconstruct_wrench_interaction(
             continue;
         }
 
-        if active.start_time() + DECONSTRUCT_TIME.as_secs_f32() > time.elapsed_seconds() {
+        if active.start_time() + DECONSTRUCT_TIME.as_secs_f32() > time.elapsed_secs() {
             continue;
         }
 

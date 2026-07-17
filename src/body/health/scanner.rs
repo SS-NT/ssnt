@@ -1,4 +1,4 @@
-use bevy::{prelude::*, reflect::TypeUuid};
+use bevy::{prelude::*, reflect::TypePath};
 use bevy_egui::{egui, EguiContexts};
 use networking::{
     component::AppExt as ComponentExt,
@@ -45,7 +45,7 @@ impl Plugin for HealthScannerPlugin {
 }
 
 #[derive(Component, Default, Reflect, Networked)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 #[networked(client = "HealthScannerClient")]
 pub struct HealthScanner {
     #[reflect(ignore)]
@@ -56,8 +56,7 @@ pub struct HealthScanner {
     update_frequency: f32,
 }
 
-#[derive(Component, Default, TypeUuid, Networked)]
-#[uuid = "f34a6894-fecf-49d5-9f32-89b3cbf8e689"]
+#[derive(Component, Default, TypePath, Networked)]
 #[networked(server = "HealthScanner")]
 pub(crate) struct HealthScannerClient {
     target: ServerVar<Option<NetworkIdentity>>,
@@ -88,10 +87,10 @@ fn collect_vitals(
         let Some(target_id) = *scanner.target else {
             continue;
         };
-        if scanner.last_update + scanner.update_frequency > time.elapsed_seconds() {
+        if scanner.last_update + scanner.update_frequency > time.elapsed_secs() {
             continue;
         }
-        scanner.last_update = time.elapsed_seconds();
+        scanner.last_update = time.elapsed_secs();
 
         let Some(target_entity) = identities.get_entity(target_id) else {
             *scanner.vitals = None;
@@ -131,10 +130,10 @@ fn health_scanner_ui(
     mut contexts: EguiContexts,
     mut scanners: Query<(Entity, &mut HealthScannerClient)>,
     identities: Res<NetworkIdentities>,
-    mut open_messages: EventReader<MessageEvent<OpenHealthScannerMessage>>,
+    mut open_messages: MessageReader<MessageEvent<OpenHealthScannerMessage>>,
 ) {
     // Open any UIs if requested
-    for event in open_messages.iter() {
+    for event in open_messages.read() {
         let Some(scanner_entity) = identities.get_entity(event.message.scanner) else {
             bevy::log::info!("No entity found");
             continue;
@@ -155,7 +154,7 @@ fn health_scanner_ui(
         egui::Window::new("Health Scanner")
             .id(egui::Id::new(("health scanner", entity)))
             .open(&mut keep_open)
-            .show(contexts.ctx_mut(), |ui| {
+            .show(contexts.ctx_mut().unwrap(), |ui| {
                 if let Some(_target) = *scanner.target {
                     if let Some(vitals) = &*scanner.vitals {
                         ui.label(format!("BPM: {}", vitals.bpm));
@@ -207,8 +206,8 @@ struct HealthScanInteraction {
 impl FromWorld for HealthScanInteraction {
     fn from_world(_: &mut World) -> Self {
         Self {
-            viewer: Entity::from_raw(0),
-            scanner: Entity::from_raw(0),
+            viewer: Entity::PLACEHOLDER,
+            scanner: Entity::PLACEHOLDER,
         }
     }
 }

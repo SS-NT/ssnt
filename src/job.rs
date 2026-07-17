@@ -1,8 +1,8 @@
 use bevy::{
-    asset::AssetPathId,
+    asset::{Asset, LoadedFolder},
+    platform::collections::HashMap,
     prelude::*,
-    reflect::{TypePath, TypeUuid},
-    utils::HashMap,
+    reflect::TypePath,
 };
 use bevy_common_assets::ron::RonAssetPlugin;
 use maps::TileMap;
@@ -28,8 +28,7 @@ impl Plugin for JobPlugin {
     }
 }
 
-#[derive(Deserialize, TypeUuid, TypePath)]
-#[uuid = "17e73665-dcec-4791-ad92-a2fb83c82767"]
+#[derive(Asset, Deserialize, TypePath)]
 pub struct JobDefinition {
     pub id: String,
     pub name: String,
@@ -41,60 +40,56 @@ pub struct JobDefinition {
 pub struct JobAssets {
     // Used to keep definitions loaded
     #[allow(dead_code)]
-    definitions: Vec<Handle<JobDefinition>>,
+    definitions: Handle<LoadedFolder>,
 }
 
 fn load_assets(mut commands: Commands, server: ResMut<AssetServer>) {
     let assets = JobAssets {
-        definitions: server
-            .load_folder("jobs")
-            .expect("assets/jobs is missing")
-            .into_iter()
-            .map(HandleUntyped::typed)
-            .collect(),
+        definitions: server.load_folder("jobs"),
     };
     commands.insert_resource(assets);
 }
 
 #[derive(Default, Resource)]
 pub struct SelectedJobs {
-    selected: HashMap<ConnectionId, AssetPathId>,
+    selected: HashMap<ConnectionId, Handle<JobDefinition>>,
 }
 
 impl SelectedJobs {
     pub fn selected<'a>(
         &'a self,
         assets: &'a Assets<JobDefinition>,
-    ) -> impl Iterator<Item = (ConnectionId, &JobDefinition)> {
+    ) -> impl Iterator<Item = (ConnectionId, &'a JobDefinition)> {
         self.selected
             .iter()
-            .map(|(&c, &asset_id)| (c, assets.get(&assets.get_handle(asset_id))))
-            .filter_map(|(c, def)| def.map(|j| (c, j)))
+            .filter_map(|(&c, handle)| assets.get(handle).map(|j| (c, j)))
     }
 
     pub fn get<'a>(
         &'a self,
         connection: ConnectionId,
         assets: &'a Assets<JobDefinition>,
-    ) -> Option<&JobDefinition> {
+    ) -> Option<&'a JobDefinition> {
         self.selected
             .get(&connection)
-            .and_then(|id| assets.get(&assets.get_handle(*id)))
+            .and_then(|handle| assets.get(handle))
     }
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SelectJobMessage {
-    pub job: Option<AssetPathId>,
+    /// Asset path of the selected job, or `None` to deselect.
+    pub job: Option<String>,
 }
 
 fn handle_job_selection(
-    mut messages: EventReader<MessageEvent<SelectJobMessage>>,
+    mut messages: MessageReader<MessageEvent<SelectJobMessage>>,
     players: Res<Players>,
     controlled: Res<ClientControls>,
     mut resource: ResMut<SelectedJobs>,
+    asset_server: Res<AssetServer>,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let player = match players.get(event.connection) {
             Some(p) => p,
             None => continue,
@@ -103,9 +98,11 @@ fn handle_job_selection(
         if controlled.controlled_entity(player.id).is_some() {
             return;
         }
-        match event.message.job {
-            Some(job) => {
-                resource.selected.insert(event.connection, job);
+        match &event.message.job {
+            Some(path) => {
+                resource
+                    .selected
+                    .insert(event.connection, asset_server.load(path));
             }
             None => {
                 resource.selected.remove(&event.connection);

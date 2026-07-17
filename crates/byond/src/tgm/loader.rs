@@ -1,18 +1,26 @@
-use bevy::asset::{AssetLoader, LoadContext, LoadedAsset};
+use bevy::asset::{io::Reader, AssetLoader, AsyncReadExt, LoadContext};
+use bevy::reflect::TypePath;
 use utils::text::truncate;
 
 use super::{parsing, TileMap};
 
-#[derive(Default)]
+#[derive(Default, TypePath)]
 pub struct TgmLoader;
 
 impl AssetLoader for TgmLoader {
-    fn load<'a>(
-        &'a self,
-        bytes: &'a [u8],
-        load_context: &'a mut LoadContext,
-    ) -> bevy::asset::BoxedFuture<'a, Result<(), anyhow::Error>> {
-        Box::pin(async move { load_tgm(bytes, load_context).await })
+    type Asset = TileMap;
+    type Settings = ();
+    type Error = anyhow::Error;
+
+    async fn load(
+        &self,
+        reader: &mut dyn Reader,
+        _settings: &Self::Settings,
+        _load_context: &mut LoadContext<'_>,
+    ) -> Result<TileMap, anyhow::Error> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
+        load_tgm(&bytes).await
     }
 
     fn extensions(&self) -> &[&str] {
@@ -33,10 +41,7 @@ impl std::fmt::Display for TgmError {
 
 impl std::error::Error for TgmError {}
 
-async fn load_tgm<'a, 'b>(
-    bytes: &'a [u8],
-    load_context: &'a mut LoadContext<'b>,
-) -> Result<(), anyhow::Error> {
+async fn load_tgm(bytes: &[u8]) -> Result<TileMap, anyhow::Error> {
     let raw_text = std::str::from_utf8(bytes)?;
     let map_text = &raw_text[raw_text.find('\n').unwrap()..raw_text.len()];
 
@@ -82,6 +87,5 @@ async fn load_tgm<'a, 'b>(
             .collect(),
     );
 
-    load_context.set_default_asset(LoadedAsset::new(tilemap));
-    Ok(())
+    Ok(tilemap)
 }

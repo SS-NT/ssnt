@@ -1,12 +1,4 @@
-use bevy::{
-    ecs::{
-        entity::{EntityMap, MapEntities},
-        reflect::ReflectMapEntities,
-        system::Command,
-    },
-    prelude::*,
-};
-use smallvec::SmallVec;
+use bevy::{prelude::*, scene::ScenePatch};
 
 use crate::{
     identity::{NetworkCommand, NetworkIdentities, NetworkIdentity},
@@ -19,16 +11,15 @@ pub(crate) struct ScenePlugin;
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NetworkSceneSpawner>()
-            .add_event::<NetworkSceneEvent>()
+            .add_message::<NetworkSceneEvent>()
             .register_type::<NetworkedChild>()
-            .register_type::<HasNetworkedChildren>()
             .add_systems(
                 PreUpdate,
                 (
-                    apply_deferred,
-                    (queue_network_scenes, prepare_loaded_scenes),
+                    ApplyDeferred,
+                    queue_network_scenes,
                     spawn_network_scenes,
-                    apply_deferred,
+                    ApplyDeferred,
                 )
                     .chain()
                     .in_set(SpawningSet::SpawnScenes),
@@ -38,10 +29,10 @@ impl Plugin for ScenePlugin {
 
 /// A handle to a scene that can be spawned over the network.
 #[derive(Component, Default)]
-pub struct NetworkScene(pub(crate) Handle<DynamicScene>);
+pub struct NetworkScene(pub(crate) Handle<ScenePatch>);
 
-impl From<Handle<DynamicScene>> for NetworkScene {
-    fn from(handle: Handle<DynamicScene>) -> Self {
+impl From<Handle<ScenePatch>> for NetworkScene {
+    fn from(handle: Handle<ScenePatch>) -> Self {
         Self(handle)
     }
 }
@@ -51,24 +42,10 @@ impl From<Handle<DynamicScene>> for NetworkScene {
 ///
 /// Note: Do not use this for detachable children. Instead spawn them normally and nest them at runtime.
 #[derive(Component, Reflect, Default)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 pub struct NetworkedChild;
 
-#[derive(Component, Reflect, Default, Clone)]
-#[reflect(Component, MapEntities)]
-struct HasNetworkedChildren {
-    children: SmallVec<[Entity; 4]>,
-}
-
-impl MapEntities for HasNetworkedChildren {
-    fn map_entities(&mut self, entity_mapper: &mut bevy::ecs::entity::EntityMapper) {
-        for entity in &mut self.children {
-            *entity = entity_mapper.get_or_reserve(*entity);
-        }
-    }
-}
-
-#[derive(Event)]
+#[derive(Message)]
 pub enum NetworkSceneEvent {
     Created(Entity),
 }
@@ -78,52 +55,12 @@ pub enum NetworkSceneEvent {
 pub struct NetworkSceneBundle {
     pub scene: NetworkScene,
     pub transform: Transform,
-    pub global_transform: GlobalTransform,
     pub visibility: Visibility,
-    pub computed_visibility: ComputedVisibility,
 }
 
 #[derive(Resource, Default)]
 struct NetworkSceneSpawner {
-    scenes_to_spawn: Vec<(Entity, Handle<DynamicScene>)>,
-}
-
-fn prepare_loaded_scenes(
-    mut scenes: ResMut<Assets<DynamicScene>>,
-    mut events: EventReader<AssetEvent<DynamicScene>>,
-) {
-    for event in events.iter() {
-        let AssetEvent::Created { handle } = event else {
-            continue;
-        };
-        let Some(scene) = scenes.get_mut(handle) else {
-            continue;
-        };
-
-        // Find all entities with `NetworkedChild` component
-        let static_children: SmallVec<_> = scene
-            .entities
-            .iter_mut()
-            .filter(|e| {
-                e.components
-                    .iter()
-                    .any(|c| c.represents::<NetworkedChild>())
-            })
-            .map(|e| e.entity)
-            .collect();
-
-        if static_children.is_empty() {
-            continue;
-        }
-
-        let Some(root) = scene.entities.first_mut() else {
-            continue;
-        };
-
-        root.components.push(Box::new(HasNetworkedChildren {
-            children: static_children,
-        }));
-    }
+    scenes_to_spawn: Vec<(Entity, Handle<ScenePatch>)>,
 }
 
 fn queue_network_scenes(
@@ -133,7 +70,33 @@ fn queue_network_scenes(
     for (entity, network_scene) in query.iter() {
         spawner
             .scenes_to_spawn
-            .push((entity, network_scene.0.clone_weak()));
+            .push((entity, network_scene.0.clone()));
+    }
+}
+
+/// Collects all descendants of `root` marked with [`NetworkedChild`], in depth-first
+/// order. This order is deterministic for a given scene, so client and server agree.
+fn collect_networked_children(world: &World, root: Entity, out: &mut Vec<Entity>) {
+    let children: Vec<Entity> = world
+        .entity(root)
+        .get::<Children>()
+        .map(|c| c.iter().collect())
+        .unwrap_or_default();
+    for child in children {
+        // Don't descend into nested networked scenes (e.g. limbs attached at
+        // runtime). They assign their own children's identities independently,
+        // and their subtree is not part of *this* scene. Crossing the boundary
+        // would over-collect and desync client/server identity assignment,
+        // because the live world tree differs between the two (the server nests
+        // child scenes synchronously; the client re-parents them asynchronously
+        // via transform sync).
+        if world.entity(child).contains::<NetworkScene>() {
+            continue;
+        }
+        if world.entity(child).contains::<NetworkedChild>() {
+            out.push(child);
+        }
+        collect_networked_children(world, child, out);
     }
 }
 
@@ -143,73 +106,38 @@ fn spawn_network_scenes(world: &mut World) {
         if spawner.scenes_to_spawn.is_empty() {
             return;
         }
-        world.resource_scope(|world, scene_assets: Mut<Assets<DynamicScene>>| {
-            let registry = world.resource::<AppTypeRegistry>().clone();
+        world.resource_scope(|world, scene_assets: Mut<Assets<ScenePatch>>| {
             spawner.scenes_to_spawn.retain(|(entity, scene_handle)| {
                 let Some(scene) = scene_assets.get(scene_handle) else {
                     return true;
                 };
+                // Wait until the scene (and its dependencies) have been resolved.
+                if scene.resolved.is_none() {
+                    return true;
+                }
 
-                // TODO: Verify scene only has one root entity
-
-                // Preserve transform so it doesn't get overwritten
+                // Preserve the entity's transform so it isn't overwritten by the scene root.
                 let existing_transform = world.get::<Transform>(*entity).cloned();
-                // Remove existing children so we can merge them with any potentially new children later
+                // Remove existing children so we can merge them with any new scene children.
                 let existing_children = world.entity_mut(*entity).take::<Children>();
 
-                // HACK: Remove and store components that would be remapped by the scene system
-                let mut temporary_world = World::new();
-                let temporary_entity = temporary_world.spawn_empty().id();
-                let read_registry = registry.read();
-                let problematic_components = world
-                    .entity(*entity)
-                    .archetype()
-                    .components()
-                    .filter_map(|c| {
-                        world
-                            .components()
-                            .get_info(c)
-                            .and_then(|info| info.type_id())
-                    })
-                    .filter(|id| {
-                        read_registry
-                            .get(*id)
-                            .and_then(|ty| ty.data::<ReflectMapEntities>())
-                            .is_some()
-                    })
-                    .collect::<Vec<_>>();
-                for type_id in problematic_components.iter() {
-                    let registration = read_registry.get(*type_id).unwrap();
-                    let reflect_component = registration.data::<ReflectComponent>().unwrap();
-                    reflect_component.copy(world, &mut temporary_world, *entity, temporary_entity);
-                    reflect_component.remove(&mut world.entity_mut(*entity));
-                }
-                drop(read_registry);
-
-                // Make the scene entity #0 add components onto our existing entity
-                let mut entity_map = EntityMap::default();
-                entity_map.insert(Entity::from_raw(0), *entity);
-
-                if let Err(err) = scene.write_to_world(world, &mut entity_map) {
-                    warn!(entity = ?entity, "Error spawning network scene: {}", err);
-                    return false;
+                // Merge the scene's root onto the existing entity (children spawn as new entities).
+                {
+                    let mut entity_mut = world.entity_mut(*entity);
+                    if let Err(err) = scene.apply(&mut entity_mut) {
+                        warn!(entity = ?entity, "Error spawning network scene: {}", err);
+                        return false;
+                    }
                 }
 
                 if let Some(transform) = existing_transform {
                     world.entity_mut(*entity).insert(transform);
                 }
 
-                // Merge any existing children into the new children
+                // Merge any existing children back in alongside the new scene children.
                 if let Some(children) = existing_children {
-                    world.entity_mut(*entity).push_children(&children);
-                }
-
-                // Add back the problematic components
-                let read_registry = registry.read();
-                for type_id in problematic_components.iter() {
-                    let registration = read_registry.get(*type_id).unwrap();
-                    let reflect_component = registration.data::<ReflectComponent>().unwrap();
-                    reflect_component.copy(&temporary_world, world, temporary_entity, *entity);
+                    let children: Vec<Entity> = children.iter().collect();
+                    world.entity_mut(*entity).add_children(&children);
                 }
 
                 let is_server = world.resource::<NetworkManager>().is_server();
@@ -220,12 +148,12 @@ fn spawn_network_scenes(world: &mut World) {
                 }
 
                 // Handle children with network identities
-                if let Some(HasNetworkedChildren { children }) =
-                    world.entity(*entity).get::<HasNetworkedChildren>().cloned()
-                {
+                let mut networked_children = Vec::new();
+                collect_networked_children(world, *entity, &mut networked_children);
+                if !networked_children.is_empty() {
                     if is_server {
                         // Children will get sequential network ids straight after the parent
-                        for &child in children.iter() {
+                        for &child in networked_children.iter() {
                             // TODO: DONT INSERT NORMAL GRID COMPONENT AND STUFF!!
                             NetworkCommand { entity: child }.apply(world);
                         }
@@ -236,7 +164,7 @@ fn spawn_network_scenes(world: &mut World) {
                             .expect("network scene should always have a network identity");
                         // On the client we can rely on the child identities being sequential
                         let mut next_identity = parent_identity.next();
-                        for &child in children.iter() {
+                        for &child in networked_children.iter() {
                             world.entity_mut(child).insert(next_identity);
                             world
                                 .resource_mut::<NetworkIdentities>()
@@ -248,8 +176,8 @@ fn spawn_network_scenes(world: &mut World) {
 
                 // Emit scene event
                 world
-                    .resource_mut::<Events<NetworkSceneEvent>>()
-                    .send(NetworkSceneEvent::Created(*entity));
+                    .resource_mut::<Messages<NetworkSceneEvent>>()
+                    .write(NetworkSceneEvent::Created(*entity));
 
                 false
             });

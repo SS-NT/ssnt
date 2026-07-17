@@ -1,4 +1,5 @@
-use bevy::{ecs::system::StaticSystemParam, prelude::*, utils::HashSet};
+use bevy::ecs::component::Mutable;
+use bevy::{ecs::system::StaticSystemParam, platform::collections::HashSet, prelude::*};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
@@ -6,7 +7,7 @@ use crate::{
     is_server,
     messaging::{AppExt as MessageAppExt, MessageEvent, MessageReceivers, MessageSender},
     time::ServerNetworkTime,
-    variable::{self, NetworkRegistry, NetworkedFromServer, NetworkedToClient},
+    variable::{self, type_uuid, NetworkRegistry, NetworkedFromServer, NetworkedToClient},
     NetworkSet, Players, ServerEvent,
 };
 
@@ -34,17 +35,20 @@ struct NetworkedResourceMessage {
     data: Bytes,
 }
 
-fn send_networked_resource_to_new<S: NetworkedToClient + Resource, C: NetworkedFromServer>(
+fn send_networked_resource_to_new<
+    S: NetworkedToClient + Resource<Mutability = Mutable>,
+    C: NetworkedFromServer,
+>(
     resource: Res<S>,
     registry: Res<NetworkedResourceRegistry>,
     mut sender: MessageSender,
-    mut events: EventReader<ServerEvent>,
+    mut events: MessageReader<ServerEvent>,
     mut param: StaticSystemParam<S::Param>,
 ) {
     let resource_id = registry
-        .get_id(&C::TYPE_UUID)
+        .get_id(&type_uuid::<C>())
         .expect("Networked resource incorrectly registered");
-    let new_players = events.iter().filter_map(|e| match e {
+    let new_players = events.read().filter_map(|e| match e {
         ServerEvent::PlayerConnected(c) => Some(c),
         _ => None,
     });
@@ -75,7 +79,10 @@ fn send_networked_resource_to_new<S: NetworkedToClient + Resource, C: NetworkedF
     }
 }
 
-fn send_changed_networked_resource<S: NetworkedToClient + Resource, C: NetworkedFromServer>(
+fn send_changed_networked_resource<
+    S: NetworkedToClient + Resource<Mutability = Mutable>,
+    C: NetworkedFromServer,
+>(
     mut resource: ResMut<S>,
     registry: Res<NetworkedResourceRegistry>,
     players: Res<Players>,
@@ -88,7 +95,7 @@ fn send_changed_networked_resource<S: NetworkedToClient + Resource, C: Networked
     }
 
     let resource_id = registry
-        .get_id(&C::TYPE_UUID)
+        .get_id(&type_uuid::<C>())
         .expect("Networked resource incorrectly registered");
 
     if !resource.update_state(server_time.current_tick()) {
@@ -122,20 +129,20 @@ fn send_changed_networked_resource<S: NetworkedToClient + Resource, C: Networked
     }
 }
 
-fn receive_networked_resource<C: NetworkedFromServer + Resource>(
-    mut events: EventReader<MessageEvent<NetworkedResourceMessage>>,
+fn receive_networked_resource<C: NetworkedFromServer + Resource<Mutability = Mutable>>(
+    mut events: MessageReader<MessageEvent<NetworkedResourceMessage>>,
     mut resource: Option<ResMut<C>>,
     registry: Res<NetworkedResourceRegistry>,
     mut param: bevy::ecs::system::StaticSystemParam<C::Param>,
     mut commands: Commands,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         let message = &event.message;
         // Check if the message is for this resource
         let uuid = registry
             .get_uuid(message.resource_id)
             .expect("Received network message for unknown resource");
-        if uuid != &C::TYPE_UUID {
+        if uuid != &type_uuid::<C>() {
             continue;
         }
 
@@ -160,8 +167,8 @@ fn receive_networked_resource<C: NetworkedFromServer + Resource>(
 pub trait AppExt {
     fn add_networked_resource<S, C>(&mut self) -> &mut App
     where
-        S: NetworkedToClient + Resource,
-        C: NetworkedFromServer + Resource;
+        S: NetworkedToClient + Resource<Mutability = Mutable>,
+        C: NetworkedFromServer + Resource<Mutability = Mutable>;
 }
 
 impl AppExt for App {
@@ -169,12 +176,12 @@ impl AppExt for App {
     /// Changes are synced from the server resource (`S`) to the client resource (`C`).
     fn add_networked_resource<S, C>(&mut self) -> &mut App
     where
-        S: NetworkedToClient + Resource,
-        C: NetworkedFromServer + Resource,
+        S: NetworkedToClient + Resource<Mutability = Mutable>,
+        C: NetworkedFromServer + Resource<Mutability = Mutable>,
     {
         variable::assert_compatible::<S, C>();
         self.init_resource::<NetworkedResourceRegistry>();
-        let mut registry = self.world.resource_mut::<NetworkedResourceRegistry>();
+        let mut registry = self.world_mut().resource_mut::<NetworkedResourceRegistry>();
         if !registry.register::<C>() {
             panic!("Client resource was already registered");
         }

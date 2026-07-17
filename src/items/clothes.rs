@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-use bevy::{prelude::*, utils::HashMap};
+use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_egui::{egui, EguiContexts};
 use networking::{
     identity::{NetworkIdentities, NetworkIdentity},
@@ -37,9 +37,9 @@ impl Plugin for ClothingPlugin {
                 Update,
                 (
                     handle_equip_clothing_message
-                        .run_if(on_event::<MessageEvent<EquipClothingMessage>>()),
+                        .run_if(on_message::<MessageEvent<EquipClothingMessage>>),
                     handle_unequip_clothing_message
-                        .run_if(on_event::<MessageEvent<UnequipClothingMessage>>()),
+                        .run_if(on_message::<MessageEvent<UnequipClothingMessage>>),
                     process_equip_clothing.in_set(EquipClothingSystem),
                 ),
             );
@@ -55,35 +55,18 @@ impl Plugin for ClothingPlugin {
 }
 
 /// An item that can be worn.
-#[derive(Component, Reflect)]
-#[reflect(Component)]
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
 pub struct Clothing {
     clothing_type: String,
     attachment_offset: Vec3,
 }
 
-impl FromWorld for Clothing {
-    fn from_world(_: &mut World) -> Self {
-        Self {
-            clothing_type: "".into(),
-            attachment_offset: Vec3::ZERO,
-        }
-    }
-}
-
 /// A body part on which clothing can be worn.
-#[derive(Component, Reflect)]
-#[reflect(Component)]
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
 pub struct ClothingHolder {
     clothing_type: String,
-}
-
-impl FromWorld for ClothingHolder {
-    fn from_world(_: &mut World) -> Self {
-        Self {
-            clothing_type: "".into(),
-        }
-    }
 }
 
 pub struct EquipClothing {
@@ -119,6 +102,7 @@ fn process_equip_clothing(
     tasks.try_process(&mut task_state, |data, state| match state {
         EquipClothingState::Initial => {
             let Ok(clothing) = clothing.get(data.clothing) else {
+                warn!(clothing = ?data.clothing, "Equip failed: clothing item has no Clothing component (scene not applied yet?)");
                 return TaskStatus::Done(Err(()));
             };
             let slot_entity = match data.slot {
@@ -132,6 +116,17 @@ fn process_equip_clothing(
                             .ok()
                             .unwrap_or_default()
                     }) else {
+                        let available: Vec<&str> = child_query
+                            .iter_descendants(data.creature)
+                            .filter_map(|e| clothing_holders.get(e).ok())
+                            .map(|h| h.clothing_type.as_str())
+                            .collect();
+                        warn!(
+                            creature = ?data.creature,
+                            wanted = %clothing.clothing_type,
+                            ?available,
+                            "Equip failed: no matching ClothingHolder descendant of creature",
+                        );
                         return TaskStatus::Done(Err(()));
                     };
                     e
@@ -188,7 +183,7 @@ fn client_clothing_ui(
     held_item: ClientHeldItem,
     mut sender: MessageSender,
 ) {
-    let Ok(body_entity) = bodies.get_single() else {
+    let Ok(body_entity) = bodies.single() else {
         return;
     };
     let holders = child_query
@@ -200,7 +195,7 @@ fn client_clothing_ui(
     egui::Window::new("Clothing")
         .anchor(egui::Align2::LEFT_BOTTOM, egui::Vec2::ZERO)
         .resizable(false)
-        .show(contexts.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut().unwrap(), |ui| {
             for (holder_id, holder, holder_children) in holders {
                 ui.horizontal(|ui| {
                     // Check if clothing is equipped on the slot
@@ -244,13 +239,13 @@ fn client_clothing_ui(
 }
 
 fn handle_equip_clothing_message(
-    mut messages: EventReader<MessageEvent<EquipClothingMessage>>,
+    mut messages: MessageReader<MessageEvent<EquipClothingMessage>>,
     holders: Query<(&ClothingHolder, &Container)>,
     clothes: Query<&Clothing>,
     identities: Res<NetworkIdentities>,
     mut item_moves: ResMut<Tasks<MoveItem>>,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let message = &event.message;
         let Some(holder_entity) = identities.get_entity(message.body_part) else {
             continue;
@@ -287,17 +282,17 @@ fn handle_equip_clothing_message(
 }
 
 fn handle_unequip_clothing_message(
-    mut messages: EventReader<MessageEvent<UnequipClothingMessage>>,
+    mut messages: MessageReader<MessageEvent<UnequipClothingMessage>>,
     containers: Query<&Container>,
     clothes: Query<(), (With<Clothing>, With<StoredItem>)>,
-    parents: Query<&Parent>,
+    parents: Query<&ChildOf>,
     players: Res<Players>,
     controlled: Res<ClientControls>,
     identities: Res<NetworkIdentities>,
     hands: Query<&Hands>,
     mut item_moves: ResMut<Tasks<MoveItem>>,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let message = &event.message;
         let Some(clothing_entity) = identities.get_entity(message.clothing) else {
             continue;

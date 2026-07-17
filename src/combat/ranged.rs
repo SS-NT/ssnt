@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use bevy::{prelude::*, reflect::TypeUuid};
-use bevy_rapier3d::prelude::{CollisionGroups, QueryFilter, RapierContext};
+use bevy::{prelude::*, reflect::TypePath};
+use bevy_rapier3d::prelude::{CollisionGroups, QueryFilter, ReadRapierContext};
 use networking::{
     component::AppExt,
     is_server,
@@ -39,7 +39,7 @@ impl Plugin for RangedPlugin {
 
 /// A ranged weapon that shoots projectiles
 #[derive(Component, Reflect, Networked)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 #[networked(client = "GunClient")]
 struct Gun {
     time_between_shots: Duration,
@@ -58,14 +58,14 @@ impl Default for Gun {
 }
 
 fn shoot_gun(
-    mut input: EventReader<CombatInputEvent>,
+    mut input: MessageReader<CombatInputEvent>,
     mut guns: Query<&mut Gun>,
     time: Res<Time>,
-    rapier: Res<RapierContext>,
+    rapier: ReadRapierContext,
     mut commands: Commands,
     mut sender: MessageSender,
 ) {
-    for event in input.iter() {
+    for event in input.read() {
         if !event.input.primary_attack {
             continue;
         }
@@ -78,7 +78,7 @@ fn shoot_gun(
             continue;
         };
 
-        let elapsed = time.elapsed_seconds();
+        let elapsed = time.elapsed_secs();
         if *gun.next_shot_time > elapsed {
             continue;
         }
@@ -97,7 +97,11 @@ fn shoot_gun(
             physics::RAYCASTING_GROUP,
             physics::DEFAULT_GROUP | physics::LIMB_GROUP,
         ));
-        if let Some((hit_entity, toi)) = rapier.cast_ray(origin, direction, 20.0, false, filter) {
+        if let Some((hit_entity, toi)) = rapier
+            .single()
+            .unwrap()
+            .cast_ray(origin, direction, 20.0, false, filter)
+        {
             let position = origin + direction * toi;
 
             commands.spawn((
@@ -127,9 +131,8 @@ fn shoot_gun(
     }
 }
 
-#[derive(Component, Networked, TypeUuid)]
+#[derive(Component, Networked, TypePath)]
 #[networked(server = "Gun")]
-#[uuid = "aab5eca9-9ca6-4837-8496-2c4d066009d9"]
 struct GunClient {
     next_shot_time: ServerVar<f32>,
 }
@@ -151,13 +154,13 @@ struct GunShotMessage {
 const BULLET_TRACER_VISIBLE_SECONDS: f32 = 0.5;
 
 fn client_handle_gun_shot_effects(
-    mut messages: EventReader<MessageEvent<GunShotMessage>>,
+    mut messages: MessageReader<MessageEvent<GunShotMessage>>,
     mut current: Local<Vec<(f32, GunShotMessage)>>,
     time: Res<Time>,
     mut gizmos: Gizmos,
 ) {
-    let now = time.elapsed_seconds();
-    for event in messages.iter() {
+    let now = time.elapsed_secs();
+    for event in messages.read() {
         let message = event.message;
         current.push((now, message));
     }
@@ -165,6 +168,6 @@ fn client_handle_gun_shot_effects(
     current.retain(|(time, _)| now - time < BULLET_TRACER_VISIBLE_SECONDS);
 
     for (_, message) in current.iter() {
-        gizmos.line(message.origin, message.hit, Color::RED);
+        gizmos.line(message.origin, message.hit, Color::srgb(1.0, 0.0, 0.0));
     }
 }

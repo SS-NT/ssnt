@@ -1,11 +1,11 @@
 use std::{sync::Mutex, time::Duration};
 
 use bevy::{
-    ecs::query::QuerySingleError, prelude::*, reflect::TypeUuid, utils::HashMap,
+    ecs::query::QuerySingleError, platform::collections::HashMap, prelude::*, reflect::TypePath,
     window::PrimaryWindow,
 };
 use bevy_egui::{egui, EguiContexts};
-use bevy_rapier3d::prelude::RapierContext;
+use bevy_rapier3d::prelude::ReadRapierContext;
 use networking::{
     component::AppExt as ComponentAppExt,
     identity::{NetworkIdentities, NetworkIdentity},
@@ -35,7 +35,7 @@ impl Plugin for InteractionPlugin {
             .add_network_message::<InteractionExecuteRequest>()
             .add_network_message::<InteractionExecuteDefaultRequest>()
             .add_networked_component::<ActiveInteraction, ActiveInteractionClient>()
-            .add_event::<InteractionListOrder>();
+            .add_message::<InteractionListOrder>();
 
         if is_server(app) {
             app.init_resource::<SentInteractionLists>()
@@ -89,7 +89,7 @@ pub enum InteractionSystem {
 }
 
 /// Event to order the creation of an interaction list
-#[derive(Event)]
+#[derive(Message)]
 struct InteractionListOrder {
     connection: ConnectionId,
     target: NetworkIdentity,
@@ -184,7 +184,7 @@ pub enum InteractionSpecificity {
 }
 
 /// Contains information about the interaction an entity is currently executing.
-#[derive(Component, Networked)]
+#[derive(Component, TypePath, Networked)]
 #[component(storage = "SparseSet")]
 #[networked(client = "ActiveInteractionClient")]
 pub struct ActiveInteraction {
@@ -209,8 +209,7 @@ impl ActiveInteraction {
 }
 
 // TODO: Restrict networking to owning player
-#[derive(Component, Networked, TypeUuid, Default)]
-#[uuid = "6af71909-2f7e-4020-846e-2496ed1faec5"]
+#[derive(Component, Networked, TypePath, Default)]
 #[component(storage = "SparseSet")]
 #[networked(server = "ActiveInteraction")]
 struct ActiveInteractionClient {
@@ -231,7 +230,7 @@ impl Task for ExecuteInteraction {
 }
 
 fn begin_interaction_list(
-    mut orders: EventReader<InteractionListOrder>,
+    mut orders: MessageReader<InteractionListOrder>,
     mut interaction_lists: ResMut<InteractionListEvents>,
     identities: Res<NetworkIdentities>,
     players: Res<Players>,
@@ -239,7 +238,7 @@ fn begin_interaction_list(
     bodies: Query<&Hands>,
     hand_query: Query<(Entity, &Container), With<Hand>>,
 ) {
-    for event in orders.iter() {
+    for event in orders.read() {
         let connection = event.connection;
         let Some(target) = identities.get_entity(event.target) else {
             warn!(connection=?connection, "Interaction list attempted for non-existent identity {:?}", event.target);
@@ -314,11 +313,11 @@ fn handle_completed_interaction_list(
 }
 
 fn handle_interaction_list_request(
-    mut messages: EventReader<MessageEvent<InteractionListRequest>>,
-    mut orders: EventWriter<InteractionListOrder>,
+    mut messages: MessageReader<MessageEvent<InteractionListRequest>>,
+    mut orders: MessageWriter<InteractionListOrder>,
 ) {
-    for event in messages.iter() {
-        orders.send(InteractionListOrder {
+    for event in messages.read() {
+        orders.write(InteractionListOrder {
             connection: event.connection,
             target: event.message.target,
             send_to_client: true,
@@ -328,11 +327,11 @@ fn handle_interaction_list_request(
 }
 
 fn handle_default_interaction_request(
-    mut messages: EventReader<MessageEvent<InteractionExecuteDefaultRequest>>,
-    mut orders: EventWriter<InteractionListOrder>,
+    mut messages: MessageReader<MessageEvent<InteractionExecuteDefaultRequest>>,
+    mut orders: MessageWriter<InteractionListOrder>,
 ) {
-    for event in messages.iter() {
-        orders.send(InteractionListOrder {
+    for event in messages.read() {
+        orders.write(InteractionListOrder {
             connection: event.connection,
             target: event.message.target,
             send_to_client: false,
@@ -342,11 +341,11 @@ fn handle_default_interaction_request(
 }
 
 fn handle_default_interaction_request_execution(
-    mut messages: EventReader<MessageEvent<InteractionExecuteDefaultRequest>>,
+    mut messages: MessageReader<MessageEvent<InteractionExecuteDefaultRequest>>,
     lists: Res<SentInteractionLists>,
-    mut events: EventWriter<MessageEvent<InteractionExecuteRequest>>,
+    mut events: MessageWriter<MessageEvent<InteractionExecuteRequest>>,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let connection = event.connection;
         let Some((_, interactions)) = lists.map.get(&connection) else {
             continue;
@@ -357,21 +356,21 @@ fn handle_default_interaction_request_execution(
             continue;
         }
 
-        events.send(MessageEvent {
+        events.write(MessageEvent {
             message: InteractionExecuteRequest { index: 0 },
             connection,
-        })
+        });
     }
 }
 
 fn handle_interaction_execute_request(
-    mut messages: EventReader<MessageEvent<InteractionExecuteRequest>>,
+    mut messages: MessageReader<MessageEvent<InteractionExecuteRequest>>,
     mut sent_interactions: ResMut<SentInteractionLists>,
     controls: Res<ClientControls>,
     players: Res<Players>,
     mut execute: ResMut<Tasks<ExecuteInteraction>>,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let Some((_, (target, mut options))) =
             sent_interactions.map.remove_entry(&event.connection)
         else {
@@ -413,7 +412,7 @@ fn handle_interaction_execute_request(
 }
 
 fn run_interactions(world: &mut World) {
-    let started = world.resource::<Time>().elapsed_seconds();
+    let started = world.resource::<Time>().elapsed_secs();
 
     world.resource_scope(|world, mut tasks: Mut<Tasks<ExecuteInteraction>>| {
         tasks.process(|task| {
@@ -427,7 +426,7 @@ fn run_interactions(world: &mut World) {
             let cloned_registry = world.resource::<AppTypeRegistry>().clone();
             let registry = cloned_registry.read();
             let registration = registry
-                .get_with_name(task.interaction.type_name())
+                .get_with_type_path(task.interaction.reflect_type_path())
                 .expect("Interaction must be registered with app.register_type::<T>()");
             let reflect_component = registration
                 .data::<ReflectComponent>()
@@ -435,6 +434,7 @@ fn run_interactions(world: &mut World) {
             reflect_component.insert(
                 &mut world.entity_mut(task.entity),
                 task.interaction.as_ref(),
+                &registry,
             );
 
             // Record active interaction
@@ -478,12 +478,12 @@ fn clear_completed_interactions(
 
 #[allow(clippy::too_many_arguments)]
 fn client_request_interaction_list(
-    buttons: Res<Input<MouseButton>>,
+    buttons: Res<ButtonInput<MouseButton>>,
     mut contexts: EguiContexts,
-    rapier_context: Res<RapierContext>,
+    rapier_context: ReadRapierContext,
     windows: Query<(Entity, &Window), With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    parents: Query<&Parent>,
+    parents: Query<&ChildOf>,
     identities: Res<NetworkIdentities>,
     combat_status: ClientCombatModeStatus,
     mut sender: MessageSender,
@@ -500,14 +500,13 @@ fn client_request_interaction_list(
         return;
     }
 
-    let Ok((window_entity, window)) = windows.get_single() else {
+    let Ok((window_entity, window)) = windows.single() else {
         return;
     };
 
     if contexts
-        .try_ctx_for_window_mut(window_entity)
-        .map(|c| c.is_pointer_over_area())
-        == Some(true)
+        .ctx_for_entity_mut(window_entity)
+        .is_ok_and(|c| c.is_pointer_over_area())
     {
         return;
     }
@@ -519,13 +518,17 @@ fn client_request_interaction_list(
         return;
     };
 
-    let Some(ray) = camera.viewport_to_world(camera_transform, cursor_position) else {
+    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_position) else {
         return;
     };
 
-    let Some((entity, _)) =
-        rapier_context.cast_ray(ray.origin, ray.direction, 100.0, true, Default::default())
-    else {
+    let Some((entity, _)) = rapier_context.single().unwrap().cast_ray(
+        ray.origin,
+        ray.direction.as_vec3(),
+        100.0,
+        true,
+        Default::default(),
+    ) else {
         return;
     };
 
@@ -553,10 +556,10 @@ struct ClientInteractionUi {
 }
 
 fn client_receive_interactions(
-    mut messages: EventReader<MessageEvent<InteractionListClient>>,
+    mut messages: MessageReader<MessageEvent<InteractionListClient>>,
     mut state: ResMut<ClientInteractionUi>,
 ) {
-    let Some(event) = messages.iter().last() else {
+    let Some(event) = messages.read().last() else {
         return;
     };
 
@@ -585,14 +588,14 @@ fn client_interaction_selection_ui(
         .collapsible(false);
     if state.is_changed() {
         // Position window at cursor
-        if let Ok(window) = windows.get_single() {
+        if let Ok(window) = windows.single() {
             if let Some(pos) = window.cursor_position() {
                 ui_window = ui_window.current_pos(egui::pos2(pos.x, pos.y));
             }
         }
     }
 
-    ui_window.show(contexts.ctx_mut(), |ui| {
+    ui_window.show(contexts.ctx_mut().unwrap(), |ui| {
         for (index, interaction) in list.interactions.iter().enumerate() {
             if ui.button(&interaction.text).clicked() {
                 sender.send_to_server(&InteractionExecuteRequest { index });
@@ -616,7 +619,7 @@ fn client_progress_ui(
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     time: Res<Time>,
 ) {
-    let (mut interaction, transform) = match interactions.get_single_mut() {
+    let (mut interaction, transform) = match interactions.single_mut() {
         Ok(i) => i,
         Err(QuerySingleError::MultipleEntities(_)) => {
             warn!("Multiple entities with active interaction. There should only be one (on the entity controlled by the player).");
@@ -625,7 +628,7 @@ fn client_progress_ui(
         _ => return,
     };
 
-    let Ok(window) = windows.get_single() else {
+    let Ok(window) = windows.single() else {
         return;
     };
 
@@ -633,24 +636,24 @@ fn client_progress_ui(
         return;
     };
 
-    let Some(screen_position) = camera.world_to_viewport(camera_transform, transform.translation())
+    let Ok(screen_position) = camera.world_to_viewport(camera_transform, transform.translation())
     else {
         return;
     };
 
     // TODO: This may be inaccurate with high RTT, use interpolated tick instead
     if interaction.started.is_none() {
-        interaction.started = Some(time.elapsed_seconds());
+        interaction.started = Some(time.elapsed_secs());
     }
 
-    egui::Area::new("interaction progress")
+    egui::Area::new(egui::Id::new("interaction progress"))
         .fixed_pos(egui::pos2(
             screen_position.x,
             window.height() - screen_position.y,
         ))
-        .show(contexts.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut().unwrap(), |ui| {
             if let Some(estimate) = *interaction.estimate_duration {
-                let remaining = estimate + interaction.started.unwrap() - time.elapsed_seconds();
+                let remaining = estimate + interaction.started.unwrap() - time.elapsed_secs();
                 let t = (estimate - remaining) / estimate;
                 ui.add(egui::ProgressBar::new(t).desired_width(80.0));
             } else {

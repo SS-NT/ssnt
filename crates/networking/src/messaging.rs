@@ -2,10 +2,11 @@ use std::{any::TypeId, time::Duration};
 
 use bevy::{
     ecs::system::SystemParam,
+    platform::collections::{HashMap, HashSet},
     prelude::*,
-    utils::{HashMap, HashSet},
 };
-use bevy_renet::renet::{ChannelConfig, RenetClient, RenetServer, SendType};
+use bevy_renet::renet::{ChannelConfig, SendType};
+use bevy_renet::{RenetClient, RenetServer};
 use bincode::Options;
 use bytes::{BufMut, Bytes};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -55,7 +56,7 @@ enum MessageKind {
 }
 
 /// A message received from a peer
-#[derive(Event)]
+#[derive(Message)]
 struct IncomingMessage {
     connection: ConnectionId,
     type_id: u16,
@@ -106,7 +107,7 @@ impl From<OutboundMessage> for NetworkMessage {
 struct UnreliableNetworkMessage(pub NetworkMessage);
 
 // A typed event sent for every received message
-#[derive(Clone, Copy, Event)]
+#[derive(Clone, Copy, Message)]
 pub struct MessageEvent<T> {
     pub message: T,
     pub connection: ConnectionId,
@@ -127,18 +128,18 @@ pub trait AppExt {
 impl AppExt for App {
     /// Registers a message type which can be sent over the network.
     ///
-    /// Messages can be read from an [`EventReader<MessageEvent<T>>`] and sent using a [`MessageSender`].
+    /// Messages can be read from an [`MessageReader<MessageEvent<T>>`] and sent using a [`MessageSender`].
     fn add_network_message<T>(&mut self) -> &mut Self
     where
         T: 'static + Serialize + DeserializeOwned + Send + Sync,
     {
-        let mut types = self.world.get_resource_mut::<MessageTypes>().unwrap();
+        let mut types = self.world_mut().get_resource_mut::<MessageTypes>().unwrap();
         let type_id = types.register::<T>();
 
         let packet_reader =
-            move |mut raw_events: EventReader<IncomingMessage>,
-                  mut events: EventWriter<MessageEvent<T>>| {
-                for event in raw_events.iter() {
+            move |mut raw_events: MessageReader<IncomingMessage>,
+                  mut events: MessageWriter<MessageEvent<T>>| {
+                for event in raw_events.read() {
                     // TODO: don't run a system for every kind of message
                     if event.type_id != type_id {
                         continue;
@@ -155,14 +156,14 @@ impl AppExt for App {
                             continue;
                         }
                     };
-                    events.send(MessageEvent {
+                    events.write(MessageEvent {
                         message,
                         connection: event.connection,
                     });
                 }
             };
 
-        self.add_event::<MessageEvent<T>>()
+        self.add_message::<MessageEvent<T>>()
             .add_systems(PreUpdate, packet_reader.in_set(ReadMessagesSet::EmitEvents))
     }
 }
@@ -281,7 +282,10 @@ impl Channel {
 }
 
 /// Reads from the network channels and sends message events
-fn read_channel_server(mut events: EventWriter<IncomingMessage>, mut server: ResMut<RenetServer>) {
+fn read_channel_server(
+    mut events: MessageWriter<IncomingMessage>,
+    mut server: ResMut<RenetServer>,
+) {
     'clients: for client_id in server.clients_id().into_iter() {
         for channel_id in [Channel::Default.id(), Channel::DefaultUnreliable.id()] {
             while let Some(message) = server.receive_message(client_id, channel_id) {
@@ -292,7 +296,7 @@ fn read_channel_server(mut events: EventWriter<IncomingMessage>, mut server: Res
                         continue 'clients;
                     }
                 };
-                events.send(IncomingMessage {
+                events.write(IncomingMessage {
                     type_id: message.type_id,
                     content: message.content,
                     connection: ConnectionId(client_id),
@@ -302,7 +306,10 @@ fn read_channel_server(mut events: EventWriter<IncomingMessage>, mut server: Res
     }
 }
 
-fn read_channel_client(mut events: EventWriter<IncomingMessage>, mut client: ResMut<RenetClient>) {
+fn read_channel_client(
+    mut events: MessageWriter<IncomingMessage>,
+    mut client: ResMut<RenetClient>,
+) {
     for channel_id in [Channel::Default.id(), Channel::DefaultUnreliable.id()] {
         while let Some(message) = client.receive_message(channel_id) {
             let message: NetworkMessage = match bincode::deserialize(&message) {
@@ -312,7 +319,7 @@ fn read_channel_client(mut events: EventWriter<IncomingMessage>, mut client: Res
                     continue;
                 }
             };
-            events.send(IncomingMessage {
+            events.write(IncomingMessage {
                 type_id: message.type_id,
                 content: message.content,
                 // TODO: Client should not have any connection id field for server?
@@ -410,7 +417,7 @@ impl Plugin for MessagingPlugin {
 
         app.init_resource::<MessageTypes>()
             .insert_resource(InternalSenderRes { sender: tx })
-            .add_event::<IncomingMessage>()
+            .add_message::<IncomingMessage>()
             .configure_sets(
                 PreUpdate,
                 (
@@ -423,7 +430,7 @@ impl Plugin for MessagingPlugin {
             );
 
         if app
-            .world
+            .world()
             .get_resource::<NetworkManager>()
             .unwrap()
             .is_client()

@@ -32,13 +32,13 @@ fn ui(
     mut contexts: EguiContexts,
     mut ip: Local<String>,
     mut name: Local<String>,
-    mut client_events: EventWriter<ClientEvent>,
+    mut client_events: MessageWriter<ClientEvent>,
     disconnect: Option<Res<DisconnectReason>>,
     mut commands: Commands,
 ) {
-    egui::Area::new("main buttons")
+    egui::Area::new(egui::Id::new("main buttons"))
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(contexts.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut().unwrap(), |ui| {
             ui.horizontal(|ui| {
                 // TODO: Actually use name
                 let name_field = TextEdit::singleline(&mut *name).hint_text("Name");
@@ -53,7 +53,7 @@ fn ui(
 
                 if ui.button("Join").clicked() {
                     if let Ok(address) = SocketAddr::from_str(ip.as_ref()) {
-                        client_events.send(ClientEvent::Join(TargetServer::Raw(address)));
+                        client_events.write(ClientEvent::Join(TargetServer::Raw(address)));
                     }
                 }
             });
@@ -70,11 +70,11 @@ fn ui(
 }
 
 fn react_to_client_change(
-    mut events: EventReader<ClientEvent>,
+    mut events: MessageReader<ClientEvent>,
     mut game_state: ResMut<NextState<GameState>>,
     mut commands: Commands,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         match event {
             ClientEvent::Join(_) => {
                 commands.remove_resource::<DisconnectReason>();

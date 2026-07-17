@@ -1,8 +1,9 @@
 use bevy::{
+    asset::{Asset, AssetApp},
     math::{UVec2, UVec3},
-    prelude::{AddAsset, App, Plugin},
-    reflect::{TypePath, TypeUuid},
-    utils::HashMap,
+    platform::collections::HashMap,
+    prelude::{App, Plugin},
+    reflect::TypePath,
 };
 
 pub mod conversion;
@@ -16,12 +17,11 @@ pub struct TgmPlugin;
 
 impl Plugin for TgmPlugin {
     fn build(&self, app: &mut App) {
-        app.init_asset_loader::<TgmLoader>();
+        app.init_asset::<TileMap>().init_asset_loader::<TgmLoader>();
     }
 }
 
-#[derive(Clone, TypeUuid, TypePath)]
-#[uuid = "b4bcacfa-c562-432a-807a-43a2974cc2d6"]
+#[derive(Asset, Clone, TypePath)]
 pub struct TileMap {
     definitions: Vec<Tile>,
     tiles: HashMap<UVec3, usize>,

@@ -8,11 +8,11 @@ use std::{
 use bevy::{
     ecs::system::{StaticSystemParam, SystemParam},
     prelude::Resource,
-    reflect::TypeUuid,
-    utils::Uuid,
+    reflect::TypePath,
 };
 use serde::{Deserialize, Serialize};
 pub use smallvec::SmallVec;
+use uuid::Uuid;
 
 use crate::ConnectionId;
 
@@ -22,8 +22,12 @@ pub use bincode::options as serializer_options;
 pub use bincode::Deserializer as StandardDeserializer;
 pub use bincode::Serializer as StandardSerializer;
 
+pub(crate) fn type_uuid<T: TypePath + ?Sized>() -> Uuid {
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, T::type_path().as_bytes())
+}
+
 /// A trait implemented by any component or resource that should be networked to clients.
-pub trait NetworkedToClient {
+pub trait NetworkedToClient: TypePath {
     type Param: SystemParam;
 
     /// Restrict observers to a smaller set.
@@ -66,7 +70,7 @@ pub trait NetworkedToClient {
 }
 
 /// A trait implemented by any component that receives network updates from the server.
-pub trait NetworkedFromServer: TypeUuid + Sized {
+pub trait NetworkedFromServer: TypePath + Sized {
     type Param: SystemParam;
 
     fn deserialize(&mut self, param: &mut StaticSystemParam<Self::Param>, data: &[u8]);
@@ -296,7 +300,7 @@ impl<T: Into<u16> + From<u16>> NetworkRegistry<T> {
             );
         }
 
-        let uuid = K::TYPE_UUID;
+        let uuid = type_uuid::<K>();
         // Components must be sorted by UUID so the index is always the same
         if let Err(pos) = self.entries.binary_search(&uuid) {
             self.entries.insert(pos, uuid);

@@ -2,8 +2,9 @@
 
 use std::{hash::Hash, marker::PhantomData, num::NonZeroU32};
 
+use bevy::log::warn;
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use bevy::utils::HashMap;
 
 /// Trait for any struct that can be submitted as a task.
 pub trait Task {

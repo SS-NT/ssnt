@@ -1,4 +1,4 @@
-use bevy::{asset::AssetPathId, math::UVec2, utils::HashMap};
+use bevy::{math::UVec2, platform::collections::HashMap};
 
 use super::{Tile, TileMap, Value};
 use maps::{Direction, TileData, TileMapData, DIRECTIONS};
@@ -60,7 +60,7 @@ pub fn to_map_data(tilemap: &TileMap) -> TileMapData {
             let Some(target_tile) = target_tile else {
                 continue;
             };
-            target_tile.high_mounts[(-direction) as usize] = Some(*mount);
+            target_tile.high_mounts[(-direction) as usize] = Some(mount.clone());
         }
     }
 
@@ -82,7 +82,7 @@ fn tile_to_data(tile: &Tile) -> TileData {
     }
 }
 
-fn get_turf_path(tile: &Tile) -> Option<AssetPathId> {
+fn get_turf_path(tile: &Tile) -> Option<String> {
     let turf_name = tile
         .components
         .iter()
@@ -117,14 +117,10 @@ fn get_turf_path(tile: &Tile) -> Option<AssetPathId> {
         .max_by_key(|x| x.0)?
         .1;
 
-    Some(
-        format!("tilemap/turfs/{}.scn.ron", turf_name)
-            .as_str()
-            .into(),
-    )
+    Some(format!("tilemap/turfs/{}.bsn", turf_name).as_str().into())
 }
 
-fn get_furniture_path(tile: &Tile) -> Option<AssetPathId> {
+fn get_furniture_path(tile: &Tile) -> Option<String> {
     let furniture_name = tile
         .components
         .iter()
@@ -160,14 +156,14 @@ fn get_furniture_path(tile: &Tile) -> Option<AssetPathId> {
         .next()?;
 
     Some(
-        format!("tilemap/furniture/{}.scn.ron", furniture_name)
+        format!("tilemap/furniture/{}.bsn", furniture_name)
             .as_str()
             .into(),
     )
 }
 
-fn get_high_mounts_path(tile: &Tile) -> [Option<AssetPathId>; 4] {
-    let mut mounts = [None; 4];
+fn get_high_mounts_path(tile: &Tile) -> [Option<String>; 4] {
+    let mut mounts: [Option<String>; 4] = std::array::from_fn(|_| None);
 
     for (byond_dir, name) in tile
         .components
@@ -185,11 +181,8 @@ fn get_high_mounts_path(tile: &Tile) -> [Option<AssetPathId>; 4] {
         })
     {
         if let Some(direction) = Direction::from_byond(byond_dir) {
-            mounts[direction as usize] = Some(
-                format!("tilemap/wall_mounts/{}.scn.ron", name)
-                    .as_str()
-                    .into(),
-            );
+            mounts[direction as usize] =
+                Some(format!("tilemap/wall_mounts/{}.bsn", name).as_str().into());
         };
     }
 

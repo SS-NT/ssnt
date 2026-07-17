@@ -1,7 +1,7 @@
 use std::hash::Hash;
 
 use crate::tgm::*;
-use bevy::utils::HashMap;
+use bevy::platform::collections::HashMap;
 use nom::{
     branch::alt,
     bytes::complete::{escaped, tag},

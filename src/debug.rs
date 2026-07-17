@@ -1,3 +1,4 @@
+use bevy::gizmos::config::GizmoConfigStore;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
@@ -15,6 +16,7 @@ struct DebugState {
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DebugState>()
+            .register_type::<GizmoConfigStore>()
             .add_plugins((
                 bevy_rapier3d::render::RapierDebugRenderPlugin::default().disabled(),
                 WorldInspectorPlugin::new()
@@ -33,18 +35,20 @@ fn debug_menu(
     mut contexts: EguiContexts,
     mut rapier_debug: ResMut<DebugRenderContext>,
     mut state: ResMut<DebugState>,
+    mut server_inspector: ResMut<crate::admin::inspector::ServerInspectorEnabled>,
 ) {
-    egui::Window::new("Debug Menu").show(contexts.ctx_mut(), |ui| {
+    egui::Window::new("Debug Menu").show(contexts.ctx_mut().unwrap(), |ui| {
         ui.checkbox(&mut state.inspector_enabled, "World inspector");
+        ui.checkbox(&mut server_inspector.0, "Server inspector");
         ui.checkbox(&mut rapier_debug.enabled, "Show physics objects");
     });
 }
 
 fn debug_watermark(mut contexts: EguiContexts) {
-    egui::Area::new("watermark")
+    egui::Area::new(egui::Id::new("watermark"))
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-50.0, 0.0))
         .order(egui::Order::Foreground)
-        .show(contexts.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut().unwrap(), |ui| {
             ui.label(
                 egui::RichText::new("SSNT Dev Build")
                     .color(egui::Rgba::WHITE)

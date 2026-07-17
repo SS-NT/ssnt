@@ -17,7 +17,7 @@ struct ChangeMapMessage {
 }
 
 fn client_map_selection_ui(mut contexts: EguiContexts, mut sender: MessageSender) {
-    egui::Window::new("Load map").show(contexts.ctx_mut(), |ui| {
+    egui::Window::new("Load map").show(contexts.ctx_mut().unwrap(), |ui| {
         for &map_name in ["DeltaStation2", "BoxStation", "MetaStation"].iter() {
             if ui.button(map_name).clicked() {
                 sender.send_to_server(&ChangeMapMessage {
@@ -29,16 +29,16 @@ fn client_map_selection_ui(mut contexts: EguiContexts, mut sender: MessageSender
 }
 
 fn map_loader_system(
-    mut messages: EventReader<MessageEvent<ChangeMapMessage>>,
+    mut messages: MessageReader<MessageEvent<ChangeMapMessage>>,
     mut commands: Commands,
     server: Res<AssetServer>,
     tilemaps: Query<Entity, With<TileMap>>,
 ) {
-    let message = &messages.iter().last().unwrap().message;
+    let message = &messages.read().last().unwrap().message;
 
     // Delete existing maps
     for entity in tilemaps.iter() {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).despawn();
     }
 
     // Add new map to load
@@ -57,14 +57,14 @@ impl Plugin for MapManagementPlugin {
         app.add_network_message::<ChangeMapMessage>();
 
         if app
-            .world
+            .world()
             .get_resource::<NetworkManager>()
             .unwrap()
             .is_server()
         {
             app.add_systems(
                 Update,
-                map_loader_system.run_if(on_event::<MessageEvent<ChangeMapMessage>>()),
+                map_loader_system.run_if(on_message::<MessageEvent<ChangeMapMessage>>),
             );
         } else {
             app.add_systems(

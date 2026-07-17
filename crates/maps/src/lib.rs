@@ -3,12 +3,12 @@ use std::ops::Neg;
 use adjacency::{AdjacencyInformation, TilemapAdjacency};
 use arrayvec::ArrayVec;
 use bevy::{
-    asset::AssetPathId,
+    asset::LoadedFolder,
     ecs::system::Command,
     math::{IVec2, UVec2},
+    platform::collections::{HashMap, HashSet},
     prelude::*,
-    reflect::TypeUuid,
-    utils::{HashMap, HashSet},
+    scene::ScenePatch,
 };
 use networking::{
     component::AppExt,
@@ -27,7 +27,7 @@ pub use enum_map::enum_map;
 mod adjacency;
 pub use adjacency::Surrounded;
 
-#[derive(Component, Networked)]
+#[derive(Component, TypePath, Networked)]
 #[networked(client = "TileMapClient", priority = 10)]
 pub struct TileMap {
     // Size in chunks
@@ -346,19 +346,22 @@ impl<T> From<[Option<T>; DIRECTIONS.len()]> for TileLayerData<T> {
 /// The makeup of a tile that can be spawned into the world.
 #[derive(Default)]
 pub struct TileData {
-    pub turf: Option<AssetPathId>,
-    pub furniture: Option<AssetPathId>,
-    pub high_mounts: [Option<AssetPathId>; 4],
+    pub turf: Option<String>,
+    pub furniture: Option<String>,
+    pub high_mounts: [Option<String>; 4],
 }
 
 impl TileData {
-    fn layers(&self) -> impl Iterator<Item = (TileLayer, TileLayerData<AssetPathId>)> {
+    fn layers(&self) -> impl Iterator<Item = (TileLayer, TileLayerData<String>)> {
         [
-            (TileLayer::Turf, TileLayerData::Single(self.turf)),
-            (TileLayer::Furniture, TileLayerData::Single(self.furniture)),
+            (TileLayer::Turf, TileLayerData::Single(self.turf.clone())),
+            (
+                TileLayer::Furniture,
+                TileLayerData::Single(self.furniture.clone()),
+            ),
             (
                 TileLayer::HighMount,
-                TileLayerData::Directional(self.high_mounts),
+                TileLayerData::Directional(self.high_mounts.clone()),
             ),
         ]
         .into_iter()
@@ -429,7 +432,7 @@ impl TileReference {
 
 // TODO: Also implement default serializations for some types (like Entity)
 /// Attached to an entity that is a part of a tile.
-#[derive(Component, Networked)]
+#[derive(Component, TypePath, Networked)]
 #[networked(client = "TileEntityClient")]
 struct TileEntity {
     #[networked(
@@ -447,8 +450,7 @@ impl TileEntity {
     }
 }
 
-#[derive(Default, Component, TypeUuid, Networked)]
-#[uuid = "02de843e-5491-4989-9991-60055d333a4b"]
+#[derive(Default, Component, TypePath, Networked)]
 #[networked(server = "TileEntity")]
 struct TileEntityClient {
     #[networked(
@@ -493,7 +495,7 @@ fn spawn_from_data(
             for (layer, layer_data) in tile_data.layers() {
                 let mut spawn_object =
                     |asset_path, index_in_layer, direction: Direction| -> Entity {
-                        let scene = server.get_handle(asset_path);
+                        let scene = server.load::<ScenePatch>(asset_path);
                         let tile = commands
                             .spawn((
                                 NetworkSceneBundle {
@@ -532,7 +534,8 @@ fn spawn_from_data(
                             .iter()
                             .enumerate()
                             .map(|(i, p)| {
-                                p.map(|p| spawn_object(p, Some(i as u8), i.try_into().unwrap()))
+                                p.clone()
+                                    .map(|p| spawn_object(p, Some(i as u8), i.try_into().unwrap()))
                             })
                             .collect::<ArrayVec<_, 4>>()
                             .into_inner()
@@ -549,7 +552,8 @@ fn spawn_from_data(
         commands.entity(map_entity).insert((
             map,
             GridAabb::default(),
-            SpatialBundle::default(),
+            Transform::default(),
+            Visibility::default(),
             NetworkTransform::default(),
         ));
         info!("Spawned tiles for map (entity={:?})", map_entity);
@@ -577,8 +581,8 @@ pub trait MapCommandsExt {
 
 impl<'w, 's> MapCommandsExt for Commands<'w, 's> {
     fn despawn_tile_entity(&mut self, entity: Entity) {
-        self.add(DespawnTileEntityCommand { entity });
-        self.entity(entity).despawn_recursive();
+        self.queue(DespawnTileEntityCommand { entity });
+        self.entity(entity).despawn();
     }
 }
 
@@ -587,6 +591,8 @@ struct DespawnTileEntityCommand {
 }
 
 impl Command for DespawnTileEntityCommand {
+    type Out = ();
+
     fn apply(self, world: &mut World) {
         if let Some(tile) = world.entity_mut(self.entity).take::<TileEntity>() {
             let path = *tile.path;
@@ -604,7 +610,7 @@ impl Command for DespawnTileEntityCommand {
 fn client_initialize_tile_objects(
     new: Query<Entity, Added<TileEntityClient>>,
     children_query: Query<&Children>,
-    existing_meshes: Query<(&Handle<Mesh>, Option<&Transform>)>,
+    existing_meshes: Query<(&Mesh3d, Option<&Transform>)>,
     tile_entities: Query<&TileEntityClient>,
     mut tilemaps: Query<&mut TileMapClient>,
     assets: Res<MapAssets>,
@@ -616,12 +622,11 @@ fn client_initialize_tile_objects(
 
     let mut process_entity = |entity| {
         if let Ok((mesh, transform)) = existing_meshes.get(entity) {
-            commands.entity(entity).insert(PbrBundle {
-                mesh: mesh.clone(),
-                material: assets.default_material.clone(),
-                transform: transform.cloned().unwrap_or_default(),
-                ..Default::default()
-            });
+            commands.entity(entity).insert((
+                mesh.clone(),
+                MeshMaterial3d(assets.default_material.clone()),
+                transform.cloned().unwrap_or_default(),
+            ));
         }
     };
 
@@ -642,8 +647,7 @@ fn client_initialize_tile_objects(
 }
 
 /// Stores a subset of tile map information on the client.
-#[derive(Default, Component, TypeUuid, Networked)]
-#[uuid = "9036e9c7-f3c4-478e-81ed-3084e52d2253"]
+#[derive(Default, Component, TypePath, Networked)]
 #[networked(server = "TileMap")]
 struct TileMapClient {
     tiles: HashMap<UVec2, TileReference>,
@@ -715,11 +719,11 @@ fn client_update_tile_entities(
 }
 
 fn client_mark_deleted_tile_entities(
-    mut events: EventReader<NetworkedEntityEvent>,
+    mut events: MessageReader<NetworkedEntityEvent>,
     tile_entities: Query<&TileEntityClient>,
     mut tilemaps: Query<&mut TileMapClient>,
 ) {
-    for entity in events.iter().filter_map(|e| match e {
+    for entity in events.read().filter_map(|e| match e {
         NetworkedEntityEvent::Spawned(_) => None,
         NetworkedEntityEvent::Despawned(e) => Some(*e),
     }) {
@@ -737,7 +741,7 @@ fn client_mark_deleted_tile_entities(
 
 fn client_update_adjacencies(
     mut tilemaps: Query<&mut TileMapClient>,
-    mut adjacents_mut: Query<(&TilemapAdjacency, &mut Handle<Mesh>, &mut Transform)>,
+    mut adjacents_mut: Query<(&TilemapAdjacency, &mut Mesh3d, &mut Transform)>,
     adjacencies: Query<&TilemapAdjacency>,
 ) {
     for mut tilemap in tilemaps.iter_mut() {
@@ -792,7 +796,7 @@ fn client_update_adjacencies(
                 }
 
                 let (handle, rotation) = adjacency_settings.meshes.get(adjacency_info);
-                *mesh_handle = handle;
+                *mesh_handle = Mesh3d(handle);
                 transform.rotation = rotation;
             }
         }
@@ -804,13 +808,13 @@ fn client_update_adjacencies(
 #[derive(Resource)]
 struct MapAssets {
     #[allow(dead_code)]
-    definitions: Vec<HandleUntyped>,
+    definitions: Handle<LoadedFolder>,
     client: Option<ClientMapAssets>,
 }
 
 struct ClientMapAssets {
     #[allow(dead_code)]
-    models: Vec<HandleUntyped>,
+    models: Handle<LoadedFolder>,
     default_material: Handle<StandardMaterial>,
 }
 
@@ -820,16 +824,12 @@ fn load_tilemap_assets(
     network: Res<NetworkManager>,
 ) {
     let client_assets = network.is_client().then(|| ClientMapAssets {
-        models: server
-            .load_folder("models/tilemap")
-            .expect("assets/models/tilemap is missing"),
-        default_material: server.load("models/tilemap/walls windows.glb#Material0"),
+        models: server.load_folder("models/tilemap"),
+        default_material: server.load("models/tilemap/walls windows.glb#Material0/std"),
     });
 
     let assets = MapAssets {
-        definitions: server
-            .load_folder("tilemap")
-            .expect("assets/tilemap is missing"),
+        definitions: server.load_folder("tilemap"),
         client: client_assets,
     };
     commands.insert_resource(assets);
@@ -846,7 +846,7 @@ impl Plugin for MapPlugin {
             .add_networked_component::<TileMap, TileMapClient>();
 
         if app
-            .world
+            .world()
             .get_resource::<NetworkManager>()
             .unwrap()
             .is_client()
@@ -860,7 +860,7 @@ impl Plugin for MapPlugin {
                 (
                     client_initialize_tile_objects,
                     client_update_tile_entities,
-                    apply_deferred,
+                    ApplyDeferred,
                     client_update_adjacencies,
                 )
                     .chain(),

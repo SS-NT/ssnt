@@ -20,10 +20,10 @@ impl Plugin for PauseMenuPlugin {
 
 fn ui(
     mut contexts: EguiContexts,
-    keys: Res<Input<KeyCode>>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut visible: Local<bool>,
     state: Res<State<ClientState>>,
-    mut tasks: EventWriter<ClientTask>,
+    mut tasks: MessageWriter<ClientTask>,
 ) {
     if !matches!(state.get(), ClientState::Connected) {
         *visible = false;
@@ -42,14 +42,14 @@ fn ui(
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .title_bar(false)
         .default_width(50.0)
-        .show(contexts.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut().unwrap(), |ui| {
             ui.vertical_centered(|ui| {
                 if ui.button("Resume").clicked() {
                     *visible = !*visible;
                 }
                 ui.add_space(5.0);
                 if ui.button("Leave").clicked() {
-                    tasks.send(ClientTask::Leave);
+                    tasks.write(ClientTask::Leave);
                 }
             });
         });

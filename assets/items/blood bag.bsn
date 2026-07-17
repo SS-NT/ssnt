@@ -1,0 +1,18 @@
+bevy_transform::components::transform::Transform
+networking::transform::NetworkTransform
+bevy_mesh::components::Mesh3d("models/items/blood bag.glb#Mesh0/Primitive0")
+ssnt::items::Item {
+    name: "Blood Bag",
+}
+ssnt::body::health::items::BloodTransfusion
+physics::RigidBody {
+    kind: physics::RigidBodyType::Dynamic,
+}
+bevy_ecs::hierarchy::Children [
+    bevy_transform::components::transform::Transform {
+        translation: glam::Vec3 { x: 0.0, y: 0.05, z: 0.0 },
+    }
+    physics::Collider {
+        kind: physics::ColliderType::Cuboid { hx: 0.11, hy: 0.06, hz: 0.17 },
+    },
+]

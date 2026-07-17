@@ -1,4 +1,4 @@
-use bevy::{prelude::*, reflect::TypeUuid, utils::HashMap};
+use bevy::{platform::collections::HashMap, prelude::*, reflect::TypePath};
 use bevy_egui::{egui, EguiContexts};
 use networking::{
     component::AppExt,
@@ -50,7 +50,7 @@ impl Plugin for HealthUiPlugin {
     }
 }
 
-#[derive(Component, Networked)]
+#[derive(Component, TypePath, Networked)]
 #[networked(client = "HealthUiClient")]
 pub struct HealthUi {
     last_update: f32,
@@ -58,8 +58,7 @@ pub struct HealthUi {
     injuries: NetworkVar<HashMap<String, Vec<Injury>>>,
 }
 
-#[derive(Component, Default, TypeUuid, Networked)]
-#[uuid = "1f5958eb-9709-4e56-891d-384819f4fb0d"]
+#[derive(Component, Default, TypePath, Networked)]
 #[networked(server = "HealthUi")]
 pub(crate) struct HealthUiClient {
     target: ServerVar<NetworkIdentity>,
@@ -82,7 +81,7 @@ struct InspectVitalsInteraction {
 impl FromWorld for InspectVitalsInteraction {
     fn from_world(_: &mut World) -> Self {
         Self {
-            viewer: Entity::from_raw(0),
+            viewer: Entity::PLACEHOLDER,
         }
     }
 }
@@ -146,7 +145,7 @@ fn collect_vitals(
 ) {
     for (ui_entity, mut ui) in uis.iter_mut() {
         // Only update in interval
-        let time = time.elapsed_seconds();
+        let time = time.elapsed_secs();
         if ui.last_update + COLLECT_VITALS_INTERVAL > time {
             continue;
         }
@@ -198,13 +197,13 @@ struct ApplyMedicineMessage {
 }
 
 fn handle_apply_medicine(
-    mut messages: EventReader<MessageEvent<ApplyMedicineMessage>>,
+    mut messages: MessageReader<MessageEvent<ApplyMedicineMessage>>,
     mut interactions: ResMut<Tasks<ExecuteInteraction>>,
     controls: Res<ClientControls>,
     identities: Res<NetworkIdentities>,
     players: Res<Players>,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let Some(player) = players.get(event.connection) else {
             continue;
         };
@@ -239,7 +238,7 @@ fn vitals_ui(
         egui::Window::new("Vitals")
             .id(egui::Id::new(("vitals", entity)))
             .open(&mut keep_open)
-            .show(contexts.ctx_mut(), |ui| {
+            .show(contexts.ctx_mut().unwrap(), |ui| {
                 if health_ui.injuries.is_empty() {
                     ui.label("You find no injuries");
                     return;

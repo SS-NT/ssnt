@@ -1,6 +1,7 @@
+use bevy::ecs::component::Mutable;
 use std::clone::Clone;
 
-use bevy::{prelude::*, utils::HashSet};
+use bevy::{platform::collections::HashSet, prelude::*};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -44,7 +45,10 @@ impl From<u16> for ComponentNetworkId {
 
 type NetworkedComponentRegistry = NetworkRegistry<ComponentNetworkId>;
 
-fn send_networked_component_changed<S: NetworkedToClient + Component, C: NetworkedFromServer>(
+fn send_networked_component_changed<
+    S: NetworkedToClient + Component<Mutability = Mutable>,
+    C: NetworkedFromServer,
+>(
     mut components: Query<(&NetworkIdentity, &mut S), Changed<S>>,
     visibilities: Res<NetworkVisibilities>,
     registry: Res<NetworkedComponentRegistry>,
@@ -80,7 +84,7 @@ fn send_networked_component_changed<S: NetworkedToClient + Component, C: Network
         }
 
         let component_id = registry
-            .get_id(&C::TYPE_UUID)
+            .get_id(&type_uuid::<C>())
             .expect("Networked component incorrectly registered");
         let priority = component.priority();
         if S::receiver_matters() {
@@ -118,7 +122,10 @@ fn send_networked_component_changed<S: NetworkedToClient + Component, C: Network
     }
 }
 
-fn send_networked_component_to_new<S: NetworkedToClient + Component, C: NetworkedFromServer>(
+fn send_networked_component_to_new<
+    S: NetworkedToClient + Component<Mutability = Mutable>,
+    C: NetworkedFromServer,
+>(
     mut components: Query<(&NetworkIdentity, &S)>,
     visibilities: Res<NetworkVisibilities>,
     registry: Res<NetworkedComponentRegistry>,
@@ -132,7 +139,7 @@ fn send_networked_component_to_new<S: NetworkedToClient + Component, C: Networke
         };
 
         let component_id = registry
-            .get_id(&C::TYPE_UUID)
+            .get_id(&type_uuid::<C>())
             .expect("Networked component incorrectly registered");
         if S::receiver_matters() {
             // Serialize component for every receiver
@@ -174,8 +181,8 @@ fn send_networked_component_to_new<S: NetworkedToClient + Component, C: Networke
 }
 
 #[allow(clippy::too_many_arguments)]
-fn receive_networked_component<C: NetworkedFromServer + Component>(
-    mut events: EventReader<MessageEvent<NetworkedComponentMessage>>,
+fn receive_networked_component<C: NetworkedFromServer + Component<Mutability = Mutable>>(
+    mut events: MessageReader<MessageEvent<NetworkedComponentMessage>>,
     mut buffer: Local<Vec<NetworkedComponentMessage>>,
     mut components: Query<&mut C>,
     registry: Res<NetworkedComponentRegistry>,
@@ -183,13 +190,13 @@ fn receive_networked_component<C: NetworkedFromServer + Component>(
     mut param: bevy::ecs::system::StaticSystemParam<C::Param>,
     mut commands: Commands,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         // TODO: Move the id->uuid conversion into one system for performance?
         // Check if the message is for this component
         let uuid = registry
             .get_uuid(event.message.component_id)
             .expect("Received component message for unknown component");
-        if uuid != &C::TYPE_UUID {
+        if uuid != &type_uuid::<C>() {
             continue;
         }
         // TODO: We should just consume network messages instead of cloning them
@@ -207,7 +214,7 @@ fn receive_networked_component<C: NetworkedFromServer + Component>(
     });
 }
 
-fn apply_component_update<C: NetworkedFromServer + Component>(
+fn apply_component_update<C: NetworkedFromServer + Component<Mutability = Mutable>>(
     entity: Entity,
     message: &NetworkedComponentMessage,
     components: &mut Query<&mut C>,
@@ -233,7 +240,10 @@ fn apply_component_update<C: NetworkedFromServer + Component>(
     bevy::log::trace!(component=std::any::type_name::<C>(), entity = ?entity, "Applied networked component data");
 }
 
-fn send_networked_component_removed<S: NetworkedToClient + Component, C: NetworkedFromServer>(
+fn send_networked_component_removed<
+    S: NetworkedToClient + Component<Mutability = Mutable>,
+    C: NetworkedFromServer,
+>(
     mut removed_from: RemovedComponents<S>,
     entities: Query<()>,
     identities: Res<NetworkIdentities>,
@@ -241,7 +251,7 @@ fn send_networked_component_removed<S: NetworkedToClient + Component, C: Network
     registry: Res<NetworkedComponentRegistry>,
     mut sender: MessageSender,
 ) {
-    for entity in removed_from.iter() {
+    for entity in removed_from.read() {
         // Skip if entire entity was deleted -> networked separately
         if !entities.contains(entity) {
             return;
@@ -256,7 +266,7 @@ fn send_networked_component_removed<S: NetworkedToClient + Component, C: Network
         };
 
         let component_id = registry
-            .get_id(&C::TYPE_UUID)
+            .get_id(&type_uuid::<C>())
             .expect("Networked component incorrectly registered");
 
         let observers: HashSet<_> = visibility.observers().copied().collect();
@@ -273,19 +283,19 @@ fn send_networked_component_removed<S: NetworkedToClient + Component, C: Network
     }
 }
 
-fn client_handle_component_removal<C: NetworkedFromServer + Component>(
-    mut events: EventReader<MessageEvent<RemoveNetworkedComponentMessage>>,
+fn client_handle_component_removal<C: NetworkedFromServer + Component<Mutability = Mutable>>(
+    mut events: MessageReader<MessageEvent<RemoveNetworkedComponentMessage>>,
     registry: Res<NetworkedComponentRegistry>,
     identities: Res<NetworkIdentities>,
     mut commands: Commands,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         // TODO: Move the id->uuid conversion into one system for performance?
         // Check if the message is for this component
         let uuid = registry
             .get_uuid(event.message.component_id)
             .expect("Received component message for unknown component");
-        if uuid != &C::TYPE_UUID {
+        if uuid != &type_uuid::<C>() {
             continue;
         }
 
@@ -300,8 +310,8 @@ fn client_handle_component_removal<C: NetworkedFromServer + Component>(
 pub trait AppExt {
     fn add_networked_component<S, C>(&mut self) -> &mut App
     where
-        S: NetworkedToClient + Component,
-        C: NetworkedFromServer + Component;
+        S: NetworkedToClient + Component<Mutability = Mutable>,
+        C: NetworkedFromServer + Component<Mutability = Mutable>;
 }
 
 impl AppExt for App {
@@ -309,16 +319,18 @@ impl AppExt for App {
     /// Changes are synced from the server component (`S`) to the client component (`C`).
     fn add_networked_component<S, C>(&mut self) -> &mut App
     where
-        S: NetworkedToClient + Component,
-        C: NetworkedFromServer + Component,
+        S: NetworkedToClient + Component<Mutability = Mutable>,
+        C: NetworkedFromServer + Component<Mutability = Mutable>,
     {
         assert_compatible::<S, C>();
         self.init_resource::<NetworkedComponentRegistry>();
-        let mut registry = self.world.resource_mut::<NetworkedComponentRegistry>();
+        let mut registry = self
+            .world_mut()
+            .resource_mut::<NetworkedComponentRegistry>();
         if !registry.register::<C>() {
             panic!("Client component was already registered");
         }
-        if self.world.resource::<NetworkManager>().is_server() {
+        if self.world().resource::<NetworkManager>().is_server() {
             self.add_systems(
                 PostUpdate,
                 (

@@ -1,6 +1,6 @@
 use bevy::{
+    platform::collections::{HashMap, HashSet},
     prelude::*,
-    utils::{HashMap, HashSet},
 };
 use networking::{
     identity::NetworkIdentity,
@@ -39,7 +39,7 @@ impl Plugin for ContainerPlugin {
 }
 
 #[derive(Component, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 pub struct Container {
     size: UVec2,
     items: HashMap<UVec2, Entity>,
@@ -50,8 +50,8 @@ pub struct Container {
     pub items_visible: bool,
 }
 
-impl FromWorld for Container {
-    fn from_world(_: &mut World) -> Self {
+impl Default for Container {
+    fn default() -> Self {
         Container {
             size: (1, 1).into(),
             items: Default::default(),
@@ -125,7 +125,7 @@ impl Container {
 
 /// A component on containers which show their contents to everyone in the area.
 #[derive(Component, Default, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 pub struct DisplayContainer;
 
 /// Resource to keep track of which containers have which item
@@ -197,7 +197,7 @@ fn do_item_move(
                 let mut entity_commands = commands.entity(item_entity);
                 entity_commands
                     .remove::<StoredItem>()
-                    .remove_parent()
+                    .remove::<ChildOf>()
                     .enable_physics();
 
                 if let Ok(transform) = global_transforms.get(item_entity) {
@@ -265,7 +265,7 @@ fn cleanup_deleted_entities(
     mut containers: Query<&mut Container>,
 ) {
     // Clean when item was deleted
-    for item_entity in deleted_items.iter() {
+    for item_entity in deleted_items.read() {
         let Some(container_entity) = container_items.items_to_container.remove(&item_entity) else {
             continue;
         };
@@ -283,7 +283,7 @@ fn cleanup_deleted_entities(
     }
 
     // Clean when container was deleted
-    for container_entity in deleted_containers.iter() {
+    for container_entity in deleted_containers.read() {
         container_items
             .containers_to_items
             .remove(&container_entity);
@@ -296,7 +296,7 @@ fn item_in_container_visibility(
     items: Query<(&StoredItem, &NetworkIdentity)>,
     containers: Query<(Entity, Option<&DisplayContainer>), With<Container>>,
     mut visibilities: ResMut<NetworkVisibilities>,
-    parents: Query<&Parent>,
+    parents: Query<&ChildOf>,
     controls: Res<ClientControls>,
     players: Res<Players>,
 ) {

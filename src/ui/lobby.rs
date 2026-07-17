@@ -3,7 +3,7 @@ use crate::{
     round::{RequestJoin, RoundDataClient, RoundState, StartRoundRequest},
     GameState,
 };
-use bevy::{asset::HandleId, prelude::*};
+use bevy::prelude::*;
 use bevy_egui::EguiContexts;
 use bevy_inspector_egui::egui;
 use networking::{messaging::MessageSender, spawning::ClientControlled};
@@ -36,7 +36,7 @@ fn ui(
 
     egui::Window::new("Lobby")
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(contexts.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut().unwrap(), |ui| {
             if let Some(data) = round_data {
                 ui.label(format!("Round state: {:?}", data.state()));
 
@@ -64,9 +64,10 @@ fn job_ui(
     mut contexts: EguiContexts,
     client_controlled: Query<(), With<ClientControlled>>,
     jobs: Res<Assets<JobDefinition>>,
+    asset_server: Res<AssetServer>,
     mut sender: MessageSender,
-    mut selected_job: Local<Option<HandleId>>,
-    mut sorted_jobs: Local<Vec<Handle<JobDefinition>>>,
+    mut selected_job: Local<Option<AssetId<JobDefinition>>>,
+    mut sorted_jobs: Local<Vec<AssetId<JobDefinition>>>,
 ) {
     // Only show lobby UI if not controlling any entity
     if !client_controlled.is_empty() {
@@ -76,30 +77,24 @@ fn job_ui(
     if jobs.len() != sorted_jobs.len() {
         let mut new_sorted: Vec<_> = jobs.iter().collect();
         new_sorted.sort_unstable_by_key(|x| &x.1.name);
-        sorted_jobs.clear();
-        sorted_jobs.extend(
-            new_sorted
-                .into_iter()
-                .map(|x| Handle::<JobDefinition>::weak(x.0)),
-        );
+        *sorted_jobs = new_sorted.into_iter().map(|x| x.0).collect();
     }
 
     let previous_job = *selected_job;
     egui::Window::new("Jobs")
         .anchor(egui::Align2::RIGHT_CENTER, egui::vec2(-30.0, 0.0))
-        .show(contexts.ctx_mut(), |ui| {
-            for handle in sorted_jobs.iter() {
-                let job_definition = jobs.get(handle).unwrap();
-                ui.radio_value(&mut *selected_job, Some(handle.id()), &job_definition.name);
+        .show(contexts.ctx_mut().unwrap(), |ui| {
+            for &id in sorted_jobs.iter() {
+                let job_definition = jobs.get(id).unwrap();
+                ui.radio_value(&mut *selected_job, Some(id), &job_definition.name);
                 ui.label(&job_definition.description);
             }
         });
 
     if previous_job != *selected_job {
-        let asset_id = selected_job.map(|handle| match handle {
-            HandleId::Id(_, _) => panic!("Job must be asset"),
-            HandleId::AssetPathId(id) => id,
-        });
-        sender.send_to_server(&SelectJobMessage { job: asset_id });
+        let path = selected_job
+            .and_then(|id| asset_server.get_path(id))
+            .map(|p| p.to_string());
+        sender.send_to_server(&SelectJobMessage { job: path });
     }
 }

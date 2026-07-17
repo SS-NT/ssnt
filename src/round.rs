@@ -1,7 +1,5 @@
 use bevy::{
-    prelude::*,
-    reflect::TypeUuid,
-    utils::{HashMap, Uuid},
+    gltf::Gltf, platform::collections::HashMap, prelude::*, reflect::TypePath, scene::ScenePatch,
 };
 use maps::TileMap;
 use networking::{
@@ -17,6 +15,7 @@ use networking::{
 };
 use serde::{Deserialize, Serialize};
 use utils::task::*;
+use uuid::Uuid;
 
 use crate::{
     body::SpawnCreature,
@@ -33,7 +32,7 @@ impl Plugin for RoundPlugin {
             .add_network_message::<RequestJoin>()
             .add_networked_resource::<RoundData, RoundDataClient>();
         if is_server(app) {
-            app.add_state::<RoundState>()
+            app.init_state::<RoundState>()
                 .insert_resource(RoundData {
                     state: RoundState::Loading.into(),
                     start: None.into(),
@@ -50,10 +49,10 @@ impl Plugin for RoundPlugin {
                         set_ready.run_if(in_state(RoundState::Loading)),
                         handle_start_round_request.run_if(in_state(RoundState::Ready)),
                         spawn_player_latejoin.run_if(in_state(RoundState::Running)),
-                        update_round_data.run_if(state_changed::<RoundState>()),
+                        update_round_data.run_if(state_changed::<RoundState>),
                         (
                             handle_player_body_spawned.after(EquipClothingSystem),
-                            apply_deferred,
+                            ApplyDeferred,
                             finalise_player_spawn,
                         )
                             .chain(),
@@ -62,15 +61,21 @@ impl Plugin for RoundPlugin {
         }
 
         let player_scene = app
-            .world
+            .world()
             .resource::<AssetServer>()
-            .load("creatures/player.scn.ron");
+            .load("creatures/player.bsn");
         app.insert_resource(PlayerAssets {
             player_scene,
-            player_model: is_client(app)
-                .then(|| app.world.resource::<AssetServer>().load("models/human.glb")),
-            ghost_model: is_client(app)
-                .then(|| app.world.resource::<AssetServer>().load("models/ghost.glb")),
+            player_model: is_client(app).then(|| {
+                app.world()
+                    .resource::<AssetServer>()
+                    .load("models/human.glb")
+            }),
+            ghost_model: is_client(app).then(|| {
+                app.world()
+                    .resource::<AssetServer>()
+                    .load("models/ghost.glb")
+            }),
         });
     }
 }
@@ -84,7 +89,7 @@ pub enum RoundState {
     Ended,
 }
 
-#[derive(Networked, Resource)]
+#[derive(TypePath, Networked, Resource)]
 #[networked(client = "RoundDataClient")]
 struct RoundData {
     state: NetworkVar<RoundState>,
@@ -92,8 +97,7 @@ struct RoundData {
     start: NetworkVar<Option<u32>>,
 }
 
-#[derive(Default, TypeUuid, Networked, Resource)]
-#[uuid = "0db42b69-f2bd-4b28-96a2-e8123e51f45a"]
+#[derive(Default, TypePath, Networked, Resource)]
 #[networked(server = "RoundData")]
 pub struct RoundDataClient {
     state: ServerVar<RoundState>,
@@ -130,10 +134,10 @@ fn set_ready(query: Query<(), Added<TileMap>>, mut state: ResMut<NextState<Round
 }
 
 fn handle_start_round_request(
-    mut query: EventReader<MessageEvent<StartRoundRequest>>,
+    mut query: MessageReader<MessageEvent<StartRoundRequest>>,
     mut state: ResMut<NextState<RoundState>>,
 ) {
-    if query.iter().next().is_some() {
+    if query.read().next().is_some() {
         state.set(RoundState::Running);
     }
 }
@@ -151,11 +155,11 @@ fn start_round_timer(mut round_data: ResMut<RoundData>, server_time: Res<ServerN
 #[derive(Resource)]
 struct PlayerAssets {
     #[allow(dead_code)]
-    player_scene: Handle<DynamicScene>,
+    player_scene: Handle<ScenePatch>,
     #[allow(dead_code)]
-    player_model: Option<Handle<Scene>>,
+    player_model: Option<Handle<Gltf>>,
     #[allow(dead_code)]
-    ghost_model: Option<Handle<Scene>>,
+    ghost_model: Option<Handle<Gltf>>,
 }
 
 #[derive(Resource, Default)]
@@ -190,14 +194,14 @@ pub struct RequestJoin;
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_player_latejoin(
-    mut messages: EventReader<MessageEvent<RequestJoin>>,
+    mut messages: MessageReader<MessageEvent<RequestJoin>>,
     selected_jobs: Res<SelectedJobs>,
     job_data: Res<Assets<JobDefinition>>,
     players: Res<Players>,
     mut spawns: ResMut<SpawnsInProgress>,
     mut spawning: ResMut<Tasks<SpawnCreature>>,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let Some(player) = players.get(event.connection) else {
             continue;
         };
@@ -245,9 +249,7 @@ fn handle_player_body_spawned(
             .map(|clothing| {
                 let clothing_entity = commands
                     .spawn(NetworkSceneBundle {
-                        scene: asset_server
-                            .load(format!("items/{}.scn.ron", clothing))
-                            .into(),
+                        scene: asset_server.load(format!("items/{}.bsn", clothing)).into(),
                         ..Default::default()
                     })
                     .id();
@@ -316,7 +318,7 @@ fn finalise_player_spawn(
             };
 
             // TODO: Support multiple maps
-            let Ok(main_map) = maps.get_single() else {
+            let Ok(main_map) = maps.single() else {
                 return false;
             };
 

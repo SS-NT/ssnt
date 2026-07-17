@@ -4,14 +4,14 @@ use crate::{self as networking, component::AppExt}; // This allows networking_de
 use bevy::{
     ecs::query::Has,
     math::{Quat, Vec3},
+    platform::collections::{hash_map::Entry, HashMap},
     prelude::*,
-    reflect::{Reflect, TypeUuid},
-    utils::{hashbrown::hash_map::Entry, HashMap},
+    reflect::{Reflect, TypePath},
 };
 use bevy_rapier3d::prelude::{CollisionGroups, LockedAxes, RigidBody, RigidBodyDisabled, Velocity};
-use bevy_renet::renet::{RenetClient, RenetServer};
+use bevy_renet::{RenetClient, RenetServer};
 use networking_derive::Networked;
-use physics::{ColliderGroup, SetPhysicsCommand};
+use physics::{ColliderGroup, PhysicsEntityCommands, SetPhysicsCommand};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -50,7 +50,10 @@ struct TransformSnapshot {
     position: Vec3,
     rotation: Quat,
     parent: Option<NetworkIdentity>,
+    /// Fully disabled (e.g. a stored item): rigid body + colliders off.
     disabled: bool,
+    /// Attached and immobile (e.g. a limb): kinematic, colliders stay live.
+    frozen: bool,
     physics: Option<PhysicsSnapshot>,
 }
 
@@ -70,6 +73,7 @@ impl TransformSnapshot {
             rotation: update.rotation?,
             parent: update.parent?,
             disabled: update.disabled,
+            frozen: update.frozen,
             physics: update.linear_velocity.zip(update.angular_velocity).map(
                 |(linear_velocity, angular_velocity)| PhysicsSnapshot {
                     linear_velocity,
@@ -107,6 +111,7 @@ impl TransformSnapshot {
             physics.locked_vertical = update.locked_vertical;
         }
         self.disabled = update.disabled;
+        self.frozen = update.frozen;
 
         self.sequence_number = update.sequence_number;
     }
@@ -144,7 +149,8 @@ impl TransformSnapshot {
             Vec3::lerp,
         );
         let parent = if t > 0.5 { to.parent } else { from.parent };
-        let frozen = if t > 0.5 { to.disabled } else { from.disabled };
+        let disabled = if t > 0.5 { to.disabled } else { from.disabled };
+        let frozen = if t > 0.5 { to.frozen } else { from.frozen };
         let physics =
             linear_velocity
                 .zip(angular_velocity)
@@ -160,7 +166,8 @@ impl TransformSnapshot {
             position,
             rotation,
             parent,
-            disabled: frozen,
+            disabled,
+            frozen,
             physics,
         }
     }
@@ -211,6 +218,7 @@ struct TransformUpdateData {
     locked_vertical: bool,
     parent: Option<Option<NetworkIdentity>>,
     disabled: bool,
+    frozen: bool,
 }
 
 impl TransformUpdateData {
@@ -229,6 +237,7 @@ impl TransformUpdateData {
                 .unwrap_or_default(),
             parent: Some(snapshot.parent),
             disabled: snapshot.disabled,
+            frozen: snapshot.frozen,
         }
     }
 
@@ -247,7 +256,8 @@ impl TransformUpdateData {
 
         let update_parent = new.parent != base.parent;
 
-        let update_frozen = new.disabled != base.disabled;
+        let update_disabled = new.disabled != base.disabled;
+        let update_frozen = new.frozen != base.frozen;
 
         let update_locked =
             new.physics.map(|p| p.locked_vertical) != base.physics.map(|p| p.locked_vertical);
@@ -258,6 +268,7 @@ impl TransformUpdateData {
         if !update_position
             && !update_rotation
             && !update_parent
+            && !update_disabled
             && !update_frozen
             && !update_collider
             && !update_locked
@@ -282,6 +293,7 @@ impl TransformUpdateData {
             locked_vertical: new.physics.map(|p| p.locked_vertical).unwrap_or_default(),
             parent: update_parent.then_some(new.parent),
             disabled: new.disabled,
+            frozen: new.frozen,
         })
     }
 }
@@ -324,7 +336,7 @@ impl Default for Thresholds {
 
 /// Sends transform changes to clients
 #[derive(Component, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 pub struct NetworkTransform {
     /// How many times this transform is sent per second
     pub update_rate: f32,
@@ -377,9 +389,10 @@ fn update_transform(
         Option<&CollisionGroups>,
         Option<&LockedAxes>,
         Option<&Velocity>,
-        Option<&Parent>,
+        Option<&ChildOf>,
         Has<RigidBody>,
         Has<RigidBodyDisabled>,
+        Has<physics::Frozen>,
     )>,
     identity_query: Query<&NetworkIdentity>,
     time: Res<Time>,
@@ -388,7 +401,7 @@ fn update_transform(
     network_time: Res<ServerNetworkTime>,
     mut commands: Commands,
 ) {
-    let seconds = time.raw_elapsed_seconds();
+    let seconds = time.elapsed_secs();
     let locked_rotation_vertical = LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z;
     for (
         entity,
@@ -401,6 +414,7 @@ fn update_transform(
         parent,
         has_body,
         body_disabled,
+        frozen,
     ) in query.iter_mut()
     {
         let networked: &mut NetworkTransform = &mut networked;
@@ -422,12 +436,13 @@ fn update_transform(
             position: transform.translation,
             rotation: transform.rotation,
             parent: parent
-                .and_then(|p| identity_query.get(p.get()).ok())
+                .and_then(|p| identity_query.get(p.parent()).ok())
                 .copied(),
             disabled: body_disabled,
+            frozen,
             physics: velocity.map(|v| PhysicsSnapshot {
-                linear_velocity: v.linvel,
-                angular_velocity: v.angvel,
+                linear_velocity: v.linear,
+                angular_velocity: v.angular,
                 collider_group: collision_group
                     .and_then(|c| (*c).try_into().ok())
                     .unwrap_or_default(),
@@ -492,7 +507,7 @@ fn handle_acks(
     identities: Res<NetworkIdentities>,
     time: Res<Time>,
 ) {
-    let seconds = time.raw_elapsed_seconds();
+    let seconds = time.elapsed_secs();
     'clients: for client_id in server.clients_id().into_iter() {
         while let Some(message) = server.receive_message(client_id, Channel::Transforms.id()) {
             let message: TransformMessage = match deserialize(&message) {
@@ -562,6 +577,7 @@ pub struct NetworkedTransform {
     /// Is `false` when newly created and set after the first update is applied.
     ever_applied: bool,
     disabled: bool,
+    frozen: bool,
     locked_vertical: bool,
     collider_group: ColliderGroup,
     /// The latest snapshot the server based it's updates on.
@@ -646,12 +662,11 @@ impl BufferedTransformUpdates {
 }
 
 /// Marker component for entities allowing movement to be sent from clients.
-#[derive(Component, Networked)]
+#[derive(Component, TypePath, Networked)]
 #[networked(client = "ClientMovementClient")]
 pub struct ClientMovement;
 
-#[derive(Component, Default, TypeUuid, Networked)]
-#[uuid = "96cb7f9b-2265-4e80-82b4-04f2a767fbbc"]
+#[derive(Component, Default, TypePath, Networked)]
 #[networked(server = "ClientMovement")]
 pub struct ClientMovementClient;
 
@@ -743,7 +758,7 @@ fn apply_buffered_updates(
             networked.add_snapshot(snapshot);
             commands
                 .entity(entity)
-                .insert((SpatialBundle::default(), networked));
+                .insert((Transform::default(), Visibility::default(), networked));
         }
 
         false
@@ -804,7 +819,7 @@ fn sync_networked_transform_physics(
         &mut NetworkedTransform,
         &mut Transform,
         Option<&mut Velocity>,
-        Option<&Parent>,
+        Option<&ChildOf>,
         Option<&mut LockedAxes>,
         Option<Ref<ClientMovementClient>>,
         Has<ClientControlled>,
@@ -849,36 +864,52 @@ fn sync_networked_transform_physics(
             transform.rotation = snapshot.rotation;
         }
 
-        if snapshot.parent != parent.and_then(|p| identities.get_identity(p.get())) {
+        if snapshot.parent != parent.and_then(|p| identities.get_identity(p.parent())) {
             if let Some(parent) = snapshot.parent {
                 if let Some(parent_entity) = identities.get_entity(parent) {
-                    commands.entity(entity).set_parent(parent_entity);
+                    commands.entity(entity).insert(ChildOf(parent_entity));
                 } else {
                     warn!(parent_id = ?parent, entity = ?entity, "Transform parent not found");
                 }
             } else {
-                commands.entity(entity).remove_parent();
+                commands.entity(entity).remove::<ChildOf>();
             }
         }
 
         let disabled = snapshot.disabled;
+        let frozen = snapshot.frozen;
+        let was_frozen = networked_transform.frozen;
         let disabled_changed = disabled != networked_transform.disabled;
+        let frozen_changed = frozen != was_frozen;
         let collider_group_changed = snapshot
             .physics
             .map(|p| p.collider_group != networked_transform.collider_group)
             .unwrap_or_default();
-        if disabled_changed || collider_group_changed {
-            commands.add(SetPhysicsCommand {
-                entity,
-                enabled: !disabled,
-                disable_colliders: true,
-                new_group: if collider_group_changed {
-                    snapshot.physics.map(|p| p.collider_group)
-                } else {
-                    None
-                },
-            });
-            networked_transform.disabled = snapshot.disabled;
+        if disabled_changed || frozen_changed || collider_group_changed {
+            let new_group = collider_group_changed
+                .then(|| snapshot.physics.map(|p| p.collider_group))
+                .flatten();
+            if frozen {
+                commands.entity(entity).freeze(new_group);
+            } else if disabled {
+                commands.queue(SetPhysicsCommand {
+                    entity,
+                    enabled: false,
+                    disable_colliders: true,
+                    new_group,
+                });
+            } else if was_frozen {
+                commands.entity(entity).unfreeze(new_group);
+            } else {
+                commands.queue(SetPhysicsCommand {
+                    entity,
+                    enabled: true,
+                    disable_colliders: true,
+                    new_group,
+                });
+            }
+            networked_transform.disabled = disabled;
+            networked_transform.frozen = frozen;
             if let Some(group) = snapshot.physics.map(|p| p.collider_group) {
                 networked_transform.collider_group = group;
             }
@@ -905,17 +936,17 @@ fn sync_networked_transform_physics(
             match velocity {
                 Some(mut v) => {
                     if let Some(physics) = snapshot.physics {
-                        v.linvel = physics.linear_velocity;
-                        v.angvel = physics.angular_velocity;
+                        v.linear = physics.linear_velocity;
+                        v.angular = physics.angular_velocity;
                     }
                 }
                 None => {
                     let velocity = Velocity {
-                        linvel: snapshot
+                        linear: snapshot
                             .physics
                             .map(|p| p.linear_velocity)
                             .unwrap_or_default(),
-                        angvel: snapshot
+                        angular: snapshot
                             .physics
                             .map(|p| p.angular_velocity)
                             .unwrap_or_default(),
@@ -938,7 +969,7 @@ impl Plugin for TransformPlugin {
             .add_networked_component::<ClientMovement, ClientMovementClient>();
 
         if app
-            .world
+            .world()
             .get_resource::<NetworkManager>()
             .unwrap()
             .is_server()

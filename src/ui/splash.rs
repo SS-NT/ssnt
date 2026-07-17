@@ -28,41 +28,36 @@ fn splash_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     // Display the logo
     commands
         .spawn((
-            NodeBundle {
-                style: Style {
-                    // This will center the logo
-                    margin: UiRect::all(Val::Auto),
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                background_color: BackgroundColor(Color::rgb_u8(21, 15, 43)),
+            Node {
+                // This will center the logo
+                margin: UiRect::all(Val::Auto),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
                 ..default()
             },
+            BackgroundColor(Color::srgb_u8(21, 15, 43)),
             OnSplashScreen,
         ))
         .with_children(|parent| {
-            parent.spawn(ImageBundle {
-                style: Style {
+            parent.spawn((
+                Node {
                     flex_shrink: 0.0,
                     ..default()
                 },
-                image: UiImage::new(logo),
-                ..default()
-            });
+                ImageNode::new(logo),
+            ));
             fade = Some(
                 parent
-                    .spawn(NodeBundle {
-                        style: Style {
+                    .spawn((
+                        Node {
                             position_type: PositionType::Absolute,
                             width: Val::Percent(100.0),
                             height: Val::Percent(100.0),
                             ..default()
                         },
-                        background_color: Color::rgba(0.0, 0.0, 0.0, 0.0).into(),
-                        ..default()
-                    })
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                    ))
                     .id(),
             );
         });
@@ -82,14 +77,14 @@ fn countdown(
     const FADE_FROM_TIME: f32 = 0.7;
     const FADE_TO_TIME: f32 = 0.90;
 
-    if timer.tick(time.delta()).finished() {
+    if timer.tick(time.delta()).just_finished() {
         game_state.set(GameState::MainMenu);
     }
 
     // Fade out
     let mut color = colors.get_mut(**fade_element).unwrap();
-    let alpha = map_range((FADE_FROM_TIME, FADE_TO_TIME), (0.0, 1.0), timer.percent());
-    color.0.set_a(alpha);
+    let alpha = map_range((FADE_FROM_TIME, FADE_TO_TIME), (0.0, 1.0), timer.fraction());
+    color.0.set_alpha(alpha);
 }
 
 fn map_range(from_range: (f32, f32), to_range: (f32, f32), s: f32) -> f32 {

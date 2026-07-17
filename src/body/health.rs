@@ -19,8 +19,8 @@ impl Plugin for HealthPlugin {
             .register_type::<OrganicHeart>()
             .register_type::<OrganicBrain>();
         if is_server(app) {
-            app.add_event::<HeartBeat>()
-                .add_event::<BrainStateEvent>()
+            app.add_message::<HeartBeat>()
+                .add_message::<BrainStateEvent>()
                 .add_systems(
                     Update,
                     (
@@ -44,7 +44,7 @@ impl Plugin for HealthPlugin {
 const MAX_BLOOD_OXYGEN: f32 = 0.05;
 
 #[derive(Component, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct OrganicBody {
     /// Amount of blood in liters
     blood: f32,
@@ -83,7 +83,7 @@ impl OrganicBody {
 }
 
 #[derive(Component, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct OrganicBodyPart {
     /// How much oxygen this body part has consumed.
     /// This is reduced when oxygen is provided through the blood.
@@ -96,8 +96,8 @@ struct OrganicBodyPart {
     integrity: f32,
 }
 
-impl FromWorld for OrganicBodyPart {
-    fn from_world(_: &mut World) -> Self {
+impl Default for OrganicBodyPart {
+    fn default() -> Self {
         Self {
             oxygen_consumed: 0.0,
             oxygen_capacity: 0.0015,
@@ -137,7 +137,7 @@ impl OrganicBodyPart {
 }
 
 #[derive(Component, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct OrganicHeart {
     /// How much blood is pumped per beat in liters per second
     pump_rate: f32,
@@ -156,14 +156,14 @@ impl Default for OrganicHeart {
     }
 }
 
-#[derive(Event)]
+#[derive(Message)]
 struct HeartBeat {
     body: Entity,
     blood_amount: f32,
 }
 
 #[derive(Component, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct OrganicLung {
     /// Air capacity of the lung in liters
     capacity: f32,
@@ -195,7 +195,7 @@ const BRAIN_OXYGEN_AVERAGE_WINDOW: f32 = 4.0;
 const BRAIN_OXYGEN_LEN: usize = (BRAIN_OXYGEN_AVERAGE_WINDOW / BRAIN_UPDATE_INTERVAL) as usize;
 
 #[derive(Component, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct OrganicBrain {
     low_blood: bool,
     unconcious: bool,
@@ -231,7 +231,7 @@ impl OrganicBrain {
     }
 }
 
-#[derive(Event)]
+#[derive(Message)]
 pub struct BrainStateEvent {
     pub brain: Entity,
     pub new_state: BrainState,
@@ -248,7 +248,7 @@ fn adjust_heart_rate(
     mut hearts: Query<(Entity, &mut OrganicHeart, Option<&OrganicBodyPart>)>,
     bodies: Query<&Body>,
     body_parts: Query<(&OrganicBodyPart, Has<OrganicBrain>)>,
-    parents: Query<&Parent>,
+    parents: Query<&ChildOf>,
 ) {
     'outer: for (heart_entity, mut heart, heart_part) in hearts.iter_mut() {
         // Do not adjust heart rate if in cardiac arrest
@@ -296,19 +296,19 @@ const INTENSE_HEART_BPM: u32 = 200;
 fn heart_beat(
     mut hearts: Query<(Entity, &mut OrganicHeart)>,
     mut bodies: Query<(&Body, &mut OrganicBody)>,
-    mut body_parts: Query<(&Parent, &mut OrganicBodyPart)>,
-    mut event: EventWriter<HeartBeat>,
-    lacerations: Query<(&OrganicLaceration, &Parent)>,
-    parents: Query<&Parent>,
+    mut body_parts: Query<(&ChildOf, &mut OrganicBodyPart)>,
+    mut event: MessageWriter<HeartBeat>,
+    lacerations: Query<(&OrganicLaceration, &ChildOf)>,
+    parents: Query<&ChildOf>,
     time: Res<Time>,
 ) {
     for (heart_entity, mut heart) in hearts.iter_mut() {
         // Is it time for the heart to beat again?
-        if heart.last_beat + (60.0 / heart.heart_rate as f32) > time.elapsed_seconds() {
+        if heart.last_beat + (60.0 / heart.heart_rate as f32) > time.elapsed_secs() {
             continue;
         }
 
-        heart.last_beat = time.elapsed_seconds();
+        heart.last_beat = time.elapsed_secs();
 
         // The heart consumes oxygen to beat
         let mut pump_strength = 1.0;
@@ -351,7 +351,7 @@ fn heart_beat(
         let body_blood_ratio = organic_body.blood / organic_body.blood_capacity;
         let blood_pressure = body_blood_ratio * 2.0 - 1.0;
         let blood_to_spread = heart.pump_rate * pump_strength * blood_pressure;
-        event.send(HeartBeat {
+        event.write(HeartBeat {
             body: body_entity,
             blood_amount: blood_to_spread,
         });
@@ -390,12 +390,12 @@ fn heart_beat(
         );
 
         for (laceration, parent) in lacerations.iter() {
-            let Ok((body_part_parent, _)) = body_parts.get(parent.get()) else {
+            let Ok((body_part_parent, _)) = body_parts.get(parent.parent()) else {
                 continue;
             };
 
             // TODO: Can we make this more efficient?
-            if body_entity != body_part_parent.get() {
+            if body_entity != body_part_parent.parent() {
                 continue;
             }
 
@@ -411,11 +411,11 @@ const LUNG_CONSUMPTION: f32 = 0.0004;
 fn breathing(mut lungs: Query<(&mut OrganicLung, Option<&mut OrganicBodyPart>)>, time: Res<Time>) {
     for (mut lung, part) in lungs.iter_mut() {
         // Is it time for the next breath
-        if lung.last_breath + (60.0 / lung.breath_rate as f32) > time.elapsed_seconds() {
+        if lung.last_breath + (60.0 / lung.breath_rate as f32) > time.elapsed_secs() {
             continue;
         }
 
-        lung.last_breath = time.elapsed_seconds();
+        lung.last_breath = time.elapsed_secs();
 
         // Lung consumes oxygen to work
         let mut breath_strength = 1.0;
@@ -437,9 +437,9 @@ fn breathing(mut lungs: Query<(&mut OrganicLung, Option<&mut OrganicBodyPart>)>,
 fn lung_gas_exchange(
     mut lungs: Query<(Entity, &mut OrganicLung)>,
     mut bodies: Query<(&Body, &mut OrganicBody)>,
-    mut beats: EventReader<HeartBeat>,
+    mut beats: MessageReader<HeartBeat>,
 ) {
-    for beat in beats.iter() {
+    for beat in beats.read() {
         let Ok((body, mut organic_body)) = bodies.get_mut(beat.body) else {
             continue;
         };
@@ -463,7 +463,7 @@ const BRAIN_UPDATE_INTERVAL: f32 = 0.2;
 
 fn brain_live(
     mut brains: Query<(Entity, &mut OrganicBrain, Option<&mut OrganicBodyPart>)>,
-    mut state_events: EventWriter<BrainStateEvent>,
+    mut state_events: MessageWriter<BrainStateEvent>,
     time: Res<Time>,
 ) {
     for (brain_entity, mut brain, part) in brains.iter_mut() {
@@ -472,11 +472,11 @@ fn brain_live(
             continue;
         }
         // Not time to think yet
-        if brain.last_think + BRAIN_UPDATE_INTERVAL > time.elapsed_seconds() {
+        if brain.last_think + BRAIN_UPDATE_INTERVAL > time.elapsed_secs() {
             continue;
         }
-        let pondering_time = time.elapsed_seconds() - brain.last_think;
-        brain.last_think = time.elapsed_seconds();
+        let pondering_time = time.elapsed_secs() - brain.last_think;
+        brain.last_think = time.elapsed_secs();
 
         // Brain consumes oxygen to work
         if let Some(mut part) = part {
@@ -495,7 +495,7 @@ fn brain_live(
             let now_unconcious = oxygen_average < 0.2;
             if now_unconcious != brain.unconcious {
                 brain.unconcious = now_unconcious;
-                state_events.send(BrainStateEvent {
+                state_events.write(BrainStateEvent {
                     brain: brain_entity,
                     new_state: if now_unconcious {
                         BrainState::Unconscious
@@ -509,7 +509,7 @@ fn brain_live(
             if oxygen_average < 0.05 {
                 part.damage(pondering_time * 0.1);
                 if part.unusable() {
-                    state_events.send(BrainStateEvent {
+                    state_events.write(BrainStateEvent {
                         brain: brain_entity,
                         new_state: BrainState::Dead,
                     });
@@ -578,6 +578,6 @@ fn receive_damage(
                 // TODO: Consider kinetic profile
                 size: LacerationSize::Medium,
             })
-            .set_parent(affected_entity.0);
+            .insert(ChildOf(affected_entity.0));
     }
 }

@@ -1,4 +1,4 @@
-use bevy::{prelude::*, utils::HashMap};
+use bevy::{platform::collections::HashMap, prelude::*};
 use networking::{
     is_server,
     messaging::{MessageReceivers, MessageSender},
@@ -22,7 +22,7 @@ impl Plugin for GhostPlugin {
         if is_server(app) {
             app.init_resource::<Ghosts>().add_systems(
                 Update,
-                (create_ghost, return_to_body).run_if(on_event::<BrainStateEvent>()),
+                (create_ghost, return_to_body).run_if(on_message::<BrainStateEvent>),
             );
         }
     }
@@ -35,10 +35,10 @@ struct Ghosts {
 
 #[allow(clippy::too_many_arguments)]
 fn create_ghost(
-    mut brain_events: EventReader<BrainStateEvent>,
+    mut brain_events: MessageReader<BrainStateEvent>,
     mut ghosts: ResMut<Ghosts>,
     mut controls: ResMut<ClientControls>,
-    parents: Query<&Parent>,
+    parents: Query<&ChildOf>,
     bodies: Query<(), With<Body>>,
     asset_server: Res<AssetServer>,
     players: Res<Players>,
@@ -46,7 +46,7 @@ fn create_ghost(
     mut commands: Commands,
     mut sender: MessageSender,
 ) {
-    for event in brain_events.iter() {
+    for event in brain_events.read() {
         if event.new_state != BrainState::Dead {
             continue;
         }
@@ -72,7 +72,7 @@ fn create_ghost(
             let ghost = commands
                 .spawn((
                     NetworkSceneBundle {
-                        scene: asset_server.load("creatures/ghost.scn.ron").into(),
+                        scene: asset_server.load("creatures/ghost.bsn").into(),
                         transform: Transform::from_translation(position),
                         ..Default::default()
                     },
@@ -111,14 +111,14 @@ fn create_ghost(
 }
 
 fn return_to_body(
-    mut brain_events: EventReader<BrainStateEvent>,
+    mut brain_events: MessageReader<BrainStateEvent>,
     mut ghosts: ResMut<Ghosts>,
     mut controls: ResMut<ClientControls>,
-    parents: Query<&Parent>,
+    parents: Query<&ChildOf>,
     bodies: Query<(), With<Body>>,
     mut commands: Commands,
 ) {
-    for event in brain_events.iter() {
+    for event in brain_events.read() {
         if event.new_state == BrainState::Dead {
             continue;
         }
@@ -139,6 +139,6 @@ fn return_to_body(
         };
 
         controls.give_control(player, body_entity);
-        commands.entity(ghost_entity).despawn_recursive();
+        commands.entity(ghost_entity).despawn();
     }
 }

@@ -63,7 +63,7 @@ impl Parse for FieldMethod {
         let path = input.parse()?;
         let content;
         parenthesized!(content in input);
-        let params: Punctuated<_, Token![,]> = content.parse_terminated(Type::parse)?;
+        let params: Punctuated<_, Token![,]> = content.parse_terminated(Type::parse, Token![,])?;
 
         if let Ok(t) = input.parse::<Token![->]>() {
             if networked_ty.is_some() {

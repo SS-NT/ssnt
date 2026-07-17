@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
-use bevy::{app::ScheduleRunnerPlugin, prelude::*, utils::HashMap};
-use bevy_renet::renet::{RenetClient, RenetServer};
+use bevy::{app::ScheduleRunnerPlugin, platform::collections::HashMap, prelude::*};
+use bevy_renet::{RenetClient, RenetServer};
 use serde::{Deserialize, Serialize};
 
 use crate::{messaging::Channel, ConnectionId, NetworkManager, NetworkSet, Players};
@@ -166,7 +166,7 @@ fn send_server_tick(
     network_time: Res<ServerNetworkTime>,
     players: Res<Players>,
 ) {
-    let seconds = time.raw_elapsed_seconds();
+    let seconds = time.elapsed_secs();
     let tick = network_time.server_tick;
 
     for (connection, _) in players.players.iter() {
@@ -228,7 +228,7 @@ fn receive_server_tick(
 
             let received_tick = ReceivedServerTick {
                 tick: tick.tick,
-                time: time.raw_elapsed_seconds(),
+                time: time.elapsed_secs(),
             };
             network_time.server_tick = Some(received_tick);
 
@@ -265,7 +265,7 @@ fn server_handle_response(
 }
 
 fn update_interpolated_tick(mut network_time: ResMut<ClientNetworkTime>, time: Res<Time>) {
-    let server_tick = match network_time.estimated_server_tick(time.raw_elapsed_seconds()) {
+    let server_tick = match network_time.estimated_server_tick(time.elapsed_secs()) {
         Some(t) => t,
         None => return,
     };
@@ -287,7 +287,7 @@ fn update_interpolated_tick(mut network_time: ResMut<ClientNetworkTime>, time: R
     }
 
     network_time.interpolated_tick +=
-        speed * (time.delta_seconds() / network_time.server_tick_seconds.unwrap());
+        speed * (time.delta_secs() / network_time.server_tick_seconds.unwrap());
     network_time.tick_speed = speed;
 }
 
@@ -296,7 +296,7 @@ pub(crate) struct TimePlugin;
 impl Plugin for TimePlugin {
     fn build(&self, app: &mut App) {
         let is_server = app
-            .world
+            .world()
             .get_resource::<NetworkManager>()
             .unwrap()
             .is_server();

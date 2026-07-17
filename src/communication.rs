@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use bevy::{prelude::*, utils::HashMap};
+use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_egui::{egui, EguiContexts};
 use networking::{
     identity::{NetworkIdentities, NetworkIdentity},
@@ -191,14 +191,14 @@ struct SpeechMessage {
 }
 
 fn handle_speech(
-    mut messages: EventReader<MessageEvent<SpeakMessage>>,
+    mut messages: MessageReader<MessageEvent<SpeakMessage>>,
     players: Res<Players>,
     controlled: Res<ClientControls>,
     identities: Res<NetworkIdentities>,
     names: Query<AnyOf<(&SpeechName, &Name)>>,
     mut sender: MessageSender,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let Some(player) = players.get(event.connection) else {
             continue;
         };
@@ -263,14 +263,14 @@ struct SpeechBubble {
 fn client_chat_box(
     mut contexts: EguiContexts,
     mut data: ResMut<ClientChat>,
-    mut keyboard: ResMut<Input<KeyCode>>,
+    mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut sender: MessageSender,
 ) {
     egui::Window::new("Chat")
         .anchor(egui::Align2::RIGHT_BOTTOM, egui::Vec2::ZERO)
         .default_size(egui::vec2(200.0, 800.0))
         .resizable(true)
-        .show(contexts.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut().unwrap(), |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 // This is probably expensive?
                 ui.label(data.history.clone());
@@ -283,7 +283,7 @@ fn client_chat_box(
                 .response;
 
             // Focus chat if chat key is pressed
-            if keyboard.clear_just_pressed(KeyCode::T) {
+            if keyboard.clear_just_pressed(KeyCode::KeyT) {
                 response.request_focus();
             }
             if response.lost_focus()
@@ -303,11 +303,11 @@ fn client_chat_box(
 }
 
 fn client_handle_chat(
-    mut messages: EventReader<MessageEvent<SpeechMessage>>,
+    mut messages: MessageReader<MessageEvent<SpeechMessage>>,
     mut data: ResMut<ClientChat>,
     time: Res<Time>,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let data = &mut *data;
         event.message.message.append_to(&mut data.history);
 
@@ -323,14 +323,14 @@ fn client_handle_chat(
         let bubble = data
             .bubbles
             .entry(speaker)
-            .and_modify(|bubble| bubble.when = time.elapsed_seconds())
+            .and_modify(|bubble| bubble.when = time.elapsed_secs())
             .or_insert_with(|| {
                 let id = data.bubble_id.wrapping_add(1);
                 data.bubble_id = id;
                 SpeechBubble {
                     id,
                     text: Default::default(),
-                    when: time.elapsed_seconds(),
+                    when: time.elapsed_secs(),
                 }
             });
         event.message.message.append_spoken_part(&mut bubble.text);
@@ -349,12 +349,12 @@ fn client_speech_bubbles(
     identities: Res<NetworkIdentities>,
     time: Res<Time>,
 ) {
-    let Ok((camera, camera_transform)) = camera.get_single() else {
+    let Ok((camera, camera_transform)) = camera.single() else {
         return;
     };
 
     data.bubbles.retain(|&speaker, bubble| {
-        if bubble.when + SPEECH_BUBBLE_DURATION < time.elapsed_seconds() {
+        if bubble.when + SPEECH_BUBBLE_DURATION < time.elapsed_secs() {
             return false;
         }
 
@@ -369,7 +369,7 @@ fn client_speech_bubbles(
         // TODO: Calculate offset from character bounding box
         let offset = Vec3::Y * 1.8;
 
-        let Some(screen_position) =
+        let Ok(screen_position) =
             camera.world_to_viewport(camera_transform, transform.translation() + offset)
         else {
             return true;
@@ -381,7 +381,7 @@ fn client_speech_bubbles(
             .resizable(false)
             .fixed_pos(egui::pos2(screen_position.x, screen_position.y))
             .pivot(egui::Align2::CENTER_BOTTOM)
-            .show(contexts.ctx_mut(), |ui| {
+            .show(contexts.ctx_mut().unwrap(), |ui| {
                 // TODO: Use a non-allocating Galley instead
                 ui.label(bubble.text.clone());
             });

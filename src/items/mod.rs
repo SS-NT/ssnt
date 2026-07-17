@@ -1,4 +1,4 @@
-use bevy::{math::UVec2, prelude::*, reflect::TypeUuid};
+use bevy::{asset::LoadedFolder, math::UVec2, prelude::*, reflect::TypePath};
 use networking::{
     component::AppExt,
     identity::{NetworkIdentities, NetworkIdentity},
@@ -34,7 +34,7 @@ impl Plugin for ItemPlugin {
 }
 
 #[derive(Component, Reflect)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 pub struct Item {
     pub name: String,
     pub size: UVec2,
@@ -49,7 +49,7 @@ impl Default for Item {
     }
 }
 
-#[derive(Component, Networked)]
+#[derive(Component, TypePath, Networked)]
 #[networked(client = "StoredItemClient")]
 pub struct StoredItem {
     #[networked(
@@ -72,8 +72,7 @@ impl StoredItem {
     }
 }
 
-#[derive(Component, Default, Networked, TypeUuid)]
-#[uuid = "7a30823e-ab38-4bca-ba3a-4bab1328d2df"]
+#[derive(Component, Default, Networked, TypePath)]
 #[networked(server = "StoredItem")]
 pub struct StoredItemClient {
     container: ServerVar<NetworkIdentity>,
@@ -85,13 +84,13 @@ pub struct StoredItemClient {
 /// This is so we can create handles from a path id, which doesn't load the assets by itself.
 #[derive(Resource)]
 pub struct ItemAssets {
-    pub definitions: Vec<Handle<DynamicScene>>,
+    pub definitions: Handle<LoadedFolder>,
     client: Option<ClientItemAssets>,
 }
 
 struct ClientItemAssets {
     #[allow(dead_code)]
-    models: Vec<HandleUntyped>,
+    models: Handle<LoadedFolder>,
     default_material: Handle<StandardMaterial>,
 }
 
@@ -101,19 +100,12 @@ fn load_item_assets(
     network: Res<NetworkManager>,
 ) {
     let client_assets = network.is_client().then(|| ClientItemAssets {
-        models: server
-            .load_folder("models/items")
-            .expect("assets/models/items is missing"),
-        default_material: server.load("models/items/wrenches.glb#Material0"),
+        models: server.load_folder("models/items"),
+        default_material: server.load("models/items/wrenches.glb#Material0/std"),
     });
 
     let assets = ItemAssets {
-        definitions: server
-            .load_folder("items")
-            .expect("assets/items is missing")
-            .into_iter()
-            .map(|h| h.typed::<DynamicScene>())
-            .collect(),
+        definitions: server.load_folder("items"),
         client: client_assets,
     };
     commands.insert_resource(assets);
@@ -124,7 +116,10 @@ fn load_item_assets(
 fn client_initialize_spawned_items(
     new: Query<Entity, Added<Item>>,
     children_query: Query<&Children>,
-    existing_meshes: Query<(&Handle<Mesh>, Option<&Transform>), Without<Handle<StandardMaterial>>>,
+    existing_meshes: Query<
+        (&Mesh3d, Option<&Transform>),
+        Without<MeshMaterial3d<StandardMaterial>>,
+    >,
     assets: Res<ItemAssets>,
     mut commands: Commands,
 ) {
@@ -134,12 +129,11 @@ fn client_initialize_spawned_items(
 
     let mut process_entity = |entity| {
         if let Ok((mesh, transform)) = existing_meshes.get(entity) {
-            commands.entity(entity).insert(PbrBundle {
-                mesh: mesh.clone(),
-                material: assets.default_material.clone(),
-                transform: transform.cloned().unwrap_or_default(),
-                ..Default::default()
-            });
+            commands.entity(entity).insert((
+                mesh.clone(),
+                MeshMaterial3d(assets.default_material.clone()),
+                transform.cloned().unwrap_or_default(),
+            ));
         }
     };
 
@@ -164,7 +158,7 @@ fn client_update_item_visibility(
         }
     }
 
-    for entity in removed.iter() {
+    for entity in removed.read() {
         if let Ok(mut visibility) = vis_query.get_mut(entity) {
             if *visibility == Visibility::Hidden {
                 *visibility = Visibility::Inherited;

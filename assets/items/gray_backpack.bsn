@@ -1,0 +1,23 @@
+bevy_transform::components::transform::Transform
+networking::transform::NetworkTransform
+bevy_mesh::components::Mesh3d("models/human.glb#Mesh33/Primitive0")
+ssnt::items::Item {
+    name: "Gray Backpack",
+}
+ssnt::items::clothes::Clothing {
+    clothing_type: "back",
+}
+ssnt::items::containers::Container {
+    size: glam::UVec2 { x: 6, y: 5 },
+}
+physics::RigidBody {
+    kind: physics::RigidBodyType::Dynamic,
+}
+bevy_ecs::hierarchy::Children [
+    bevy_transform::components::transform::Transform {
+        translation: glam::Vec3 { x: 0.0, y: 0.980, z: -0.16 },
+    }
+    physics::Collider {
+        kind: physics::ColliderType::Cuboid { hx: 0.1, hy: 0.2, hz: 0.06 },
+    },
+]

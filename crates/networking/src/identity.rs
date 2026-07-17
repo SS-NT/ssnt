@@ -1,8 +1,8 @@
 use bevy::{
     ecs::system::{Command, EntityCommands},
+    platform::collections::HashMap,
     prelude::*,
     reflect::Reflect,
-    utils::HashMap,
 };
 use serde::{Deserialize, Serialize};
 
@@ -63,6 +63,8 @@ pub struct NetworkCommand {
 }
 
 impl Command for NetworkCommand {
+    type Out = ();
+
     fn apply(self, world: &mut World) {
         let manager = world
             .get_resource::<NetworkManager>()
@@ -93,11 +95,11 @@ pub trait EntityCommandsExt {
     fn networked(&mut self) -> &mut Self;
 }
 
-impl EntityCommandsExt for EntityCommands<'_, '_, '_> {
+impl EntityCommandsExt for EntityCommands<'_> {
     /// Adds a network identity to this entity
     fn networked(&mut self) -> &mut Self {
         let entity = self.id();
-        self.commands().add(NetworkCommand { entity });
+        self.commands().queue(NetworkCommand { entity });
         self
     }
 }
@@ -124,7 +126,7 @@ fn unregister_deleted_entities(
     mut removed: RemovedComponents<NetworkIdentity>,
     mut identities: ResMut<NetworkIdentities>,
 ) {
-    for entity in removed.iter() {
+    for entity in removed.read() {
         identities.remove_entity(entity);
     }
 }

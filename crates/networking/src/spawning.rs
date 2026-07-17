@@ -1,11 +1,61 @@
 use bevy::{
-    asset::AssetPathId,
+    asset::io::{AssetSourceId, ErasedAssetReader},
     ecs::query::{Has, QuerySingleError},
+    platform::collections::{HashMap, HashSet},
     prelude::*,
-    scene::DynamicScene,
-    utils::{HashMap, HashSet, Uuid},
+    scene::ScenePatch,
+    tasks::{block_on, futures_lite::StreamExt},
 };
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+use uuid::Uuid;
+
+/// A compact, network-stable identifier for a scene, derived from its asset path string.
+/// Sent instead of the full path to save bandwidth; both peers hash the same path.
+fn scene_network_id(path: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Maps [`scene_network_id`]s back to scene asset paths so a client can resolve a received
+/// id and load that scene on demand. Built once at startup by enumerating every `.bsn` asset.
+#[derive(Resource, Default)]
+struct NetworkedScenes {
+    paths_by_id: HashMap<u64, String>,
+}
+
+fn build_networked_scene_manifest(
+    asset_server: Res<AssetServer>,
+    mut registry: ResMut<NetworkedScenes>,
+) {
+    async fn collect(reader: &dyn ErasedAssetReader, dir: &Path, out: &mut Vec<String>) {
+        let Ok(mut stream) = reader.read_directory(dir).await else {
+            return;
+        };
+        while let Some(child) = stream.next().await {
+            if reader.is_directory(&child).await.unwrap_or(false) {
+                Box::pin(collect(reader, &child, out)).await;
+            } else if child.extension().is_some_and(|e| e == "bsn") {
+                if let Some(path) = child.to_str() {
+                    out.push(path.replace('\\', "/"));
+                }
+            }
+        }
+    }
+
+    let Ok(source) = asset_server.get_source(AssetSourceId::Default) else {
+        return;
+    };
+    let reader = source.reader();
+    let mut paths = Vec::new();
+    block_on(collect(reader, Path::new(""), &mut paths));
+    for path in paths {
+        registry.paths_by_id.insert(scene_network_id(&path), path);
+    }
+    debug!("Indexed {} networked scenes", registry.paths_by_id.len());
+}
 
 use crate::{
     identity::{IdentitySystem, NetworkIdentities, NetworkIdentity},
@@ -28,7 +78,8 @@ enum SpawnAssetIdentifier {
     // TODO: Remove once obsoleted.
     // We should always use unique ids instead of strings when networking.
     Named(String),
-    AssetPath(AssetPathId),
+    /// A networked scene, identified by a compact hash of its asset path.
+    Scene(u64),
     /// Objects that are used as references and don't need an asset
     Empty {
         in_world: bool,
@@ -47,7 +98,7 @@ enum SpawnMessage {
 pub struct PrefabPath(pub String);
 
 /// Events related to networked entities on the server
-#[derive(Event)]
+#[derive(Message)]
 pub enum ServerEntityEvent {
     /// A spawn message has been sent to a connection
     Spawned((Entity, ConnectionId)),
@@ -58,7 +109,7 @@ pub enum ServerEntityEvent {
 const DESPAWN_MESSAGE_PRIORITY: i16 = -10;
 
 /// Events related to networked entities on the client
-#[derive(Event)]
+#[derive(Message)]
 pub enum NetworkedEntityEvent {
     /// A networked entity has been spawned
     Spawned(Entity),
@@ -74,17 +125,17 @@ fn send_spawn_messages(
             &NetworkIdentity,
             Option<&PrefabPath>,
             Option<&NetworkScene>,
-            Has<ComputedVisibility>,
+            Has<Visibility>,
         ),
         Without<NetworkedChild>,
     >,
-    with_parents: Query<(), With<Parent>>,
+    with_parents: Query<(), With<ChildOf>>,
     visibilities: Res<NetworkVisibilities>,
     controlled: Res<ClientControls>,
     players: Res<Players>,
     mut sender: MessageSender,
-    mut entity_events: EventWriter<ServerEntityEvent>,
-    scenes: Res<Assets<DynamicScene>>,
+    mut entity_events: MessageWriter<ServerEntityEvent>,
+    scenes: Res<Assets<ScenePatch>>,
 ) {
     for (entity, identity, name, scene, has_visibiliy) in query.iter() {
         // Only send scenes once they're loaded
@@ -111,13 +162,13 @@ fn send_spawn_messages(
                             in_world: has_visibiliy,
                         }
                     }
-                    (None, Some(scene)) => SpawnAssetIdentifier::AssetPath(match scene.0.id() {
-                        bevy::asset::HandleId::Id(_, _) => {
+                    (None, Some(scene)) => {
+                        let Some(path) = scene.0.path().and_then(|p| p.path().to_str()) else {
                             warn!(entity = ?entity, "Cannot spawn networked object with dynamic handle id. Handle must be created from a loaded asset.");
                             continue;
-                        }
-                        bevy::asset::HandleId::AssetPathId(p) => p,
-                    }),
+                        };
+                        SpawnAssetIdentifier::Scene(scene_network_id(path))
+                    }
                     (Some(name), None) => SpawnAssetIdentifier::Named(name.0.clone()),
                     (Some(_), Some(_)) => {
                         warn!("Entity has both an asset path id and a prefab path. Skipping.");
@@ -141,7 +192,7 @@ fn send_spawn_messages(
                     MessageReceivers::Set(new_observers.clone()),
                     priority,
                 );
-                entity_events.send_batch(
+                entity_events.write_batch(
                     new_observers
                         .iter()
                         .map(|c| ServerEntityEvent::Spawned((entity, *c))),
@@ -155,7 +206,7 @@ fn send_spawn_messages(
                 .filter(|c| connected_players.contains_key(c))
                 .collect();
             if !removed_observers.is_empty() {
-                entity_events.send_batch(
+                entity_events.write_batch(
                     removed_observers
                         .iter()
                         .map(|c| ServerEntityEvent::Despawned((entity, *c))),
@@ -177,14 +228,14 @@ fn network_deleted_entities(
     identities: Res<NetworkIdentities>,
     visibilities: Res<NetworkVisibilities>,
     mut sender: MessageSender,
-    mut entity_events: EventWriter<ServerEntityEvent>,
+    mut entity_events: MessageWriter<ServerEntityEvent>,
 ) {
-    for entity in removed.iter() {
+    for entity in removed.read() {
         let identity = identities.get_identity(entity).unwrap();
         if let Some(visibility) = visibilities.visibility.get(&identity) {
             let observers: HashSet<ConnectionId> = visibility.all_observers().copied().collect();
             if !observers.is_empty() {
-                entity_events.send_batch(
+                entity_events.write_batch(
                     observers
                         .iter()
                         .map(|c| ServerEntityEvent::Despawned((entity, *c))),
@@ -200,13 +251,14 @@ fn network_deleted_entities(
 }
 
 fn receive_spawn(
-    mut spawn_events: EventReader<MessageEvent<SpawnMessage>>,
-    mut entity_events: EventWriter<NetworkedEntityEvent>,
+    mut spawn_events: MessageReader<MessageEvent<SpawnMessage>>,
+    mut entity_events: MessageWriter<NetworkedEntityEvent>,
     mut ids: ResMut<NetworkIdentities>,
     mut commands: Commands,
-    asset_server: ResMut<AssetServer>,
+    asset_server: Res<AssetServer>,
+    scenes: Res<NetworkedScenes>,
 ) {
-    for event in spawn_events.iter() {
+    for event in spawn_events.read() {
         match &event.message {
             SpawnMessage::Spawn(s) => {
                 let spawn = s.clone();
@@ -225,30 +277,37 @@ fn receive_spawn(
                     SpawnAssetIdentifier::Named(name) => {
                         builder.insert(PrefabPath(name));
                     }
-                    SpawnAssetIdentifier::AssetPath(id) => {
+                    SpawnAssetIdentifier::Scene(id) => {
+                        let Some(path) = scenes.paths_by_id.get(&id) else {
+                            warn!(
+                                scene_id = id,
+                                "Received spawn for unknown scene id; dropping"
+                            );
+                            continue;
+                        };
                         builder.insert(NetworkSceneBundle {
-                            scene: asset_server.get_handle(id).into(),
+                            scene: asset_server.load::<ScenePatch>(path.clone()).into(),
                             ..Default::default()
                         });
                     }
                     SpawnAssetIdentifier::Empty { in_world } => {
                         if in_world {
-                            builder.insert(SpatialBundle::default());
+                            builder.insert((Transform::default(), Visibility::default()));
                         }
                     }
                 }
 
                 let entity = builder.id();
                 ids.set_identity(entity, spawn.network_id);
-                entity_events.send(NetworkedEntityEvent::Spawned(entity));
+                entity_events.write(NetworkedEntityEvent::Spawned(entity));
 
                 debug!("Received spawn message for {:?}", spawn.network_id);
             }
             SpawnMessage::Despawn(id) => {
                 if let Some(entity) = ids.get_entity(*id) {
-                    commands.entity(entity).despawn_recursive();
+                    commands.entity(entity).despawn();
                     ids.remove_entity(entity);
-                    entity_events.send(NetworkedEntityEvent::Despawned(entity));
+                    entity_events.write(NetworkedEntityEvent::Despawned(entity));
                     debug!("Received despawn message for {:?}", id);
                 } else {
                     warn!("Received despawn message for non-existent {:?}", id);
@@ -324,7 +383,7 @@ fn send_control_updates(
 
 /// Sends the controlled entities to joined player that already had control of an entity (rejoin).
 fn send_control_updates_to_rejoined(
-    mut events: EventReader<ServerEvent>,
+    mut events: MessageReader<ServerEvent>,
     mut controls: ResMut<ClientControls>,
     identities: Res<NetworkIdentities>,
     players: Res<Players>,
@@ -332,7 +391,7 @@ fn send_control_updates_to_rejoined(
 ) {
     let controls = &mut *controls;
 
-    for connection in events.iter().filter_map(|e| match e {
+    for connection in events.read().filter_map(|e| match e {
         ServerEvent::PlayerConnected(c) => Some(c),
         _ => None,
     }) {
@@ -348,7 +407,7 @@ fn send_control_updates_to_rejoined(
 }
 
 fn receive_control_updates(
-    mut events: EventReader<MessageEvent<ControlUpdate>>,
+    mut events: MessageReader<MessageEvent<ControlUpdate>>,
     query: Query<Entity, With<ClientControlled>>,
     ids: Res<NetworkIdentities>,
     mut buffered_controlled: Local<Option<NetworkIdentity>>,
@@ -361,13 +420,13 @@ fn receive_control_updates(
         }
     }
 
-    for event in events.iter() {
+    for event in events.read() {
         info!(
             "Client control updating to {:?}",
             event.message.controlled_entity
         );
 
-        let existing_entity = query.get_single().map_or_else(
+        let existing_entity = query.single().map_or_else(
             |e| match e {
                 QuerySingleError::NoEntities(_) => None,
                 QuerySingleError::MultipleEntities(_) => {
@@ -410,12 +469,12 @@ impl Plugin for SpawningPlugin {
             .add_network_message::<ControlUpdate>();
 
         if app
-            .world
+            .world()
             .get_resource::<NetworkManager>()
             .unwrap()
             .is_server()
         {
-            app.add_event::<ServerEntityEvent>()
+            app.add_message::<ServerEntityEvent>()
                 .init_resource::<ClientControls>()
                 .add_systems(
                     PostUpdate,
@@ -428,7 +487,9 @@ impl Plugin for SpawningPlugin {
                         .in_set(NetworkSet::ServerWrite),
                 );
         } else {
-            app.add_event::<NetworkedEntityEvent>()
+            app.add_message::<NetworkedEntityEvent>()
+                .init_resource::<NetworkedScenes>()
+                .add_systems(Startup, build_networked_scene_manifest)
                 .configure_sets(
                     PreUpdate,
                     (

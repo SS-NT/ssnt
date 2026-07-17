@@ -3,14 +3,15 @@ use std::marker::{Send, Sync};
 use bevy::ecs::reflect::ReflectComponent;
 use bevy::{
     prelude::{Component, Handle, Mesh, Quat, Vec3},
-    reflect::Reflect,
+    reflect::{std_traits::ReflectDefault, Reflect},
 };
 
 use crate::Direction;
 
 /// Defines data that depends on what sides a tile is surrounded.
 #[derive(Clone, Default, Reflect)]
-pub struct AdjacencyVariants<T: Reflect + Sync + Send + 'static> {
+#[reflect(Default)]
+pub struct AdjacencyVariants<T: Reflect + Sync + Send + Default + 'static> {
     pub default: T,
     // No neighbours
     pub o: T,
@@ -26,7 +27,7 @@ pub struct AdjacencyVariants<T: Reflect + Sync + Send + 'static> {
     pub x: T,
 }
 
-impl<T: std::clone::Clone + Reflect + Sync + Send + 'static> AdjacencyVariants<T> {
+impl<T: std::clone::Clone + Reflect + Sync + Send + Default + 'static> AdjacencyVariants<T> {
     pub fn get(&self, adjacency: AdjacencyInformation) -> (T, Quat) {
         if adjacency.is_o() {
             (self.o.clone(), Quat::IDENTITY)
@@ -149,7 +150,7 @@ impl AdjacencyInformation {
 
 /// Defines how a tile object fits together with others.
 #[derive(Component, Reflect, Default)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 pub(crate) struct TilemapAdjacency {
     // TODO: Allow multiple categories to mesh together
     pub category: String,

@@ -1,4 +1,4 @@
-use bevy::{ecs::system::SystemParam, prelude::*, reflect::TypeUuid, window::PrimaryWindow};
+use bevy::{ecs::system::SystemParam, prelude::*, reflect::TypePath, window::PrimaryWindow};
 use bevy_egui::{egui, EguiContexts};
 use networking::{
     component::AppExt,
@@ -29,7 +29,7 @@ impl Plugin for CombatPlugin {
             .add_network_message::<CombatInput>()
             .add_networked_component::<CombatMode, CombatModeClient>();
         if is_server(app) {
-            app.add_event::<CombatInputEvent>()
+            app.add_message::<CombatInputEvent>()
                 .add_systems(Update, (receive_combat_mode_request, handle_attack_request));
         } else {
             app.add_systems(
@@ -48,7 +48,7 @@ impl Plugin for CombatPlugin {
     }
 }
 
-#[derive(Default, Component, Networked)]
+#[derive(Default, Component, TypePath, Networked)]
 #[networked(client = "CombatModeClient")]
 pub struct CombatMode {
     enabled: NetworkVar<bool>,
@@ -60,9 +60,8 @@ impl CombatMode {
     }
 }
 
-#[derive(Component, Networked, TypeUuid, Default)]
+#[derive(Component, Networked, TypePath, Default)]
 #[networked(server = "CombatMode")]
-#[uuid = "bfe1d314-6e1a-4e9d-b871-d8e9879e27ea"]
 pub struct CombatModeClient {
     enabled: ServerVar<bool>,
     pub aim: Aim,
@@ -76,7 +75,7 @@ pub struct ClientCombatModeStatus<'w, 's> {
 impl<'w, 's> ClientCombatModeStatus<'w, 's> {
     pub fn is_enabled(&self) -> bool {
         self.controlled
-            .get_single()
+            .single()
             .map(|mode| *mode.enabled)
             .unwrap_or(false)
     }
@@ -88,13 +87,13 @@ struct UpdateCombatModeRequest {
 }
 
 fn receive_combat_mode_request(
-    mut messages: EventReader<MessageEvent<UpdateCombatModeRequest>>,
+    mut messages: MessageReader<MessageEvent<UpdateCombatModeRequest>>,
     players: Res<Players>,
     controlled: Res<ClientControls>,
     mut modes: Query<&mut CombatMode>,
     mut commands: Commands,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let Some(player) = players.get(event.connection) else {
             continue;
         };
@@ -116,9 +115,9 @@ fn client_combat_mode_ui(mut contexts: EguiContexts, status: ClientCombatModeSta
     if !status.is_enabled() {
         return;
     }
-    egui::Area::new("combat_mode_indicator")
+    egui::Area::new(egui::Id::new("combat_mode_indicator"))
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 0.0))
-        .show(contexts.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut().unwrap(), |ui| {
             ui.vertical_centered_justified(|ui| {
                 ui.label(
                     egui::RichText::new("COMBAT MODE")
@@ -130,7 +129,7 @@ fn client_combat_mode_ui(mut contexts: EguiContexts, status: ClientCombatModeSta
 }
 
 fn client_toggle_combat_mode(
-    keys: Res<Input<KeyCode>>,
+    keys: Res<ButtonInput<KeyCode>>,
     status: ClientCombatModeStatus,
     mut sender: MessageSender,
 ) {
@@ -165,7 +164,7 @@ fn client_calculate_aim(
         return;
     }
 
-    let Ok(window) = windows.get_single() else {
+    let Ok(window) = windows.single() else {
         return;
     };
     let Some((camera, camera_transform)) = cameras.iter().next() else {
@@ -175,11 +174,14 @@ fn client_calculate_aim(
         return;
     };
 
-    let Some(ray) = camera.viewport_to_world(camera_transform, cursor_position) else {
+    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_position) else {
         return;
     };
 
-    let Some(toi) = ray.intersect_plane(Vec3::new(0.0, RANGED_AIM_HEIGHT, 0.0), Vec3::Y) else {
+    let Some(toi) = ray.intersect_plane(
+        Vec3::new(0.0, RANGED_AIM_HEIGHT, 0.0),
+        InfinitePlane3d::new(Vec3::Y),
+    ) else {
         return;
     };
     let target_position = ray.origin + ray.direction * toi;
@@ -200,7 +202,7 @@ struct CombatInput {
 
 fn client_combat_input(
     combat_mode: ClientCombatModeStatus,
-    buttons: Res<Input<MouseButton>>,
+    buttons: Res<ButtonInput<MouseButton>>,
     players: Query<&CombatModeClient, With<ClientControlled>>,
     mut sender: MessageSender,
 ) {
@@ -212,7 +214,9 @@ fn client_combat_input(
         return;
     }
 
-    let combat = players.single();
+    let Ok(combat) = players.single() else {
+        return;
+    };
 
     // TODO: Should be unreliable and buffered, including prediction
     sender.send_to_server(&CombatInput {
@@ -221,7 +225,7 @@ fn client_combat_input(
     });
 }
 
-#[derive(Event)]
+#[derive(Message)]
 struct CombatInputEvent {
     #[allow(dead_code)]
     actor: Entity,
@@ -232,14 +236,14 @@ struct CombatInputEvent {
 }
 
 fn handle_attack_request(
-    mut events: EventReader<MessageEvent<CombatInput>>,
+    mut events: MessageReader<MessageEvent<CombatInput>>,
     players: Res<Players>,
     controls: Res<ClientControls>,
     bodies: Query<&Hands>,
     hand_query: Query<(Entity, &Container), With<Hand>>,
-    mut attack_event: EventWriter<CombatInputEvent>,
+    mut attack_event: MessageWriter<CombatInputEvent>,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         let Some(player) = players.get(event.connection).map(|p| p.id) else {
             continue;
         };
@@ -255,7 +259,7 @@ fn handle_attack_request(
             hand.and_then(|(_, container)| container.iter().next().map(|(_, item)| *item));
         let used_hand = hand.unzip().0;
 
-        attack_event.send(CombatInputEvent {
+        attack_event.write(CombatInputEvent {
             actor: player_entity,
             input: event.message,
             wielded_weapon,

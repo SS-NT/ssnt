@@ -1,14 +1,6 @@
-use bevy::{
-    asset::{AssetPathId, HandleId},
-    input::Input,
-    math::Vec3,
-    prelude::*,
-    reflect::Reflect,
-    scene::DynamicScene,
-    window::PrimaryWindow,
-};
+use bevy::{asset::LoadedFolder, math::Vec3, prelude::*, scene::ScenePatch, window::PrimaryWindow};
 use bevy_egui::{egui, EguiContexts};
-use bevy_rapier3d::plugin::RapierContext;
+use bevy_rapier3d::plugin::ReadRapierContext;
 use networking::{
     is_server,
     messaging::{AppExt, MessageEvent, MessageSender},
@@ -26,80 +18,90 @@ use crate::{
 
 struct ItemData {
     name: String,
-    id: AssetPathId,
+    /// Asset path of the item scene.
+    id: String,
 }
 
 #[derive(Resource, Default)]
 struct SpawnerUiState {
     all_items: Vec<ItemData>,
-    to_spawn: Option<AssetPathId>,
+    to_spawn: Option<String>,
+    loaded: bool,
 }
 
 fn spawning_ui(mut contexts: EguiContexts, mut state: ResMut<SpawnerUiState>) {
     let state = state.as_mut();
-    egui::Window::new("Spawning").show(contexts.ctx_mut(), |ui| {
+    egui::Window::new("Spawning").show(contexts.ctx_mut().unwrap(), |ui| {
         ui.selectable_value(&mut state.to_spawn, None, "None");
         for data in state.all_items.iter() {
-            ui.selectable_value(&mut state.to_spawn, Some(data.id), &data.name);
+            ui.selectable_value(&mut state.to_spawn, Some(data.id.clone()), &data.name);
         }
     });
 }
 
 fn prepare_item_ui_data(
     assets: Res<ItemAssets>,
-    mut events: EventReader<AssetEvent<DynamicScene>>,
+    folders: Res<Assets<LoadedFolder>>,
+    patches: Res<Assets<ScenePatch>>,
+    type_registry: Res<AppTypeRegistry>,
     mut ui_data: ResMut<SpawnerUiState>,
-    scenes: Res<Assets<DynamicScene>>,
 ) {
-    let loaded_item = events.iter().any(|e| match e {
-        AssetEvent::Created { handle } => assets.definitions.contains(handle),
-        _ => false,
-    });
-    if !loaded_item {
+    if ui_data.loaded {
         return;
     }
+    let Some(folder) = folders.get(&assets.definitions) else {
+        return;
+    };
 
-    ui_data.all_items.clear();
-    for handle in &assets.definitions {
-        let scene = match scenes.get(handle) {
-            Some(s) => s,
-            None => continue,
+    let mut items = Vec::with_capacity(folder.handles.len());
+    for handle in &folder.handles {
+        let Some(path) = handle
+            .path()
+            .map(|p| p.path().to_string_lossy().into_owned())
+        else {
+            continue;
         };
-        let entity = scene.entities.first().unwrap();
-        let dynamic = match entity
-            .components
-            .iter()
-            .find(|c| c.type_name() == "ssnt::items::Item")
-        {
-            Some(i) => i,
-            None => {
-                warn!("No item component in item file");
-                continue;
-            }
+        let Ok(id) = handle.id().try_typed::<ScenePatch>() else {
+            continue;
         };
-        let mut item = Item::default();
-        item.apply(dynamic.as_ref());
-        ui_data.all_items.push(ItemData {
-            name: item.name.clone(),
-            id: match handle.id() {
-                HandleId::AssetPathId(p) => p,
-                _ => panic!("Item must be loaded from disk"),
-            },
-        });
+        // Bail out until every item scene has loaded and resolved, then retry next frame.
+        let Some(patch) = patches.get(id) else {
+            return;
+        };
+        let Some(resolved) = &patch.resolved else {
+            return;
+        };
+        // Spawn the scene into a throwaway world to read the item's display name.
+        let mut scratch = World::new();
+        scratch.insert_resource(type_registry.clone());
+        let name = resolved
+            .spawn(&mut scratch)
+            .ok()
+            .and_then(|entity| entity.get::<Item>().map(|item| item.name.clone()))
+            .unwrap_or_else(|| {
+                std::path::Path::new(&path)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.clone())
+            });
+        items.push(ItemData { name, id: path });
     }
+
+    ui_data.all_items = items;
+    ui_data.loaded = true;
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 enum SpawnerMessage {
-    Request((Vec3, AssetPathId)),
+    Request((Vec3, String)),
 }
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_requesting(
     ui_state: Res<SpawnerUiState>,
-    mut buttons: ResMut<Input<MouseButton>>,
+    mut buttons: ResMut<ButtonInput<MouseButton>>,
     mut contexts: EguiContexts,
-    rapier_context: Res<RapierContext>,
+    rapier_context: ReadRapierContext,
     windows: Query<(Entity, &Window), With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut sender: MessageSender,
@@ -112,14 +114,13 @@ fn spawn_requesting(
         return;
     }
 
-    let Ok((window_entity, window)) = windows.get_single() else {
+    let Ok((window_entity, window)) = windows.single() else {
         return;
     };
 
     if contexts
-        .try_ctx_for_window_mut(window_entity)
-        .map(|c| c.wants_pointer_input())
-        == Some(true)
+        .ctx_for_entity_mut(window_entity)
+        .is_ok_and(|c| c.wants_pointer_input())
     {
         return;
     }
@@ -136,43 +137,50 @@ fn spawn_requesting(
         None => return,
     };
 
-    let Ray { origin, direction } =
-        match camera.viewport_to_world(camera_transform, cursor_position) {
-            Some(r) => r,
-            None => return,
-        };
+    let (origin, direction) = match camera.viewport_to_world(camera_transform, cursor_position) {
+        Ok(ray) => (ray.origin, ray.direction.as_vec3()),
+        Err(_) => return,
+    };
 
-    if let Some((_, toi)) =
-        rapier_context.cast_ray(origin, direction, 100.0, true, Default::default())
-    {
+    if let Some((_, toi)) = rapier_context.single().unwrap().cast_ray(
+        origin,
+        direction,
+        100.0,
+        true,
+        Default::default(),
+    ) {
         let hit_point = origin + direction * toi;
         info!(position=?hit_point, "Requesting object spawn");
         sender.send_to_server(&SpawnerMessage::Request((
             hit_point,
-            ui_state.to_spawn.unwrap(),
+            ui_state.to_spawn.clone().unwrap(),
         )));
     }
 }
 
 fn handle_spawn_request(
-    mut messages: EventReader<MessageEvent<SpawnerMessage>>,
+    mut messages: MessageReader<MessageEvent<SpawnerMessage>>,
     mut commands: Commands,
     assets: Res<ItemAssets>,
+    folders: Res<Assets<LoadedFolder>>,
+    asset_server: Res<AssetServer>,
 ) {
-    for event in messages.iter() {
-        let SpawnerMessage::Request((position, id)) = event.message;
-        let exists = assets
-            .definitions
-            .iter()
-            // TODO: Fix O(n) lookup
-            .any(|h| h.id() == HandleId::AssetPathId(id));
+    for event in messages.read() {
+        let SpawnerMessage::Request((position, path)) = &event.message;
+        // Only allow spawning items that belong to the loaded item folder.
+        let exists = folders.get(&assets.definitions).is_some_and(|folder| {
+            folder.handles.iter().any(|h| {
+                h.path()
+                    .is_some_and(|p| p.path().to_string_lossy() == path.as_str())
+            })
+        });
         if !exists {
             warn!("Invalid item id received from {:?}", event.connection);
             continue;
         }
         commands.spawn(NetworkSceneBundle {
-            scene: Handle::weak(id.into()).into(),
-            transform: Transform::from_translation(position + Vec3::Y * 5.0),
+            scene: asset_server.load::<ScenePatch>(path.clone()).into(),
+            transform: Transform::from_translation(*position + Vec3::Y * 5.0),
             ..Default::default()
         });
         info!(connection=?event.connection, "Spawned item");
@@ -188,7 +196,7 @@ impl Plugin for SpawningPlugin {
         if is_server(app) {
             app.add_systems(
                 Update,
-                handle_spawn_request.run_if(on_event::<MessageEvent<SpawnerMessage>>()),
+                handle_spawn_request.run_if(on_message::<MessageEvent<SpawnerMessage>>),
             );
         } else {
             app.init_resource::<SpawnerUiState>().add_systems(

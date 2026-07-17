@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 pub fn movement_system(
     time: Res<Time>,
-    keyboard_input: Res<Input<KeyCode>>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
     mut query: Query<
         (
             Entity,
@@ -45,10 +45,10 @@ pub fn movement_system(
             continue;
         }
 
-        let axis_x = movement_axis(&keyboard_input, KeyCode::W, KeyCode::S);
-        let axis_z = movement_axis(&keyboard_input, KeyCode::D, KeyCode::A);
+        let axis_x = movement_axis(&keyboard_input, KeyCode::KeyW, KeyCode::KeyS);
+        let axis_z = movement_axis(&keyboard_input, KeyCode::KeyD, KeyCode::KeyA);
 
-        let current_angle = match camera_query.get_single() {
+        let current_angle = match camera_query.single() {
             Ok(c) => c.current_angle(),
             Err(_) => return,
         };
@@ -69,7 +69,7 @@ pub fn movement_system(
 
         // Move target velocity towards ideal speed, by acceleration
         let difference: Vec2 = ideal_speed - player.target_velocity;
-        let step: f32 = player.acceleration * time.delta_seconds();
+        let step: f32 = player.acceleration * time.delta_secs();
         let difference_magnitude = difference.length();
         if difference_magnitude < step || difference_magnitude < f32::EPSILON {
             player.target_velocity = ideal_speed;
@@ -78,15 +78,15 @@ pub fn movement_system(
         }
 
         // Calculate needed force to reach target velocity in one frame
-        let mut one_tick = time.delta_seconds();
+        let mut one_tick = time.delta_secs();
         if one_tick < f32::EPSILON {
             one_tick = 1.0;
         }
-        let current_velocity = velocity.linvel.xz();
+        let current_velocity = velocity.linear.xz();
         let needed_acceleration: Vec2 = (player.target_velocity - current_velocity) / one_tick;
         let max_acceleration = player.max_acceleration_force;
         let allowed_acceleration = needed_acceleration.clamp_length_max(max_acceleration);
-        let force: Vec2 = allowed_acceleration * mass_properties.0.mass;
+        let force: Vec2 = allowed_acceleration * mass_properties.get().mass;
 
         if let Some(mut forces) = forces {
             forces.force = Vec3::new(force.x, 0.0, force.y);
@@ -148,12 +148,12 @@ fn character_rotation_system(
         // Linearly move towards target rotation
         transform.rotation = current_rotation.slerp(
             target_rotation,
-            1f32.min(time.delta_seconds() * max_angle / angle),
+            1f32.min(time.delta_secs() * max_angle / angle),
         );
     }
 }
 
-fn movement_axis(input: &Res<Input<KeyCode>>, plus: KeyCode, minus: KeyCode) -> f32 {
+fn movement_axis(input: &Res<ButtonInput<KeyCode>>, plus: KeyCode, minus: KeyCode) -> f32 {
     let mut axis = 0.0;
     if input.pressed(plus) {
         axis += 1.0;
@@ -191,10 +191,10 @@ fn handle_movement_message(
     mut query: Query<&mut Transform, With<ClientMovement>>,
     controls: Res<ClientControls>,
     players: Res<Players>,
-    mut messages: EventReader<MessageEvent<MovementMessage>>,
+    mut messages: MessageReader<MessageEvent<MovementMessage>>,
     mut commands: Commands,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let player = match players.get(event.connection) {
             Some(p) => p,
             None => continue,
@@ -208,8 +208,8 @@ fn handle_movement_message(
                 // Once movement is server authoritative this won't be necessary
                 commands.entity(controlled).insert((
                     Velocity {
-                        linvel: Vec3::ZERO,
-                        angvel: Vec3::ZERO,
+                        linear: Vec3::ZERO,
+                        angular: Vec3::ZERO,
                     },
                     // TODO: Remove once client no longer has authority
                     ClientAuthoritativeTransform {
@@ -226,19 +226,19 @@ fn handle_movement_message(
 // The code needs to die.
 fn handle_force_position_client(
     mut query: Query<Entity, (With<ClientControlled>, With<Transform>)>,
-    mut messages: EventReader<MessageEvent<ForcePositionMessage>>,
+    mut messages: MessageReader<MessageEvent<ForcePositionMessage>>,
     mut current: Local<Option<(f32, ForcePositionMessage)>>,
     time: Res<Time>,
     mut commands: Commands,
 ) {
-    if let Some(event) = messages.iter().last() {
-        *current = Some((time.raw_elapsed_seconds(), event.message.clone()));
+    if let Some(event) = messages.read().last() {
+        *current = Some((time.elapsed_secs(), event.message.clone()));
     }
 
-    if let Ok(entity) = query.get_single_mut() {
+    if let Ok(entity) = query.single_mut() {
         if let Some((start_time, message)) = current.as_mut() {
             // Mfw I can't be bothered to fix this properly
-            if *start_time + 0.5 <= time.raw_elapsed_seconds() {
+            if *start_time + 0.5 <= time.elapsed_secs() {
                 *current = None;
                 return;
             }
@@ -257,13 +257,13 @@ fn handle_force_position_client(
 }
 
 fn force_position_on_rejoin(
-    mut server_events: EventReader<ServerEvent>,
+    mut server_events: MessageReader<ServerEvent>,
     controlled: Res<ClientControls>,
     players: Res<Players>,
     transforms: Query<&Transform>,
     mut sender: MessageSender,
 ) {
-    for event in server_events.iter() {
+    for event in server_events.read() {
         if let ServerEvent::PlayerConnected(connection) = event {
             let player = players.get(*connection).unwrap();
             if let Some(entity) = controlled.controlled_entity(player.id) {
@@ -316,16 +316,16 @@ fn restore_client_position(
 
 #[allow(clippy::too_many_arguments)]
 fn prevent_movement_when_unconcious(
-    mut reader: EventReader<BrainStateEvent>,
+    mut reader: MessageReader<BrainStateEvent>,
     bodies: Query<&Body>,
     mut transforms: Query<&mut Transform>,
-    parents: Query<&Parent>,
+    parents: Query<&ChildOf>,
     controls: Res<ClientControls>,
     players: Res<Players>,
     mut sender: MessageSender,
     mut commands: Commands,
 ) {
-    for event in reader.iter() {
+    for event in reader.read() {
         let Some(body_entity) = parents
             .iter_ancestors(event.brain)
             .find(|e| bodies.contains(*e))
@@ -380,7 +380,7 @@ impl Plugin for MovementPlugin {
             .add_network_message::<ForcePositionMessage>();
 
         if app
-            .world
+            .world()
             .get_resource::<NetworkManager>()
             .unwrap()
             .is_client()
@@ -404,7 +404,7 @@ impl Plugin for MovementPlugin {
                 (
                     handle_movement_message,
                     force_position_on_rejoin,
-                    prevent_movement_when_unconcious.run_if(on_event::<BrainStateEvent>()),
+                    prevent_movement_when_unconcious.run_if(on_message::<BrainStateEvent>),
                 ),
             )
             .add_systems(

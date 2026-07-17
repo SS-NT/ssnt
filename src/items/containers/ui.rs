@@ -1,4 +1,4 @@
-use bevy::{prelude::*, reflect::TypeUuid, utils::HashMap};
+use bevy::{platform::collections::HashMap, prelude::*, reflect::TypePath};
 use bevy_egui::{egui, EguiContexts};
 use networking::{
     component::AppExt as _,
@@ -49,14 +49,13 @@ impl Plugin for ContainerUiPlugin {
     }
 }
 
-#[derive(Component, Networked)]
+#[derive(Component, TypePath, Networked)]
 #[networked(client = "ContainerUiClient")]
 struct ContainerUi {
     container: NetworkVar<NetworkIdentity>,
 }
 
-#[derive(Component, TypeUuid, Default, Networked)]
-#[uuid = "56ca80f9-e239-48f9-86c3-4bf06249ec0e"]
+#[derive(Component, TypePath, Default, Networked)]
 #[networked(server = "ContainerUi")]
 struct ContainerUiClient {
     container: ServerVar<NetworkIdentity>,
@@ -104,8 +103,8 @@ fn container_ui(
         egui::Window::new("Container")
             .id(egui::Id::new(("container", ui_entity)))
             .open(&mut keep_open)
-            .show(contexts.ctx_mut(), |ui| {
-                let anything_dragged = ui.memory(|mem| mem.is_anything_being_dragged());
+            .show(contexts.ctx_mut().unwrap(), |ui| {
+                let anything_dragged = ui.ctx().dragged_id().is_some();
                 if !anything_dragged {
                     dragged.info = None;
                 }
@@ -149,6 +148,7 @@ fn container_ui(
                             0.,
                             egui::Color32::from_gray(32),
                             egui::Stroke::new(0.8, egui::Color32::from_gray(80)),
+                            egui::StrokeKind::Inside,
                         );
                     }
                 }
@@ -182,6 +182,7 @@ fn container_ui(
                             }
                             .gamma_multiply(0.25),
                             egui::Stroke::NONE,
+                            egui::StrokeKind::Inside,
                         );
                     }
 
@@ -200,7 +201,9 @@ fn container_ui(
                                 // TODO: actually do rollback on fail
                                 item.slot.set(position);
                                 item.container.set(*container_ui.container);
-                                commands.entity(item_entity).set_parent(container_entity);
+                                commands
+                                    .entity(item_entity)
+                                    .insert(ChildOf(container_entity));
 
                                 dragged.info.as_mut().unwrap().just_dropped = true;
                             }
@@ -211,7 +214,7 @@ fn container_ui(
                 // Paint all items in container
                 for (position, (item_entity, name, size)) in stored.iter() {
                     let id = egui::Id::new(item_entity).with(container_entity);
-                    let is_being_dragged = ui.memory(|mem| mem.is_being_dragged(id));
+                    let is_being_dragged = ui.ctx().is_being_dragged(id);
                     let item_rect = egui::Rect::from_min_size(
                         egui::pos2(
                             position.x as f32 * SLOT_SIZE.x,
@@ -238,7 +241,10 @@ fn container_ui(
 
                         if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
                             let delta = pointer_pos - item_rect.center();
-                            ui.ctx().translate_layer(layer_id, delta);
+                            ui.ctx().transform_layer_shapes(
+                                layer_id,
+                                egui::emath::TSTransform::from_translation(delta),
+                            );
                         }
                     } else {
                         ui.interact(item_rect, id, egui::Sense::drag());
@@ -256,7 +262,10 @@ fn container_ui(
     if let Some(info) = dragged.info.as_ref() {
         if !info.over_anything
             && !info.just_dropped
-            && contexts.ctx_mut().input(|i| i.pointer.any_released())
+            && contexts
+                .ctx_mut()
+                .unwrap()
+                .input(|i| i.pointer.any_released())
         {
             let Ok((_, &item, ..)) = items.get(info.entity) else {
                 return;
@@ -285,6 +294,7 @@ fn draw_item(ui: &mut egui::Ui, item_rect: egui::Rect, name: &str) {
         0.,
         egui::Color32::from_white_alpha(16),
         egui::Stroke::new(1.0, egui::Color32::WHITE),
+        egui::StrokeKind::Inside,
     );
     let styled_text = egui::RichText::new(name)
         .size(11.0)
@@ -300,11 +310,11 @@ struct MoveItemMessage {
 }
 
 fn handle_move_message(
-    mut messages: EventReader<MessageEvent<MoveItemMessage>>,
+    mut messages: MessageReader<MessageEvent<MoveItemMessage>>,
     identities: Res<NetworkIdentities>,
     mut item_moves: ResMut<Tasks<MoveItem>>,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let message = &event.message;
         let Some(item_entity) = identities.get_entity(message.item) else {
             continue;

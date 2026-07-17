@@ -24,6 +24,8 @@ impl<T> Command for EnableComponent<T>
 where
     T: Component,
 {
+    type Out = ();
+
     fn apply(self, world: &mut World) {
         let mut entity = world.entity_mut(self.entity);
         let value = entity.take::<Disabled<T>>().unwrap().0;
@@ -49,6 +51,8 @@ impl<T> Command for DisableComponent<T>
 where
     T: Component,
 {
+    type Out = ();
+
     fn apply(self, world: &mut World) {
         let mut entity = world.entity_mut(self.entity);
         let value = entity.take::<T>().unwrap();
@@ -65,13 +69,13 @@ pub trait EntityCommandsExt {
         T: Component;
 }
 
-impl<'w, 's, 'a> EntityCommandsExt for EntityCommands<'w, 's, 'a> {
+impl<'a> EntityCommandsExt for EntityCommands<'a> {
     fn enable_component<T>(&mut self) -> &mut Self
     where
         T: Component,
     {
         let id = self.id();
-        self.commands().add(EnableComponent::<T>::new(id));
+        self.commands().queue(EnableComponent::<T>::new(id));
         self
     }
 
@@ -80,7 +84,7 @@ impl<'w, 's, 'a> EntityCommandsExt for EntityCommands<'w, 's, 'a> {
         T: Component,
     {
         let id = self.id();
-        self.commands().add(DisableComponent::<T>::new(id));
+        self.commands().queue(DisableComponent::<T>::new(id));
         self
     }
 }
@@ -88,6 +92,6 @@ impl<'w, 's, 'a> EntityCommandsExt for EntityCommands<'w, 's, 'a> {
 /// Despawns all entities that have a specific component
 pub fn despawn_with<T: Component>(to_despawn: Query<Entity, With<T>>, mut commands: Commands) {
     for entity in &to_despawn {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).despawn();
     }
 }

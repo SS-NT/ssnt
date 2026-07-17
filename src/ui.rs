@@ -32,8 +32,8 @@ impl Plugin for UiPlugin {
                 .add_systems(
                     PreUpdate,
                     (absorb_egui_inputs,)
-                        .after(bevy_egui::systems::process_input_system)
-                        .before(bevy_egui::EguiSet::BeginFrame),
+                        .after(bevy_egui::EguiPreUpdateSet::ProcessInput)
+                        .before(bevy_egui::EguiPreUpdateSet::BeginPass),
                 );
         }
     }
@@ -46,15 +46,15 @@ pub fn has_window(query: Query<(), With<PrimaryWindow>>) -> bool {
 
 /// Prevents bevy systems from receiving input when it's used by the UI
 fn absorb_egui_inputs(
-    mut mouse: ResMut<Input<MouseButton>>,
-    mut keyboard: ResMut<Input<KeyCode>>,
+    mut mouse: ResMut<ButtonInput<MouseButton>>,
+    mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut contexts: EguiContexts,
 ) {
-    if contexts.ctx_mut().is_pointer_over_area() {
+    if contexts.ctx_mut().unwrap().is_pointer_over_area() {
         mouse.reset_all();
     }
 
-    if contexts.ctx_mut().wants_keyboard_input() {
+    if contexts.ctx_mut().unwrap().wants_keyboard_input() {
         keyboard.reset_all();
     }
 }
@@ -69,13 +69,13 @@ pub struct CloseUiMessage {
 }
 
 fn handle_close_ui(
-    mut messages: EventReader<MessageEvent<CloseUiMessage>>,
+    mut messages: MessageReader<MessageEvent<CloseUiMessage>>,
     mut uis: Query<&mut AlwaysVisible, With<NetworkUi>>,
     players: Res<Players>,
     controls: Res<ClientControls>,
     identities: Res<NetworkIdentities>,
 ) {
-    for event in messages.iter() {
+    for event in messages.read() {
         let Some(player) = players.get(event.connection) else {
             continue;
         };

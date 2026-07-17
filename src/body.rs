@@ -1,14 +1,16 @@
 use std::fmt;
 
 use bevy::{
+    asset::LoadedFolder,
     ecs::{
         entity::{EntityMapper, MapEntities},
+        hierarchy::ChildSpawnerCommands,
         reflect::ReflectMapEntities,
         system::{EntityCommands, SystemParam},
     },
+    platform::collections::HashSet,
     prelude::*,
-    reflect::TypeUuid,
-    utils::HashSet,
+    reflect::TypePath,
 };
 use bevy_egui::{egui, EguiContexts};
 use networking::{
@@ -56,7 +58,7 @@ impl Plugin for BodyPlugin {
             app.register_type::<PickupInteraction>()
                 .register_type::<DropInteraction>()
                 .register_type::<CutInteraction>()
-                .add_event::<LimbEvent>()
+                .add_message::<LimbEvent>()
                 .init_resource::<Tasks<SpawnCreature>>()
                 .add_systems(
                     Update,
@@ -90,16 +92,15 @@ impl Plugin for BodyPlugin {
 
         app.insert_resource(BodyAssets {
             scenes: app
-                .world
+                .world()
                 .resource::<AssetServer>()
-                .load_folder("creatures/")
-                .unwrap(),
+                .load_folder("creatures"),
         });
     }
 }
 
 #[derive(Component, Default, Reflect)]
-#[reflect(Component, MapEntities)]
+#[reflect(Component, MapEntities, Default)]
 pub struct Body {
     limbs: HashSet<Entity>,
     added_limbs: Vec<Entity>,
@@ -107,17 +108,19 @@ pub struct Body {
 }
 
 impl MapEntities for Body {
-    fn map_entities(&mut self, entity_mapper: &mut EntityMapper) {
+    fn map_entities<E: EntityMapper>(&mut self, entity_mapper: &mut E) {
         self.limbs = self
             .limbs
             .iter()
-            .map(|e| entity_mapper.get_or_reserve(*e))
+            .map(|e| entity_mapper.get_mapped(*e))
             .collect();
     }
 }
 
-#[derive(Reflect)]
+#[derive(Reflect, Default)]
+#[reflect(Default)]
 pub enum LimbSide {
+    #[default]
     Left,
     Right,
 }
@@ -131,21 +134,13 @@ impl fmt::Display for LimbSide {
     }
 }
 
-#[derive(Component, Reflect)]
-#[reflect(Component)]
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
 pub struct Limb {
     attachment_position: Vec3,
 }
 
-impl FromWorld for Limb {
-    fn from_world(_: &mut World) -> Self {
-        Self {
-            attachment_position: Vec3::ZERO,
-        }
-    }
-}
-
-#[derive(Event)]
+#[derive(Message)]
 struct LimbEvent {
     limb_entity: Entity,
     kind: LimbEventKind,
@@ -160,7 +155,7 @@ enum LimbEventKind {
 fn process_new_limbs(
     mut bodies: Query<&mut Body, Changed<Body>>,
     mut limbs: Query<(&Limb, &mut Transform)>,
-    mut writer: EventWriter<LimbEvent>,
+    mut writer: MessageWriter<LimbEvent>,
     mut commands: Commands,
 ) {
     for mut body in bodies.iter_mut() {
@@ -172,7 +167,7 @@ fn process_new_limbs(
             commands
                 .entity(limb_entity)
                 .freeze(Some(ColliderGroup::AttachedLimbs));
-            writer.send(LimbEvent {
+            writer.write(LimbEvent {
                 limb_entity,
                 kind: LimbEventKind::Added,
             });
@@ -184,7 +179,7 @@ fn process_new_limbs(
 fn process_limb_removal(
     mut bodies: Query<&mut Body, Changed<Body>>,
     mut transforms: Query<(&mut Transform, &GlobalTransform)>,
-    mut writer: EventWriter<LimbEvent>,
+    mut writer: MessageWriter<LimbEvent>,
     mut commands: Commands,
 ) {
     for mut body in bodies.iter_mut() {
@@ -198,9 +193,9 @@ fn process_limb_removal(
             }
             commands
                 .entity(limb_entity)
-                .remove_parent()
+                .remove::<ChildOf>()
                 .unfreeze(Some(ColliderGroup::Default));
-            writer.send(LimbEvent {
+            writer.write(LimbEvent {
                 limb_entity,
                 kind: LimbEventKind::Removed,
             });
@@ -209,14 +204,14 @@ fn process_limb_removal(
 }
 
 fn client_update_limbs(
-    mut added_limbs: Query<(Entity, &Parent), (Or<(Added<Limb>, Changed<Parent>)>,)>,
-    parents: Query<&Parent>,
+    mut added_limbs: Query<(Entity, &ChildOf), (Or<(Added<Limb>, Changed<ChildOf>)>,)>,
+    parents: Query<&ChildOf>,
     hands: Query<(), With<Hand>>,
     mut bodies: Query<&mut Body, With<ClientControlled>>,
 ) {
     for (limb_entity, limb_parent) in added_limbs.iter_mut() {
         // HACK: assume limb is handled as item if nested under hands
-        if hands.contains(limb_parent.get()) {
+        if hands.contains(limb_parent.parent()) {
             continue;
         }
 
@@ -232,23 +227,14 @@ fn client_update_limbs(
     // TODO: removed limbs
 }
 
-#[derive(Component, Reflect)]
-#[reflect(Component)]
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
 pub struct Hand {
     pub side: LimbSide,
     order: u32,
 }
 
-impl FromWorld for Hand {
-    fn from_world(_: &mut World) -> Self {
-        Self {
-            side: LimbSide::Left,
-            order: 0,
-        }
-    }
-}
-
-#[derive(Component, Networked)]
+#[derive(Component, TypePath, Networked)]
 #[networked(client = "HandsClient")]
 pub struct Hands {
     #[networked(
@@ -269,9 +255,8 @@ impl Hands {
     }
 }
 
-#[derive(Component, Networked, TypeUuid, Default)]
+#[derive(Component, Networked, TypePath, Default)]
 #[networked(server = "Hands")]
-#[uuid = "9c9b2476-15e1-4d34-9336-7368f6702406"]
 pub struct HandsClient {
     active_hand: ServerVar<NetworkIdentity>,
 }
@@ -293,7 +278,7 @@ pub struct ClientHeldItem<'w, 's> {
 
 impl<'w, 's> ClientHeldItem<'w, 's> {
     pub fn get(&self) -> Option<Entity> {
-        let hands = self.client_body.get_single().ok()?;
+        let hands = self.client_body.single().ok()?;
         let active_hand = self.identities.get_entity(hands.active_hand())?;
         let children = self.child_query.get(active_hand).ok()?;
         self.items.iter_many(children.iter()).next()
@@ -335,11 +320,11 @@ fn handle_hand_modification(
 }
 
 fn handle_hand_separation(
-    mut events: EventReader<LimbEvent>,
+    mut events: MessageReader<LimbEvent>,
     hands: Query<&Container, With<Hand>>,
     mut move_items: ResMut<Tasks<MoveItem>>,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         if event.kind != LimbEventKind::Removed {
             continue;
         }
@@ -374,7 +359,7 @@ fn hand_ui(
     mut ordered_hands: Local<Vec<(Entity, u32)>>,
     mut sender: MessageSender,
 ) {
-    let Ok((body, hand_data)) = bodies.get_single_mut() else {
+    let Ok((body, hand_data)) = bodies.single_mut() else {
         return;
     };
 
@@ -382,7 +367,7 @@ fn hand_ui(
         .title_bar(false)
         .anchor(egui::Align2::CENTER_BOTTOM, egui::Vec2::ZERO)
         .resizable(false)
-        .show(contexts.ctx_mut(), |ui| {
+        .show(contexts.ctx_mut().unwrap(), |ui| {
             ui.horizontal_wrapped(|ui| {
                 // Order hands for display
                 ordered_hands.clear();
@@ -422,16 +407,16 @@ fn hand_ui(
 }
 
 fn client_hands_keybind(
-    keyboard_input: Res<Input<KeyCode>>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
     mut bodies: Query<(&Body, &mut HandsClient), With<ClientControlled>>,
     hands: Query<&NetworkIdentity, With<Hand>>,
     mut sender: MessageSender,
 ) {
-    if !keyboard_input.just_pressed(KeyCode::X) {
+    if !keyboard_input.just_pressed(KeyCode::KeyX) {
         return;
     }
 
-    let Ok((body, hand_data)) = bodies.get_single_mut() else {
+    let Ok((body, hand_data)) = bodies.single_mut() else {
         return;
     };
 
@@ -457,13 +442,13 @@ fn client_hands_keybind(
 }
 
 fn handle_hand_change_request(
-    mut events: EventReader<MessageEvent<ChangeHandRequest>>,
+    mut events: MessageReader<MessageEvent<ChangeHandRequest>>,
     players: Res<Players>,
     controls: Res<ClientControls>,
     identities: Res<NetworkIdentities>,
     mut hands: Query<&mut Hands>,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         let Some(controlled) = players
             .get(event.connection)
             .and_then(|player| controls.controlled_entity(player.id))
@@ -485,7 +470,7 @@ fn handle_hand_change_request(
 struct BodyAssets {
     // Used to keep strong handles to prevent asset unloading
     #[allow(dead_code)]
-    scenes: Vec<HandleUntyped>,
+    scenes: Handle<LoadedFolder>,
 }
 
 /// Task to create the body of a given creature archetype
@@ -501,13 +486,13 @@ pub struct SpawnCreatureResult {
     pub root: Entity,
 }
 
-fn spawn_limb<'w, 's, 'a: 'b, 'b: 'c, 'c>(
-    builder: &'b mut ChildBuilder<'w, 's, 'a>,
+fn spawn_limb<'a>(
+    builder: &'a mut ChildSpawnerCommands,
     server: &AssetServer,
     name: &str,
-) -> EntityCommands<'w, 's, 'c> {
+) -> EntityCommands<'a> {
     builder.spawn(NetworkSceneBundle {
-        scene: server.load(format!("creatures/{}.scn.ron", name)).into(),
+        scene: server.load(format!("creatures/{}.bsn", name)).into(),
         ..Default::default()
     })
 }
@@ -519,7 +504,7 @@ fn create_creature(
 ) {
     tasks.process(|data| {
         let mut creature = commands.spawn(NetworkSceneBundle {
-            scene: server.load("creatures/player.scn.ron").into(),
+            scene: server.load("creatures/player.bsn").into(),
             ..Default::default()
         });
         // TODO: Replace with species configuration in assets
@@ -827,7 +812,7 @@ fn drop_interaction(
 // NOTE: This is just for funny content
 
 #[derive(Component, Reflect, Default)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 struct Cutting {}
 
 #[derive(Component, Reflect, Default)]
@@ -859,28 +844,15 @@ fn prepare_cut_interaction(
 fn cut_interaction(
     mut query: Query<(&mut CutInteraction, &mut ActiveInteraction)>,
     mut bodies: Query<&mut Body>,
-    mut transforms: Query<(&mut Transform, &GlobalTransform)>,
-    mut commands: Commands,
 ) {
     for (_, mut active) in query.iter_mut() {
         let Ok(mut body) = bodies.get_mut(active.target) else {
             active.status = InteractionStatus::Canceled;
             continue;
         };
-        commands.entity(active.target).disable_physics();
 
-        #[allow(clippy::needless_collect)]
-        let limbs: Vec<_> = body.limbs.iter().copied().collect();
-        body.limbs_to_remove.extend(limbs.into_iter());
-        for limb_entity in body.limbs.iter().copied() {
-            if let Ok((mut transform, global_transform)) = transforms.get_mut(limb_entity) {
-                *transform = global_transform.compute_transform();
-            }
-            commands
-                .entity(limb_entity)
-                .remove_parent()
-                .enable_physics();
-        }
+        let body = body.as_mut();
+        body.limbs_to_remove.extend(body.limbs.iter().copied());
         active.status = InteractionStatus::Completed;
     }
 }

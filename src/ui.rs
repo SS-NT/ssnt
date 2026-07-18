@@ -1,4 +1,4 @@
-use bevy::{prelude::*, window::PrimaryWindow};
+use bevy::prelude::*;
 use bevy_egui::EguiContexts;
 use networking::{
     identity::{NetworkIdentities, NetworkIdentity},
@@ -31,17 +31,12 @@ impl Plugin for UiPlugin {
             app.add_plugins((SplashPlugin, MainMenuPlugin, PauseMenuPlugin, LobbyPlugin))
                 .add_systems(
                     PreUpdate,
-                    (absorb_egui_inputs,)
-                        .after(bevy_egui::EguiPreUpdateSet::ProcessInput)
-                        .before(bevy_egui::EguiPreUpdateSet::BeginPass),
+                    absorb_egui_inputs
+                        .after(bevy_egui::EguiInputSet::FocusContext)
+                        .before(bevy_egui::EguiInputSet::ReadBevyMessages),
                 );
         }
     }
-}
-
-/// Run criteria that returns true if the primary window exists.
-pub fn has_window(query: Query<(), With<PrimaryWindow>>) -> bool {
-    !query.is_empty()
 }
 
 /// Prevents bevy systems from receiving input when it's used by the UI
@@ -49,14 +44,23 @@ fn absorb_egui_inputs(
     mut mouse: ResMut<ButtonInput<MouseButton>>,
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut contexts: EguiContexts,
+    mut egui_settings: ResMut<bevy_egui::EguiGlobalSettings>,
 ) {
-    if contexts.ctx_mut().unwrap().is_pointer_over_area() {
+    let ctx = contexts.ctx_mut().unwrap();
+    let pointer_over_area = ctx.is_pointer_over_area();
+    let text_edit_focused = ctx.text_edit_focused();
+
+    if pointer_over_area {
         mouse.reset_all();
     }
 
-    if contexts.ctx_mut().unwrap().wants_keyboard_input() {
+    if text_edit_focused {
         keyboard.reset_all();
     }
+
+    egui_settings
+        .input_system_settings
+        .run_write_keyboard_input_messages_system = text_edit_focused;
 }
 
 /// Marks an entity as a networked UI

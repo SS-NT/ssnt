@@ -1,25 +1,21 @@
 use std::{net::SocketAddr, str::FromStr};
 
 use bevy::prelude::*;
-use bevy_egui::EguiContexts;
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use bevy_inspector_egui::egui::{self, TextEdit};
 use networking::{ClientEvent, TargetServer, UserData};
 
 use crate::GameState;
-
-use super::has_window;
 
 pub struct MainMenuPlugin;
 
 impl Plugin for MainMenuPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
-            Update,
-            (
-                ui.run_if(in_state(GameState::MainMenu)).run_if(has_window),
-                react_to_client_change,
-            ),
-        );
+            EguiPrimaryContextPass,
+            ui.run_if(in_state(GameState::MainMenu)),
+        )
+        .add_systems(Update, react_to_client_change);
     }
 }
 

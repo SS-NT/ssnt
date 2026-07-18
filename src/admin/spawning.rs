@@ -1,5 +1,5 @@
 use bevy::{asset::LoadedFolder, math::Vec3, prelude::*, scene::ScenePatch, window::PrimaryWindow};
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use bevy_rapier3d::plugin::ReadRapierContext;
 use networking::{
     is_server,
@@ -12,7 +12,6 @@ use crate::{
     camera::MainCamera,
     interaction::InteractionSystem,
     items::{Item, ItemAssets},
-    ui::has_window,
     GameState,
 };
 
@@ -199,18 +198,20 @@ impl Plugin for SpawningPlugin {
                 handle_spawn_request.run_if(on_message::<MessageEvent<SpawnerMessage>>),
             );
         } else {
-            app.init_resource::<SpawnerUiState>().add_systems(
-                Update,
-                (
-                    prepare_item_ui_data,
+            app.init_resource::<SpawnerUiState>()
+                .add_systems(
+                    EguiPrimaryContextPass,
+                    spawning_ui.run_if(in_state(GameState::Game)),
+                )
+                .add_systems(
+                    Update,
                     (
-                        spawning_ui.run_if(has_window),
-                        spawn_requesting.before(InteractionSystem::Input),
-                    )
-                        .chain()
-                        .run_if(in_state(GameState::Game)),
-                ),
-            );
+                        prepare_item_ui_data,
+                        spawn_requesting
+                            .before(InteractionSystem::Input)
+                            .run_if(in_state(GameState::Game)),
+                    ),
+                );
         }
     }
 }

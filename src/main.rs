@@ -139,10 +139,7 @@ fn main() {
                 }),
                 networking_plugin,
                 camera::CameraPlugin,
-                EguiPlugin {
-                    enable_multipass_for_primary_context: false,
-                    ..Default::default()
-                },
+                EguiPlugin::default(),
                 debug::DebugPlugin,
             ))
             .insert_resource(ClearColor(Color::srgb(

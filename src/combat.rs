@@ -1,5 +1,5 @@
 use bevy::{ecs::system::SystemParam, prelude::*, reflect::TypePath, window::PrimaryWindow};
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use networking::{
     component::AppExt,
     is_server,
@@ -14,7 +14,6 @@ use crate::{
     body::{Hand, Hands},
     camera::MainCamera,
     items::containers::Container,
-    ui::has_window,
 };
 
 use self::ranged::RangedPlugin;
@@ -32,17 +31,15 @@ impl Plugin for CombatPlugin {
             app.add_message::<CombatInputEvent>()
                 .add_systems(Update, (receive_combat_mode_request, handle_attack_request));
         } else {
-            app.add_systems(
-                Update,
-                (
-                    client_toggle_combat_mode,
+            app.add_systems(EguiPrimaryContextPass, client_combat_mode_ui)
+                .add_systems(
+                    Update,
                     (
+                        client_toggle_combat_mode,
                         (client_calculate_aim, client_combat_input).chain(),
-                        client_combat_mode_ui.run_if(has_window),
-                    ),
-                )
-                    .chain(),
-            );
+                    )
+                        .chain(),
+                );
         }
         app.add_plugins(RangedPlugin);
     }

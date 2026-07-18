@@ -4,21 +4,17 @@ use crate::{
     GameState,
 };
 use bevy::prelude::*;
-use bevy_egui::EguiContexts;
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use bevy_inspector_egui::egui;
 use networking::{messaging::MessageSender, spawning::ClientControlled};
-
-use super::has_window;
 
 pub struct LobbyPlugin;
 
 impl Plugin for LobbyPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
-            Update,
-            (ui, job_ui)
-                .run_if(in_state(GameState::Game))
-                .run_if(has_window),
+            EguiPrimaryContextPass,
+            (ui, job_ui).run_if(in_state(GameState::Game)),
         );
     }
 }

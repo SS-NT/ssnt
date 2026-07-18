@@ -1,5 +1,5 @@
 use bevy::{platform::collections::HashMap, prelude::*, reflect::TypePath};
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use networking::{
     component::AppExt,
     identity::{EntityCommandsExt, NetworkIdentities, NetworkIdentity},
@@ -20,7 +20,7 @@ use crate::{
         InteractionOption, InteractionSpecificity, InteractionStatus,
     },
     items::Item,
-    ui::{has_window, CloseUiMessage, NetworkUi},
+    ui::{CloseUiMessage, NetworkUi},
 };
 
 use super::{
@@ -45,7 +45,7 @@ impl Plugin for HealthUiPlugin {
                 ),
             );
         } else {
-            app.add_systems(Update, vitals_ui.run_if(has_window));
+            app.add_systems(EguiPrimaryContextPass, vitals_ui);
         }
     }
 }

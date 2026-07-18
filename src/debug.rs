@@ -1,10 +1,10 @@
 use bevy::gizmos::config::GizmoConfigStore;
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_rapier3d::render::DebugRenderContext;
 
-use crate::{ui::has_window, GameState};
+use crate::GameState;
 
 pub(crate) struct DebugPlugin;
 
@@ -23,10 +23,8 @@ impl Plugin for DebugPlugin {
                     .run_if(|state: Res<DebugState>| state.inspector_enabled),
             ))
             .add_systems(
-                Update,
-                (debug_menu, debug_watermark)
-                    .run_if(has_window)
-                    .run_if(in_state(GameState::Game)),
+                EguiPrimaryContextPass,
+                (debug_menu, debug_watermark).run_if(in_state(GameState::Game)),
             );
     }
 }

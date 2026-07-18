@@ -12,7 +12,7 @@ use bevy::{
     prelude::*,
     reflect::TypePath,
 };
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use networking::{
     component::AppExt as ComponentAppExt,
     identity::{NetworkIdentities, NetworkIdentity},
@@ -36,7 +36,6 @@ use crate::{
         containers::{Container, MoveItem},
         Item, StoredItem, StoredItemClient,
     },
-    ui::has_window,
 };
 
 mod ghost;
@@ -79,13 +78,8 @@ impl Plugin for BodyPlugin {
                     ),
                 );
         } else {
-            app.add_systems(
-                Update,
-                (
-                    (client_update_limbs, hand_ui.run_if(has_window)).chain(),
-                    client_hands_keybind,
-                ),
-            );
+            app.add_systems(EguiPrimaryContextPass, hand_ui)
+                .add_systems(Update, (client_update_limbs, client_hands_keybind));
         }
 
         app.add_plugins((health::HealthPlugin, ghost::GhostPlugin));

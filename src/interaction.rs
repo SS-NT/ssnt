@@ -4,7 +4,7 @@ use bevy::{
     ecs::query::QuerySingleError, platform::collections::HashMap, prelude::*, reflect::TypePath,
     window::PrimaryWindow,
 };
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use bevy_rapier3d::prelude::ReadRapierContext;
 use networking::{
     component::AppExt as ComponentAppExt,
@@ -23,7 +23,6 @@ use crate::{
     camera::MainCamera,
     combat::ClientCombatModeStatus,
     items::containers::Container,
-    ui::has_window,
 };
 
 pub struct InteractionPlugin;
@@ -67,18 +66,18 @@ impl Plugin for InteractionPlugin {
                         .chain(),
                 );
         } else {
-            app.init_resource::<ClientInteractionUi>().add_systems(
-                Update,
-                (
-                    client_request_interaction_list.in_set(InteractionSystem::Input),
+            app.init_resource::<ClientInteractionUi>()
+                .add_systems(
+                    EguiPrimaryContextPass,
+                    (client_interaction_selection_ui, client_progress_ui),
+                )
+                .add_systems(
+                    Update,
                     (
+                        client_request_interaction_list.in_set(InteractionSystem::Input),
                         client_receive_interactions,
-                        client_interaction_selection_ui.run_if(has_window),
-                    )
-                        .chain(),
-                    client_progress_ui,
-                ),
-            );
+                    ),
+                );
         }
     }
 }

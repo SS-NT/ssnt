@@ -1,20 +1,15 @@
 use bevy::prelude::*;
-use bevy_egui::EguiContexts;
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use bevy_inspector_egui::egui;
 use networking::{ClientState, ClientTask};
 
 use crate::GameState;
 
-use super::has_window;
-
 pub struct PauseMenuPlugin;
 
 impl Plugin for PauseMenuPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            ui.run_if(in_state(GameState::Game)).run_if(has_window),
-        );
+        app.add_systems(EguiPrimaryContextPass, ui.run_if(in_state(GameState::Game)));
     }
 }
 

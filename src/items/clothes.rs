@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use bevy::{platform::collections::HashMap, prelude::*};
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use networking::{
     identity::{NetworkIdentities, NetworkIdentity},
     is_server,
@@ -14,7 +14,6 @@ use utils::task::{Task, TaskId, TaskStatus, Tasks};
 
 use crate::{
     body::{ClientHeldItem, Hands},
-    ui::has_window,
     GameState,
 };
 
@@ -45,10 +44,8 @@ impl Plugin for ClothingPlugin {
             );
         } else {
             app.add_systems(
-                Update,
-                client_clothing_ui
-                    .run_if(in_state(GameState::Game))
-                    .run_if(has_window),
+                EguiPrimaryContextPass,
+                client_clothing_ui.run_if(in_state(GameState::Game)),
             );
         }
     }

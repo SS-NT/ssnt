@@ -1,5 +1,5 @@
 use bevy::{prelude::*, reflect::TypePath};
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use networking::{
     component::AppExt as ComponentExt,
     identity::{NetworkIdentities, NetworkIdentity},
@@ -17,7 +17,6 @@ use crate::{
         ActiveInteraction, GenerateInteractionList, InteractionListEvents, InteractionOption,
         InteractionSpecificity, InteractionStatus,
     },
-    ui::has_window,
 };
 
 use super::{OrganicBody, OrganicBodyPart, OrganicBrain, OrganicHeart, MAX_BLOOD_OXYGEN};
@@ -39,7 +38,7 @@ impl Plugin for HealthScannerPlugin {
                 ),
             );
         } else {
-            app.add_systems(Update, health_scanner_ui.run_if(has_window));
+            app.add_systems(EguiPrimaryContextPass, health_scanner_ui);
         }
     }
 }

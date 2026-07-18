@@ -7,7 +7,7 @@ use bevy::{
     prelude::*,
     reflect::serde::{ReflectDeserializer, ReflectSerializer},
 };
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use bevy_inspector_egui::bevy_inspector::ui_for_entity;
 use bincode::Options;
 use networking::{
@@ -17,7 +17,7 @@ use networking::{
 };
 use serde::{de::DeserializeSeed, Deserialize, Serialize};
 
-use crate::{ui::has_window, GameState};
+use crate::GameState;
 
 /// Messages exchanged between the client inspector and the server.
 ///
@@ -536,8 +536,12 @@ impl Plugin for InspectorPlugin {
             app.init_resource::<ServerInspectorEnabled>()
                 .add_systems(Startup, setup_inspector)
                 .add_systems(
+                    EguiPrimaryContextPass,
+                    inspector_ui.run_if(in_state(GameState::Game)),
+                )
+                .add_systems(
                     Update,
-                    (receive_data, inspector_ui.run_if(has_window), send_requests)
+                    (receive_data, send_requests)
                         .chain()
                         .run_if(in_state(GameState::Game)),
                 );

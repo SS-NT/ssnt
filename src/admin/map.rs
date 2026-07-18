@@ -9,7 +9,7 @@ use networking::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{ui::has_window, GameState};
+use crate::GameState;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct ChangeMapMessage {
@@ -68,10 +68,8 @@ impl Plugin for MapManagementPlugin {
             );
         } else {
             app.add_systems(
-                Update,
-                client_map_selection_ui
-                    .run_if(in_state(GameState::Game))
-                    .run_if(has_window),
+                EguiPrimaryContextPass,
+                client_map_selection_ui.run_if(in_state(GameState::Game)),
             );
         }
     }

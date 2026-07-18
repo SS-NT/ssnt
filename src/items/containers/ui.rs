@@ -1,5 +1,5 @@
 use bevy::{platform::collections::HashMap, prelude::*, reflect::TypePath};
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use networking::{
     component::AppExt as _,
     identity::{EntityCommandsExt as _, NetworkIdentities, NetworkIdentity},
@@ -18,7 +18,7 @@ use crate::{
         InteractionSpecificity, InteractionStatus,
     },
     items::{Item, StoredItemClient},
-    ui::{has_window, CloseUiMessage, NetworkUi},
+    ui::{CloseUiMessage, NetworkUi},
 };
 
 use super::{Container, MoveItem};
@@ -44,7 +44,7 @@ impl Plugin for ContainerUiPlugin {
                 );
         } else {
             app.init_resource::<DraggedItem>()
-                .add_systems(Update, container_ui.run_if(has_window));
+                .add_systems(EguiPrimaryContextPass, container_ui);
         }
     }
 }

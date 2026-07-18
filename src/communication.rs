@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use bevy::{platform::collections::HashMap, prelude::*};
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use networking::{
     identity::{NetworkIdentities, NetworkIdentity},
     is_server,
@@ -11,7 +11,7 @@ use networking::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{camera::MainCamera, ui::has_window, GameState};
+use crate::{camera::MainCamera, GameState};
 
 pub struct CommunicationPlugin;
 
@@ -23,15 +23,12 @@ impl Plugin for CommunicationPlugin {
         if is_server(app) {
             app.add_systems(Update, handle_speech);
         } else {
-            app.init_resource::<ClientChat>().add_systems(
-                Update,
-                (
-                    (client_chat_box, client_speech_bubbles)
-                        .run_if(has_window)
-                        .run_if(in_state(GameState::Game)),
-                    client_handle_chat,
-                ),
-            );
+            app.init_resource::<ClientChat>()
+                .add_systems(
+                    EguiPrimaryContextPass,
+                    (client_chat_box, client_speech_bubbles).run_if(in_state(GameState::Game)),
+                )
+                .add_systems(Update, client_handle_chat);
         }
     }
 }

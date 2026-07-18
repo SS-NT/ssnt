@@ -11,7 +11,7 @@ use bevy::{
 use bevy_rapier3d::prelude::{CollisionGroups, LockedAxes, RigidBody, RigidBodyDisabled, Velocity};
 use bevy_renet::{RenetClient, RenetServer};
 use networking_derive::Networked;
-use physics::{ColliderGroup, PhysicsEntityCommands, SetPhysicsCommand};
+use physics::{ColliderGroup, PhysicsEntityCommands, SetPhysicsCommand, VisualError};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -567,11 +567,6 @@ const CLIENT_MAX_PHYSICS_EXTRAPOLATION_TICKS: f32 = 15.0;
 pub struct NetworkedTransform {
     /// A series of transform snapshots
     snapshots: VecDeque<TransformSnapshot>,
-    /// How much to offset this transform from the accurate physics simulation.
-    /// We reduce this value over time to smooth physics corrections.
-    // TODO: Actually use this
-    #[allow(dead_code)]
-    visual_position_error: Option<Vec3>,
     had_next: bool,
     /// If this has ever been applied to a transform.
     /// Is `false` when newly created and set after the first update is applied.
@@ -823,6 +818,7 @@ fn sync_networked_transform_physics(
         Option<&mut LockedAxes>,
         Option<Ref<ClientMovementClient>>,
         Has<ClientControlled>,
+        Option<&mut VisualError>,
     )>,
     identities: Res<NetworkIdentities>,
     network_time: Res<ClientNetworkTime>,
@@ -838,6 +834,7 @@ fn sync_networked_transform_physics(
         locked_axes,
         client_movement,
         controlled,
+        visual_error,
     ) in query.iter_mut()
     {
         let (next_snapshot, previous_snapshot) =
@@ -859,12 +856,28 @@ fn sync_networked_transform_physics(
 
         let ignore_position =
             controlled && client_movement.map(|m| !m.is_added()).unwrap_or_default();
+        let parent_changed =
+            snapshot.parent != parent.and_then(|p| identities.get_identity(p.parent()));
+        // The body simulated on the client, smooth potential errors instead of snapping
+        let resynced_after_gap = networked_transform.ever_applied && !networked_transform.had_next;
         if !ignore_position {
+            if resynced_after_gap && !parent_changed {
+                let position_error = transform.translation - snapshot.position;
+                let rotation_error = transform.rotation * snapshot.rotation.inverse();
+                match visual_error {
+                    Some(mut error) => error.add(position_error, rotation_error),
+                    None => {
+                        let mut error = VisualError::default();
+                        error.add(position_error, rotation_error);
+                        commands.entity(entity).insert(error);
+                    }
+                }
+            }
             transform.translation = snapshot.position;
             transform.rotation = snapshot.rotation;
         }
 
-        if snapshot.parent != parent.and_then(|p| identities.get_identity(p.parent())) {
+        if parent_changed {
             if let Some(parent) = snapshot.parent {
                 if let Some(parent_entity) = identities.get_entity(parent) {
                     commands.entity(entity).insert(ChildOf(parent_entity));

@@ -2,10 +2,12 @@ use bevy::ecs::reflect::ReflectComponent;
 use bevy::ecs::system::{Command, EntityCommands, SystemState};
 use bevy::prelude::*;
 use bevy::reflect::{ReflectDeserialize, ReflectSerialize};
+use bevy::transform::TransformSystems;
 use bevy::{
     prelude::{App, Plugin},
     reflect::Reflect,
 };
+use bevy_rapier3d::plugin::PhysicsSet;
 use bevy_rapier3d::prelude::RigidBody as RapierRigidBody;
 use bevy_rapier3d::prelude::{Collider as RapierCollider, CollisionGroups, Group};
 use bevy_rapier3d::prelude::{ColliderDisabled, Real, RigidBodyDisabled};
@@ -29,9 +31,80 @@ impl Plugin for PhysicsPlugin {
             .add_systems(Update, (add_colliders, add_rigidbodies))
             .add_systems(
                 PostUpdate,
-                guard_disabled_body_colliders
-                    .before(bevy_rapier3d::plugin::PhysicsSet::SyncBackend),
+                guard_disabled_body_colliders.before(PhysicsSet::SyncBackend),
+            )
+            .add_systems(
+                PostUpdate,
+                (
+                    apply_visual_error
+                        .after(PhysicsSet::Writeback)
+                        .before(TransformSystems::Propagate),
+                    revert_visual_error.after(TransformSystems::Propagate),
+                )
+                    .run_if(any_with_component::<VisualError>),
             );
+    }
+}
+
+/// Render-only offset that smooths discontinuous corrections without disturbing physics
+#[derive(Component, Debug, Clone, Copy)]
+pub struct VisualError {
+    pub translation: Vec3,
+    pub rotation: Quat,
+}
+
+impl Default for VisualError {
+    fn default() -> Self {
+        Self {
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+        }
+    }
+}
+
+const VISUAL_ERROR_DECAY_PER_SECOND: f32 = 0.02;
+const VISUAL_ERROR_POSITION_EPSILON: f32 = 0.001;
+const VISUAL_ERROR_ROTATION_EPSILON: f32 = 0.005;
+
+impl VisualError {
+    pub fn add(&mut self, translation: Vec3, rotation: Quat) {
+        self.translation += translation;
+        self.rotation = (rotation * self.rotation).normalize();
+    }
+
+    fn decay(&mut self, dt: f32) {
+        let keep = VISUAL_ERROR_DECAY_PER_SECOND.powf(dt);
+        self.translation *= keep;
+        self.rotation = Quat::IDENTITY.slerp(self.rotation, keep);
+    }
+
+    fn is_negligible(&self) -> bool {
+        self.translation.length_squared()
+            < VISUAL_ERROR_POSITION_EPSILON * VISUAL_ERROR_POSITION_EPSILON
+            && self.rotation.angle_between(Quat::IDENTITY) < VISUAL_ERROR_ROTATION_EPSILON
+    }
+}
+
+fn apply_visual_error(
+    mut query: Query<(Entity, &mut Transform, &mut VisualError)>,
+    time: Res<Time>,
+    mut commands: Commands,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut transform, mut error) in &mut query {
+        error.decay(dt);
+        if error.is_negligible() {
+            commands.entity(entity).remove::<VisualError>();
+        }
+        transform.translation += error.translation;
+        transform.rotation = error.rotation * transform.rotation;
+    }
+}
+
+fn revert_visual_error(mut query: Query<(&mut Transform, &VisualError)>) {
+    for (mut transform, error) in &mut query {
+        transform.rotation = error.rotation.inverse() * transform.rotation;
+        transform.translation -= error.translation;
     }
 }
 

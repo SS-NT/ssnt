@@ -46,7 +46,7 @@ use {
 };
 
 /// How many ticks the server runs per second
-const SERVER_TPS: u32 = 60;
+pub const SERVER_TPS: u32 = 60;
 
 #[derive(Parser, Resource)]
 struct Args {

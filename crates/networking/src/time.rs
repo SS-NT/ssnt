@@ -50,7 +50,7 @@ struct ReceivedServerTick {
 }
 
 #[derive(Resource)]
-pub(crate) struct ClientNetworkTime {
+pub struct ClientNetworkTime {
     /// How many seconds a server tick lasts
     pub server_tick_seconds: Option<f32>,
     /// The last received server tick
@@ -87,6 +87,11 @@ impl ClientNetworkTime {
         self.interpolated_tick
     }
 
+    /// Seconds per server tick, as reported by the server. `None` until the first tick arrives.
+    pub fn tick_duration(&self) -> Option<f32> {
+        self.server_tick_seconds
+    }
+
     fn push_rtt(&mut self, rtt: u32) {
         if self.rtts.len() >= RTT_AVERAGE_COUNT {
             self.rtts.pop_front();
@@ -107,8 +112,13 @@ impl ClientNetworkTime {
         Some(self.rtts.iter().sum::<u32>() as f32 / len as f32)
     }
 
+    /// The average round-trip-time for a packet in server ticks
+    pub(crate) fn round_trip_ticks(&self) -> Option<f32> {
+        self.average_rtt()
+    }
+
     /// The estimated server tick at the current time
-    fn estimated_server_tick(&self, current_time: f32) -> Option<f32> {
+    pub(crate) fn estimated_server_tick(&self, current_time: f32) -> Option<f32> {
         let tick_rate = self.server_tick_seconds?;
         let last_tick = self.server_tick.as_ref()?;
         let rtt = self.average_rtt()?;

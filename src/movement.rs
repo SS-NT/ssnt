@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::{
     body::{
         health::{BrainState, BrainStateEvent},
@@ -9,11 +7,14 @@ use crate::{
     combat::{ClientCombatModeStatus, CombatModeClient},
     Player,
 };
-use bevy::{ecs::query::Has, math::Vec3Swizzles, prelude::*, time::common_conditions::on_timer};
-use bevy_rapier3d::prelude::{ExternalForce, ReadMassProperties, Velocity};
+use bevy::{ecs::query::Has, math::Vec3Swizzles, prelude::*};
+use bevy_rapier3d::prelude::{
+    ExternalForce, ReadMassProperties, RigidBody as RapierRigidBody, Velocity,
+};
 use networking::{
     messaging::{AppExt, MessageEvent, MessageReceivers, MessageSender},
     spawning::{ClientControlled, ClientControls},
+    time::ClientNetworkTime,
     transform::{ClientMovement, ClientMovementClient},
     NetworkManager, NetworkSet, Players, ServerEvent,
 };
@@ -174,8 +175,21 @@ fn send_movement_update(
             With<ForcePositionReceived>,
         ),
     >,
+    time: Res<Time>,
+    network_time: Res<ClientNetworkTime>,
+    mut accumulated: Local<f32>,
     mut sender: MessageSender,
 ) {
+    let Some(tick_duration) = network_time.tick_duration() else {
+        return;
+    };
+    *accumulated += time.delta_secs();
+    if *accumulated < tick_duration {
+        return;
+    }
+    // Keep the remainder so timing doesn't drift, but cap it to avoid a burst after a stall.
+    *accumulated = (*accumulated - tick_duration).min(tick_duration);
+
     for transform in query.iter() {
         sender.send(
             &MovementMessage {
@@ -367,6 +381,30 @@ fn prevent_movement_when_unconcious(
     }
 }
 
+/// Client controlled bodies should be kinematic so rapier applies forces when we move it.
+fn update_server_body_control(
+    controlled: Query<(Entity, Option<&RapierRigidBody>), With<ClientMovement>>,
+    mut removed: RemovedComponents<ClientMovement>,
+    still_controlled: Query<(), With<ClientMovement>>,
+    mut commands: Commands,
+) {
+    for (entity, body) in controlled.iter() {
+        if body.copied() != Some(RapierRigidBody::KinematicPositionBased) {
+            commands
+                .entity(entity)
+                .insert(RapierRigidBody::KinematicPositionBased);
+        }
+    }
+    for entity in removed.read() {
+        if still_controlled.contains(entity) {
+            continue;
+        }
+        if let Ok(mut entity) = commands.get_entity(entity) {
+            entity.insert(RapierRigidBody::Dynamic);
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SystemSet)]
 pub enum MovementSystem {
     Update,
@@ -391,7 +429,7 @@ impl Plugin for MovementPlugin {
                     (
                         movement_system,
                         character_rotation_system,
-                        send_movement_update.run_if(on_timer(Duration::from_millis(30))),
+                        send_movement_update,
                     )
                         .chain()
                         .in_set(MovementSystem::Update),
@@ -405,7 +443,9 @@ impl Plugin for MovementPlugin {
                     handle_movement_message,
                     force_position_on_rejoin,
                     prevent_movement_when_unconcious.run_if(on_message::<BrainStateEvent>),
-                ),
+                    update_server_body_control,
+                )
+                    .chain(),
             )
             .add_systems(
                 PostUpdate,

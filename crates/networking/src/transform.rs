@@ -4,11 +4,14 @@ use crate::{self as networking, component::AppExt}; // This allows networking_de
 use bevy::{
     ecs::query::Has,
     math::{Quat, Vec3},
-    platform::collections::{hash_map::Entry, HashMap},
+    platform::collections::{hash_map::Entry, HashMap, HashSet},
     prelude::*,
     reflect::{Reflect, TypePath},
 };
-use bevy_rapier3d::prelude::{CollisionGroups, LockedAxes, RigidBody, RigidBodyDisabled, Velocity};
+use bevy_rapier3d::prelude::{
+    Collider, CollisionGroups, ExternalForce, LockedAxes, QueryFilter, ReadRapierContext,
+    RigidBody, RigidBodyDisabled, ShapeCastOptions, Velocity,
+};
 use bevy_renet::{RenetClient, RenetServer};
 use networking_derive::Networked;
 use physics::{ColliderGroup, PhysicsEntityCommands, SetPhysicsCommand, VisualError};
@@ -63,6 +66,14 @@ struct PhysicsSnapshot {
     angular_velocity: Vec3,
     collider_group: ColliderGroup,
     locked_vertical: bool,
+}
+
+impl PhysicsSnapshot {
+    /// Whether the body moves fast enough to warrant client-side simulation.
+    fn is_moving(&self) -> bool {
+        self.linear_velocity.length_squared() > GAP_SIMULATE_MIN_SPEED.powi(2)
+            || self.angular_velocity.length_squared() > GAP_SIMULATE_MIN_ANGULAR.powi(2)
+    }
 }
 
 impl TransformSnapshot {
@@ -265,6 +276,12 @@ impl TransformUpdateData {
         let update_collider =
             new.physics.map(|p| p.collider_group) != base.physics.map(|p| p.collider_group);
 
+        // Send once when the body crosses the moving/resting boundary so the client learns it
+        // came to rest (and stops simulating it) even while position stays below threshold.
+        let was_moving = base.physics.map(|p| p.is_moving()).unwrap_or(false);
+        let now_moving = new.physics.map(|p| p.is_moving()).unwrap_or(false);
+        let update_velocity = was_moving != now_moving;
+
         if !update_position
             && !update_rotation
             && !update_parent
@@ -272,6 +289,7 @@ impl TransformUpdateData {
             && !update_frozen
             && !update_collider
             && !update_locked
+            && !update_velocity
         {
             return None;
         }
@@ -283,10 +301,10 @@ impl TransformUpdateData {
             rotation: update_rotation.then_some(new.rotation),
             linear_velocity: new
                 .physics
-                .and_then(|p| update_position.then_some(p.linear_velocity)),
+                .and_then(|p| (update_position || update_velocity).then_some(p.linear_velocity)),
             angular_velocity: new
                 .physics
-                .and_then(|p| update_rotation.then_some(p.angular_velocity)),
+                .and_then(|p| (update_rotation || update_velocity).then_some(p.angular_velocity)),
             collider_group: new
                 .physics
                 .and_then(|p| update_collider.then_some(p.collider_group)),
@@ -328,8 +346,8 @@ pub struct Thresholds {
 impl Default for Thresholds {
     fn default() -> Self {
         Self {
-            position_threshold: 0.01,
-            rotation_threshold: 0.01,
+            position_threshold: 0.005,
+            rotation_threshold: 0.005,
         }
     }
 }
@@ -454,14 +472,17 @@ fn update_transform(
 
         let last_snapshot = networked.snapshots.back();
         // TODO: We shouldn't construct an entire diff just to check if it changed
-        if last_snapshot.is_none()
+        let changed = last_snapshot.is_none()
             || TransformUpdateData::diff(*last_snapshot.unwrap(), snapshot, networked.thresholds)
-                .is_some()
-        {
+                .is_some();
+
+        // Only record a snapshot when something actually changed
+        if changed {
             networked.last_change = seconds;
+            networked.add_snapshot(snapshot);
         }
 
-        networked.add_snapshot(snapshot);
+        let snapshot = *networked.snapshots.back().unwrap();
 
         // Rarely send full update to recover from physics desync
         // let is_occasional_update = body.is_some() && networked.last_change + TRANSFORM_STILL_RESYNC_WAIT < seconds;
@@ -561,6 +582,65 @@ fn handle_acks(
 const CLIENT_SNAPSHOT_BUFFER_SIZE: usize = 30;
 /// How long a client will extrapolate an object before freezing it at its last position
 const CLIENT_MAX_PHYSICS_EXTRAPOLATION_TICKS: f32 = 15.0;
+/// Linear speed below which a body counts as at rest: it just holds its pose kinematically.
+const GAP_SIMULATE_MIN_SPEED: f32 = 0.1;
+/// Angular speed (rad/s) counterpart to [`GAP_SIMULATE_MIN_SPEED`].
+const GAP_SIMULATE_MIN_ANGULAR: f32 = 0.1;
+/// How large a snapshot gap (in server ticks) must be before handing a moving body to
+/// the physics engine to simulate.
+const GAP_SIMULATE_MIN_TICKS: f32 = 4.0;
+/// A snapshot gap (in server ticks) beyond which interpolating between two snapshots would
+/// snap the object toward the newer one, because the interpolation parameter already starts
+/// near the end. Past this we jump to the new pose and let `VisualError` ease it in.
+const MAX_SMOOTH_INTERPOLATION_GAP_TICKS: f32 = 2.0 * CLIENT_MAX_PHYSICS_EXTRAPOLATION_TICKS;
+/// Correction distance (metres) above which we snap instead of easing: a jump this large is a
+/// teleport, not a misprediction or a rested object, so sliding to it looks wrong.
+const TELEPORT_SNAP_DISTANCE: f32 = 4.0;
+/// Speed (m/s) below which a controlled body counts as standing still and will not be checked.
+const PREDICT_MIN_SPEED: f32 = 0.05;
+/// Applied movement force above which we sweep along the force direction even when velocity is
+/// low. Without this a player pressing into a kinematic object has ~0 velocity (it blocks them),
+/// so the object never wakes and the player is stuck against it.
+const PREDICT_MIN_FORCE: f32 = 0.1;
+/// Nominal probe speed (m/s) used for the force-driven sweep when blocked, giving a short fixed
+/// lookahead (`PREDICT_PROBE_SPEED * PREDICT_WAKE_LEAD_SECONDS` metres) in the push direction.
+const PREDICT_PROBE_SPEED: f32 = 1.5;
+/// How far ahead (seconds of travel) the wake shape-cast looks: the swept distance is the
+/// body's speed times this, i.e. where it will be after this lead window.
+const PREDICT_WAKE_LEAD_SECONDS: f32 = 0.25;
+/// Slack (metres) added to the swept collider, so an object starts being predicted before actually hitting.
+const PREDICT_WAKE_MARGIN: f32 = 0.15;
+/// Distance (metres) from a player within which an incoming moving object is worth shape-casting
+const PREDICT_INCOMING_CULL_DISTANCE: f32 = 2.5;
+/// Ticks added on top of RTT/2 before an incoming snapshot is trusted to reflect our push and
+/// end prediction. Covers the movement upload plus a tick or two of server reaction.
+// TODO: Switch out with confirmation of received input from server
+const RECONCILE_MARGIN_TICKS: f32 = 2.0;
+/// Seconds after the last controlled body leaves the wake radius before a predicted body may
+/// hand back to interpolation.
+const PREDICT_HYSTERESIS_SECONDS: f32 = 0.15;
+/// Seconds past prediction start after which we give up waiting for a confirming snapshot and
+/// hand back anyway (the server never registered a push).
+const PREDICT_TIMEOUT_SECONDS: f32 = 1.0;
+
+/// The physics body mode we drive a remote object with on the client.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClientBody {
+    /// Follows interpolated snapshots exactly.
+    Kinematic,
+    /// Free-simulating to extrapolate a snapshot gap.
+    Dynamic,
+    /// Free-simulating to predict the result of a local player interaction, until the server
+    /// has simulated past the moment we began predicting. Snapshots are not applied meanwhile.
+    Predicting,
+}
+
+impl ClientBody {
+    /// Whether rapier owns the body (we don't overwrite it from snapshots).
+    fn is_simulated(self) -> bool {
+        matches!(self, ClientBody::Dynamic | ClientBody::Predicting)
+    }
+}
 
 /// Receives transform updates from the network
 #[derive(Component, Default)]
@@ -578,9 +658,27 @@ pub struct NetworkedTransform {
     /// The latest snapshot the server based it's updates on.
     /// This should never decrease.
     latest_base_sequence: Option<SequenceNumber>,
+    /// The body mode we last set for client-side interpolation/extrapolation.
+    client_body: Option<ClientBody>,
+    /// Server-tick estimate at which interaction prediction began. Snapshots at or after this
+    /// are trusted to reflect our push and drive reconciliation.
+    predict_start_tick: Option<f32>,
+    /// Elapsed seconds the promotion pass last found a controlled body within the wake radius.
+    last_woken: f32,
+    /// Wall-clock time (elapsed seconds) the most recent snapshot was received.
+    last_received: f32,
 }
 
 impl NetworkedTransform {
+    pub fn is_simulating(&self) -> Option<bool> {
+        self.client_body.map(ClientBody::is_simulated)
+    }
+
+    /// Wall-clock time (elapsed seconds) the most recent snapshot was received.
+    pub fn last_received(&self) -> f32 {
+        self.last_received
+    }
+
     fn add_snapshot(&mut self, snapshot: TransformSnapshot) {
         if self.snapshots.len() >= CLIENT_SNAPSHOT_BUFFER_SIZE {
             self.snapshots.pop_front();
@@ -704,9 +802,11 @@ fn apply_buffered_updates(
     mut buffer: ResMut<BufferedTransformUpdates>,
     mut query: Query<Option<&mut NetworkedTransform>, With<NetworkIdentity>>,
     identities: Res<NetworkIdentities>,
+    time: Res<Time>,
     mut unique_updates: Local<HashMap<NetworkIdentity, TransformUpdate>>,
     mut commands: Commands,
 ) {
+    let seconds = time.elapsed_secs();
     buffer.updates.retain(|update| {
         let entity = match identities.get_entity(update.identity) {
             Some(e) => e,
@@ -747,10 +847,12 @@ fn apply_buffered_updates(
 
         if let Some(mut networked) = networked {
             networked.add_snapshot(snapshot);
+            networked.last_received = seconds;
         } else {
             // Add networked transform component if not present
             let mut networked = NetworkedTransform::default();
             networked.add_snapshot(snapshot);
+            networked.last_received = seconds;
             commands
                 .entity(entity)
                 .insert((Transform::default(), Visibility::default(), networked));
@@ -807,6 +909,263 @@ fn sync_networked_transform(
     }
 }
 
+/// The representative collider of a body: `root` itself if it carries one, else the nearest
+/// descendant collider.
+fn representative_collider(
+    root: Entity,
+    children: &Query<&Children>,
+    colliders: &Query<(&Collider, &GlobalTransform)>,
+    bodies: &Query<(), With<RigidBody>>,
+) -> Option<Entity> {
+    let mut stack = vec![root];
+    while let Some(entity) = stack.pop() {
+        if colliders.contains(entity) {
+            return Some(entity);
+        }
+        if let Ok(kids) = children.get(entity) {
+            for child in kids.iter() {
+                // A nested body owns the colliders below it; don't descend into it.
+                if !bodies.contains(child) {
+                    stack.push(child);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Climbs from a collider to the first ancestor (inclusive) satisfying `belongs`.
+fn owning_body(
+    collider: Entity,
+    parents: &Query<&ChildOf>,
+    mut belongs: impl FnMut(Entity) -> bool,
+) -> Option<Entity> {
+    let mut entity = collider;
+    loop {
+        if belongs(entity) {
+            return Some(entity);
+        }
+        match parents.get(entity) {
+            Ok(child_of) => entity = child_of.parent(),
+            Err(_) => return None,
+        }
+    }
+}
+
+/// Promotes networked objects a controlled body is about to touch to dynamic bodies so a push
+/// can be predicted before contact, and seeds them with the object's estimated present-time
+/// state so the prediction lines up with where the server has the object *now* rather than
+/// where it was rendered (interpolation runs behind the server). The visual discontinuity of
+/// that jump is pushed into `VisualError`, which eases it out.
+#[allow(clippy::too_many_arguments)]
+fn predict_interacted_objects(
+    players: Query<
+        (
+            Entity,
+            &GlobalTransform,
+            Option<&Velocity>,
+            Option<&ExternalForce>,
+        ),
+        With<ClientControlled>,
+    >,
+    mut objects: Query<
+        (
+            Entity,
+            &mut NetworkedTransform,
+            &mut Transform,
+            Option<&mut Velocity>,
+            Option<&mut VisualError>,
+        ),
+        Without<ClientControlled>,
+    >,
+    colliders: Query<(&Collider, &GlobalTransform)>,
+    child_query: Query<&Children>,
+    parents: Query<&ChildOf>,
+    bodies: Query<(), With<RigidBody>>,
+    is_player: Query<(), With<ClientControlled>>,
+    rapier: ReadRapierContext,
+    network_time: Res<ClientNetworkTime>,
+    time: Res<Time>,
+    mut to_wake: Local<HashSet<Entity>>,
+    mut commands: Commands,
+) {
+    to_wake.clear();
+    let Ok(context) = rapier.single() else {
+        return;
+    };
+
+    let options = ShapeCastOptions {
+        max_time_of_impact: PREDICT_WAKE_LEAD_SECONDS,
+        target_distance: PREDICT_WAKE_MARGIN,
+        // Only register contacts we're closing on, so brushing/resting alongside wakes nothing.
+        stop_at_penetration: false,
+        compute_impact_geometry_on_penetration: false,
+    };
+
+    // Pass A: each moving player sweeps its own collider forward along its velocity. The swept
+    // distance is `speed * PREDICT_WAKE_LEAD_SECONDS`, so it looks exactly as far ahead as the
+    // player will travel in the lead window.
+    let mut player_positions: Vec<Vec3> = Vec::new();
+    for (player_root, global, velocity, force) in players.iter() {
+        player_positions.push(global.translation());
+
+        // Sweep along actual velocity when moving; when blocked fall back to the applied
+        // movement force so pushing into it still wakes it.
+        let velocity = velocity.map(|v| v.linear).unwrap_or(Vec3::ZERO);
+        let sweep = if velocity.length() >= PREDICT_MIN_SPEED {
+            velocity
+        } else {
+            match force.map(|f| f.force) {
+                Some(force) if force.length() >= PREDICT_MIN_FORCE => {
+                    force.normalize() * PREDICT_PROBE_SPEED
+                }
+                _ => continue,
+            }
+        };
+        let Some(collider_entity) =
+            representative_collider(player_root, &child_query, &colliders, &bodies)
+        else {
+            continue;
+        };
+        let (collider, collider_transform) = colliders.get(collider_entity).unwrap();
+        let (_, rotation, translation) = collider_transform.to_scale_rotation_translation();
+        let filter = QueryFilter::default().exclude_rigid_body(player_root);
+        if let Some((hit, _)) = context.cast_shape(
+            translation,
+            rotation,
+            sweep,
+            &*collider.raw,
+            options,
+            filter,
+        ) {
+            if let Some(object) = owning_body(hit, &parents, |e| objects.contains(e)) {
+                to_wake.insert(object);
+            }
+        }
+    }
+
+    // Pass B: each moving networked object sweeps its collider along its velocity; wake it if it
+    // would run into a player. This catches objects thrown/sliding at a stationary player.
+    for (object_root, networked, ..) in objects.iter() {
+        if networked.client_body != Some(ClientBody::Kinematic)
+            || networked.disabled
+            || networked.frozen
+        {
+            continue;
+        }
+        let Some(velocity) = networked
+            .snapshots
+            .back()
+            .and_then(|s| s.physics)
+            .filter(|p| p.is_moving())
+            .map(|p| p.linear_velocity)
+        else {
+            continue;
+        };
+        let Some(collider_entity) =
+            representative_collider(object_root, &child_query, &colliders, &bodies)
+        else {
+            continue;
+        };
+        let (collider, collider_transform) = colliders.get(collider_entity).unwrap();
+        let (_, rotation, translation) = collider_transform.to_scale_rotation_translation();
+        // Cheap cull: ignore objects nowhere near a player before doing the shape cast.
+        if !player_positions
+            .iter()
+            .any(|p| p.distance_squared(translation) < PREDICT_INCOMING_CULL_DISTANCE.powi(2))
+        {
+            continue;
+        }
+        let filter = QueryFilter::default().exclude_rigid_body(object_root);
+        if let Some((hit, _)) = context.cast_shape(
+            translation,
+            rotation,
+            velocity,
+            &*collider.raw,
+            options,
+            filter,
+        ) {
+            if owning_body(hit, &parents, |e| is_player.contains(e)).is_some() {
+                to_wake.insert(object_root);
+            }
+        }
+    }
+
+    let seconds = time.elapsed_secs();
+    let (Some(tick_seconds), Some(present_tick)) = (
+        network_time.server_tick_seconds,
+        network_time.estimated_server_tick(seconds),
+    ) else {
+        return;
+    };
+
+    for &entity in to_wake.iter() {
+        let Ok((_, mut networked, mut transform, velocity, visual_error)) = objects.get_mut(entity)
+        else {
+            continue;
+        };
+
+        // Keep the hysteresis timer fresh while the player lingers, whether or not we promote.
+        networked.last_woken = seconds;
+
+        // Only promote objects we're currently interpolating kinematically; leave controlled,
+        // disabled, frozen, gap-extrapolating or already-predicting bodies alone.
+        if networked.client_body != Some(ClientBody::Kinematic)
+            || networked.disabled
+            || networked.frozen
+        {
+            continue;
+        }
+
+        let Some(last) = networked.snapshots.back().copied() else {
+            continue;
+        };
+
+        // Only bodies the server actually simulates should be predicted, not static objects.
+        if last.physics.is_none() {
+            continue;
+        }
+
+        // Extrapolate the latest snapshot to the estimated present server tick.
+        let dt = (present_tick - last.sequence_number.as_tick()).max(0.0) * tick_seconds;
+        let (linear, angular) = last
+            .physics
+            .map(|p| (p.linear_velocity, p.angular_velocity))
+            .unwrap_or_default();
+        let present_translation = last.position + linear * dt;
+        let present_rotation = (Quat::from_scaled_axis(angular * dt) * last.rotation).normalize();
+
+        // Preserve the currently-rendered pose as a visual offset so the jump to present is
+        // invisible and eases out instead of popping.
+        let offset_translation = transform.translation - present_translation;
+        let offset_rotation = transform.rotation * present_rotation.inverse();
+        transform.translation = present_translation;
+        transform.rotation = present_rotation;
+        match visual_error {
+            Some(mut error) => error.add(offset_translation, offset_rotation),
+            None => {
+                let mut error = VisualError::default();
+                error.add(offset_translation, offset_rotation);
+                commands.entity(entity).insert(error);
+            }
+        }
+
+        match velocity {
+            Some(mut v) => {
+                v.linear = linear;
+                v.angular = angular;
+            }
+            None => {
+                commands.entity(entity).insert(Velocity { linear, angular });
+            }
+        }
+
+        commands.entity(entity).insert(RigidBody::Dynamic);
+        networked.client_body = Some(ClientBody::Predicting);
+        networked.predict_start_tick = Some(present_tick);
+    }
+}
+
 /// Applies transform updates to entities with physics
 fn sync_networked_transform_physics(
     mut query: Query<(
@@ -819,12 +1178,17 @@ fn sync_networked_transform_physics(
         Option<Ref<ClientMovementClient>>,
         Has<ClientControlled>,
         Option<&mut VisualError>,
+        Option<&RigidBody>,
     )>,
     identities: Res<NetworkIdentities>,
     network_time: Res<ClientNetworkTime>,
+    time: Res<Time>,
     mut commands: Commands,
 ) {
     let current_tick = network_time.interpolated_tick();
+    let seconds = time.elapsed_secs();
+    let tick_seconds = network_time.server_tick_seconds;
+    let present_tick = network_time.estimated_server_tick(seconds);
     for (
         entity,
         mut networked_transform,
@@ -835,16 +1199,88 @@ fn sync_networked_transform_physics(
         client_movement,
         controlled,
         visual_error,
+        rigid_body,
     ) in query.iter_mut()
     {
+        let was_simulating = networked_transform
+            .client_body
+            .map(ClientBody::is_simulated)
+            .unwrap_or(false);
+
+        // Interaction prediction: rapier owns the body, so we don't apply snapshots until the
+        // server has simulated past the moment we began predicting (or we give up).
+        if networked_transform.client_body == Some(ClientBody::Predicting) {
+            let start = networked_transform
+                .predict_start_tick
+                .unwrap_or(current_tick);
+            let margin =
+                network_time.round_trip_ticks().unwrap_or(0.0) / 2.0 + RECONCILE_MARGIN_TICKS;
+            let confirmed = networked_transform
+                .snapshots
+                .back()
+                .map(|s| s.sequence_number.as_tick() >= start + margin)
+                .unwrap_or(false);
+            let still_woken = seconds - networked_transform.last_woken < PREDICT_HYSTERESIS_SECONDS;
+            let timed_out = match (present_tick, tick_seconds) {
+                (Some(present), Some(ts)) => (present - start) * ts > PREDICT_TIMEOUT_SECONDS,
+                _ => false,
+            };
+            // If the server disabled/froze/stored the object, abort and let the normal path apply it.
+            let interrupted = networked_transform
+                .snapshots
+                .back()
+                .map(|s| s.disabled || s.frozen)
+                .unwrap_or(false);
+
+            if !((confirmed && !still_woken) || timed_out || interrupted) {
+                networked_transform.had_next = false;
+                networked_transform.ever_applied = true;
+                continue;
+            }
+
+            commands
+                .entity(entity)
+                .insert(RigidBody::KinematicPositionBased);
+            networked_transform.client_body = Some(ClientBody::Kinematic);
+            networked_transform.predict_start_tick = None;
+        }
+
         let (next_snapshot, previous_snapshot) =
             match networked_transform.relevant_snapshots(current_tick) {
                 Some(u) => u,
                 None => {
+                    // No snapshot ahead of us, we might want to simulate the object
+                    let last = networked_transform.snapshots.back();
+                    // We might have a tick or two without already having a snapshot,
+                    // we don't want to simulate such a short interruption
+                    let gap = last
+                        .map(|s| current_tick - s.sequence_number.as_tick())
+                        .unwrap_or(0.0);
+                    // Non-moving objects don't need to be simulated
+                    let moving = last
+                        .and_then(|s| s.physics)
+                        .map(|p| p.is_moving())
+                        .unwrap_or(false);
+                    if gap > GAP_SIMULATE_MIN_TICKS
+                        && moving
+                        && !controlled
+                        && !networked_transform.disabled
+                        && !networked_transform.frozen
+                        && networked_transform.client_body != Some(ClientBody::Dynamic)
+                    {
+                        commands.entity(entity).insert(RigidBody::Dynamic);
+                        networked_transform.client_body = Some(ClientBody::Dynamic);
+                    }
                     networked_transform.had_next = false;
                     continue;
                 }
             };
+
+        // Measure the gap between the two snapshots we have: large gaps need smoothing
+        // (resting object or dropped packets).
+        let interpolation_gap = previous_snapshot
+            .map(|p| next_snapshot.sequence_number.as_tick() - p.sequence_number.as_tick())
+            .unwrap_or(0.0);
 
         // Interpolate between snapshots if present
         let snapshot = match previous_snapshot {
@@ -858,11 +1294,19 @@ fn sync_networked_transform_physics(
             controlled && client_movement.map(|m| !m.is_added()).unwrap_or_default();
         let parent_changed =
             snapshot.parent != parent.and_then(|p| identities.get_identity(p.parent()));
-        // The body simulated on the client, smooth potential errors instead of snapping
-        let resynced_after_gap = networked_transform.ever_applied && !networked_transform.had_next;
+        // Smooth discontinuities instead of snapping: either the client simulated the body and
+        // must reconcile with the server, or the object rested long enough that the snapshots
+        // we interpolate between are far apart.
+        let resynced_after_simulation =
+            networked_transform.ever_applied && !networked_transform.had_next && was_simulating;
+        let resynced_after_rest = networked_transform.ever_applied
+            && interpolation_gap > MAX_SMOOTH_INTERPOLATION_GAP_TICKS;
         if !ignore_position {
-            if resynced_after_gap && !parent_changed {
-                let position_error = transform.translation - snapshot.position;
+            let position_error = transform.translation - snapshot.position;
+            // Only ease in a plausible correction; a large jump is a teleport, snap to it.
+            let is_teleport = position_error.length_squared() > TELEPORT_SNAP_DISTANCE.powi(2);
+            if (resynced_after_simulation || resynced_after_rest) && !parent_changed && !is_teleport
+            {
                 let rotation_error = transform.rotation * snapshot.rotation.inverse();
                 match visual_error {
                     Some(mut error) => error.add(position_error, rotation_error),
@@ -926,6 +1370,21 @@ fn sync_networked_transform_physics(
             if let Some(group) = snapshot.physics.map(|p| p.collider_group) {
                 networked_transform.collider_group = group;
             }
+            if disabled_changed || frozen_changed {
+                networked_transform.client_body = None;
+            }
+        }
+
+        // Remote objects follow snapshots kinematically; we don't simulate them while interpolating.
+        if !controlled
+            && !disabled
+            && !frozen
+            && rigid_body.copied() != Some(RigidBody::KinematicPositionBased)
+        {
+            commands
+                .entity(entity)
+                .insert(RigidBody::KinematicPositionBased);
+            networked_transform.client_body = Some(ClientBody::Kinematic);
         }
 
         // Update rotation lock
@@ -1004,6 +1463,7 @@ impl Plugin for TransformPlugin {
                     handle_transform_messages,
                     apply_buffered_updates,
                     sync_networked_transform,
+                    predict_interacted_objects,
                     sync_networked_transform_physics,
                 )
                     .chain()

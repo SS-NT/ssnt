@@ -5,6 +5,7 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_rapier3d::prelude::RigidBody;
 use bevy_rapier3d::render::DebugRenderContext;
 use networking::identity::NetworkIdentity;
+use networking::transform::NetworkedTransform;
 use physics::VisualError;
 
 use crate::GameState;
@@ -15,7 +16,12 @@ pub(crate) struct DebugPlugin;
 struct DebugState {
     inspector_enabled: bool,
     visual_error_gizmos: bool,
+    physics_mode_gizmos: bool,
+    snapshot_age_gizmos: bool,
 }
+
+/// How old (seconds) the last snapshot must be for the age gizmo to reach full darkness.
+const SNAPSHOT_AGE_FADE: f32 = 1.0;
 
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
@@ -32,7 +38,14 @@ impl Plugin for DebugPlugin {
             )
             .add_systems(
                 Update,
-                draw_visual_error_gizmos.run_if(|state: Res<DebugState>| state.visual_error_gizmos),
+                (
+                    draw_visual_error_gizmos
+                        .run_if(|state: Res<DebugState>| state.visual_error_gizmos),
+                    draw_physics_mode_gizmos
+                        .run_if(|state: Res<DebugState>| state.physics_mode_gizmos),
+                    draw_snapshot_age_gizmos
+                        .run_if(|state: Res<DebugState>| state.snapshot_age_gizmos),
+                ),
             );
     }
 }
@@ -50,7 +63,38 @@ fn debug_menu(
         ui.checkbox(&mut server_inspector.0, "Server inspector");
         ui.checkbox(&mut rapier_debug.enabled, "Show physics objects");
         ui.checkbox(&mut state.visual_error_gizmos, "Visual error gizmos");
+        ui.checkbox(&mut state.physics_mode_gizmos, "Physics mode gizmos");
+        ui.checkbox(&mut state.snapshot_age_gizmos, "Snapshot age gizmos");
     });
+}
+
+fn draw_snapshot_age_gizmos(
+    query: Query<(&GlobalTransform, &NetworkedTransform)>,
+    time: Res<Time>,
+    mut gizmos: Gizmos,
+) {
+    let now = time.elapsed_secs();
+    for (global, networked) in &query {
+        let age = now - networked.last_received();
+        // Fresh snapshots are bright orange, fading to near-black with age.
+        let brightness = (1.0 - age / SNAPSHOT_AGE_FADE).clamp(0.1, 1.0);
+        let color = Color::srgb(brightness, brightness * 0.5, brightness * 0.1);
+        gizmos.sphere(global.to_isometry(), 0.12, color);
+    }
+}
+
+fn draw_physics_mode_gizmos(
+    query: Query<(&GlobalTransform, &NetworkedTransform)>,
+    mut gizmos: Gizmos,
+) {
+    for (global, networked) in &query {
+        let color = match networked.is_simulating() {
+            Some(true) => Color::srgb(1.0, 0.0, 0.0),
+            Some(false) => Color::srgb(0.0, 1.0, 0.0),
+            None => continue,
+        };
+        gizmos.sphere(global.to_isometry(), 0.08, color);
+    }
 }
 
 fn draw_visual_error_gizmos(

@@ -105,11 +105,12 @@ fn container_ui(
             .open(&mut keep_open)
             .show(contexts.ctx_mut().unwrap(), |ui| {
                 let anything_dragged = ui.ctx().dragged_id().is_some();
-                if !anything_dragged {
+                let released_this_frame = ui.input(|i| i.pointer.any_released());
+                if !anything_dragged && !released_this_frame {
                     dragged.info = None;
                 }
 
-                let (grid_rect, grid_response) = ui.allocate_at_least(
+                let (grid_rect, _) = ui.allocate_at_least(
                     egui::vec2(
                         SLOT_SIZE.x * container.size.x as f32,
                         SLOT_SIZE.y * container.size.y as f32,
@@ -117,10 +118,14 @@ fn container_ui(
                     egui::Sense::hover(),
                 );
 
-                // Find where dragged item would be dropped
+                // Find where dragged item would be dropped.
                 let mut drop_item = None;
                 if let Some(info) = dragged.info.as_ref() {
-                    if let Some(hover_pos) = grid_response.hover_pos() {
+                    if let Some(hover_pos) = ui
+                        .ctx()
+                        .pointer_interact_pos()
+                        .filter(|p| grid_rect.contains(*p))
+                    {
                         let offset = hover_pos
                             - egui::vec2(
                                 (info.size.x) as f32 * SLOT_SIZE.x / 2.0,
@@ -299,7 +304,7 @@ fn draw_item(ui: &mut egui::Ui, item_rect: egui::Rect, name: &str) {
     let styled_text = egui::RichText::new(name)
         .size(11.0)
         .color(egui::Color32::WHITE);
-    ui.put(item_rect, egui::Label::new(styled_text));
+    ui.put(item_rect, egui::Label::new(styled_text).selectable(false));
 }
 
 #[derive(Serialize, Deserialize)]

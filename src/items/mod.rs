@@ -80,6 +80,14 @@ pub struct StoredItemClient {
     visible: ServerVar<bool>,
 }
 
+impl StoredItemClient {
+    /// Optimistically update where this item is stored, before the server confirms.
+    pub(crate) fn predict_move(&mut self, container: NetworkIdentity, slot: UVec2) {
+        self.container.set(container);
+        self.slot.set(slot);
+    }
+}
+
 /// Stores strong references to all item assets.
 /// This is so we can create handles from a path id, which doesn't load the assets by itself.
 #[derive(Resource)]

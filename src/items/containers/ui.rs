@@ -25,6 +25,11 @@ use super::{Container, MoveItem};
 
 pub struct ContainerUiPlugin;
 
+/// System set containing the container drag/drop UI. Other drag sources/targets
+/// must run before this.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ContainerDropSet;
+
 impl Plugin for ContainerUiPlugin {
     fn build(&self, app: &mut App) {
         app.add_networked_component::<ContainerUi, ContainerUiClient>()
@@ -43,8 +48,10 @@ impl Plugin for ContainerUiPlugin {
                     ),
                 );
         } else {
-            app.init_resource::<DraggedItem>()
-                .add_systems(EguiPrimaryContextPass, container_ui);
+            app.init_resource::<DraggedItem>().add_systems(
+                EguiPrimaryContextPass,
+                container_ui.in_set(ContainerDropSet),
+            );
         }
     }
 }
@@ -62,15 +69,15 @@ struct ContainerUiClient {
 }
 
 #[derive(Resource, Default)]
-struct DraggedItem {
-    info: Option<DragInfo>,
+pub(crate) struct DraggedItem {
+    pub(crate) info: Option<DragInfo>,
 }
 
-struct DragInfo {
-    entity: Entity,
-    size: UVec2,
-    over_anything: bool,
-    just_dropped: bool,
+pub(crate) struct DragInfo {
+    pub(crate) entity: Entity,
+    pub(crate) size: UVec2,
+    pub(crate) over_anything: bool,
+    pub(crate) just_dropped: bool,
 }
 
 const SLOT_SIZE: egui::Vec2 = egui::vec2(36.0, 36.0);
@@ -191,27 +198,22 @@ fn container_ui(
                         );
                     }
 
-                    if !out_of_bounds {
-                        // Drop if pointer released
-                        if ui.input(|i| i.pointer.any_released()) {
-                            if let Ok((item_entity, &identity, _, mut item)) = items.get_mut(entity)
-                            {
-                                // Tell server to move it
-                                sender.send_to_server(&MoveItemMessage {
-                                    item: identity,
-                                    to_container: Some(*container_ui.container),
-                                    to_slot: position,
-                                });
-                                // Predict item move
-                                // TODO: actually do rollback on fail
-                                item.slot.set(position);
-                                item.container.set(*container_ui.container);
-                                commands
-                                    .entity(item_entity)
-                                    .insert(ChildOf(container_entity));
-
-                                dragged.info.as_mut().unwrap().just_dropped = true;
-                            }
+                    if !out_of_bounds
+                        && entity != container_entity
+                        && ui.input(|i| i.pointer.any_released())
+                    {
+                        if let Ok((item_entity, &identity, _, mut item)) = items.get_mut(entity) {
+                            commit_item_move(
+                                &mut dragged,
+                                &mut sender,
+                                &mut commands,
+                                item_entity,
+                                identity,
+                                &mut item,
+                                container_entity,
+                                *container_ui.container,
+                                position,
+                            );
                         }
                     }
                 }
@@ -219,7 +221,6 @@ fn container_ui(
                 // Paint all items in container
                 for (position, (item_entity, name, size)) in stored.iter() {
                     let id = egui::Id::new(item_entity).with(container_entity);
-                    let is_being_dragged = ui.ctx().is_being_dragged(id);
                     let item_rect = egui::Rect::from_min_size(
                         egui::pos2(
                             position.x as f32 * SLOT_SIZE.x,
@@ -228,31 +229,10 @@ fn container_ui(
                         egui::vec2(SLOT_SIZE.x * size.x as f32, SLOT_SIZE.y * size.y as f32),
                     )
                     .translate(grid_rect.left_top().to_vec2());
-                    if is_being_dragged {
-                        if dragged.info.is_none() {
-                            dragged.info = Some(DragInfo {
-                                entity: *item_entity,
-                                size: *size,
-                                over_anything: false,
-                                just_dropped: false,
-                            });
-                        }
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-
-                        let layer_id = egui::LayerId::new(egui::Order::Tooltip, id);
-                        ui.with_layer_id(layer_id, |ui| {
-                            draw_item(ui, item_rect, name);
-                        });
-
-                        if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
-                            let delta = pointer_pos - item_rect.center();
-                            ui.ctx().transform_layer_shapes(
-                                layer_id,
-                                egui::emath::TSTransform::from_translation(delta),
-                            );
-                        }
+                    let response = ui.interact(item_rect, id, egui::Sense::drag());
+                    if response.dragged() {
+                        item_drag_source(ui, &response, &mut dragged, *item_entity, *size, name);
                     } else {
-                        ui.interact(item_rect, id, egui::Sense::drag());
                         draw_item(ui, item_rect, name);
                     }
                 }
@@ -307,11 +287,132 @@ fn draw_item(ui: &mut egui::Ui, item_rect: egui::Rect, name: &str) {
     ui.put(item_rect, egui::Label::new(styled_text).selectable(false));
 }
 
+/// Draws a floating preview box of a dragged item, centered on the pointer.
+fn draw_floating_item(ui: &egui::Ui, size: UVec2, name: &str) {
+    let Some(pointer) = ui.ctx().pointer_interact_pos() else {
+        return;
+    };
+    let rect = egui::Rect::from_center_size(
+        pointer,
+        egui::vec2(SLOT_SIZE.x * size.x as f32, SLOT_SIZE.y * size.y as f32),
+    );
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Tooltip,
+        egui::Id::new("dragged_item_preview"),
+    ));
+    painter.rect(
+        rect,
+        0.,
+        egui::Color32::from_white_alpha(16),
+        egui::Stroke::new(1.0, egui::Color32::WHITE),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        name,
+        egui::FontId::proportional(11.0),
+        egui::Color32::WHITE,
+    );
+}
+
+/// Turns `response` into a drag source for `item`. While dragged, it populates the shared
+/// [`DraggedItem`] state and draws a floating preview box following the cursor.
+pub(crate) fn item_drag_source(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    dragged: &mut DraggedItem,
+    item: Entity,
+    size: UVec2,
+    name: &str,
+) {
+    if !response.dragged() {
+        return;
+    }
+    if dragged.info.is_none() {
+        dragged.info = Some(DragInfo {
+            entity: item,
+            size,
+            over_anything: false,
+            just_dropped: false,
+        });
+    }
+    // Only draw the preview for the item that actually started this drag.
+    if dragged.info.as_ref().map(|info| info.entity) == Some(item) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        draw_floating_item(ui, size, name);
+    }
+}
+
+/// A single-slot drop zone covering `rect`. While an item is dragged over it, the drag is
+/// claimed (so it isn't dropped into the world) and the zone is highlighted. Returns `true`
+/// on the frame the item is released here while `can_accept` is set (caller should commit).
+pub(crate) fn item_drop_zone(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    dragged: &mut DraggedItem,
+    can_accept: bool,
+) -> bool {
+    let Some(info) = dragged.info.as_mut() else {
+        return false;
+    };
+    let hovered = ui
+        .ctx()
+        .pointer_interact_pos()
+        .is_some_and(|p| rect.contains(p));
+    if !hovered {
+        return false;
+    }
+    info.over_anything = true;
+    ui.painter().rect(
+        rect,
+        0.,
+        if can_accept {
+            egui::Color32::GREEN
+        } else {
+            egui::Color32::RED
+        }
+        .gamma_multiply(0.25),
+        egui::Stroke::NONE,
+        egui::StrokeKind::Inside,
+    );
+    can_accept && ui.input(|i| i.pointer.any_released())
+}
+
+/// Requests an item move from the server and predicts it locally, marking the drag dropped.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn commit_item_move(
+    dragged: &mut DraggedItem,
+    sender: &mut MessageSender,
+    commands: &mut Commands,
+    item_entity: Entity,
+    item_identity: NetworkIdentity,
+    stored: &mut StoredItemClient,
+    container_entity: Entity,
+    container_identity: NetworkIdentity,
+    slot: UVec2,
+) {
+    sender.send_to_server(&MoveItemMessage {
+        item: item_identity,
+        to_container: Some(container_identity),
+        to_slot: slot,
+    });
+    // Predict the move; the server confirms or rolls back.
+    // TODO: actually do rollback on fail
+    stored.predict_move(container_identity, slot);
+    commands
+        .entity(item_entity)
+        .insert(ChildOf(container_entity));
+    if let Some(info) = dragged.info.as_mut() {
+        info.just_dropped = true;
+    }
+}
+
 #[derive(Serialize, Deserialize)]
-struct MoveItemMessage {
-    item: NetworkIdentity,
-    to_container: Option<NetworkIdentity>,
-    to_slot: UVec2,
+pub(crate) struct MoveItemMessage {
+    pub(crate) item: NetworkIdentity,
+    pub(crate) to_container: Option<NetworkIdentity>,
+    pub(crate) to_slot: UVec2,
 }
 
 fn handle_move_message(

@@ -16,6 +16,10 @@ use super::{Item, StoredItem};
 
 mod ui;
 
+pub(crate) use ui::{
+    commit_item_move, item_drag_source, item_drop_zone, ContainerDropSet, DraggedItem,
+};
+
 pub struct ContainerPlugin;
 
 impl Plugin for ContainerPlugin {

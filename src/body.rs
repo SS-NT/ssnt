@@ -38,7 +38,10 @@ use crate::{
     },
     items::{
         clothes::{Clothing, ClothingHolder},
-        containers::{Container, MoveItem},
+        containers::{
+            commit_item_move, item_drag_source, item_drop_zone, Container, ContainerDropSet,
+            DraggedItem, MoveItem,
+        },
         Item, StoredItem, StoredItemClient,
     },
     round::PlayerAssets,
@@ -87,7 +90,7 @@ impl Plugin for BodyPlugin {
                     ),
                 );
         } else {
-            app.add_systems(EguiPrimaryContextPass, hand_ui)
+            app.add_systems(EguiPrimaryContextPass, hand_ui.before(ContainerDropSet))
                 .add_systems(
                     Update,
                     (
@@ -807,13 +810,16 @@ struct ChangeHandRequest {
     identity: NetworkIdentity,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn hand_ui(
     mut contexts: EguiContexts,
     mut bodies: Query<(&Body, &mut HandsClient), With<ClientControlled>>,
     hands: Query<(Entity, &NetworkIdentity, &Hand, Option<&Children>)>,
-    items: Query<(&Item, &NetworkIdentity)>,
+    mut items: Query<(Entity, &Item, &NetworkIdentity, &mut StoredItemClient)>,
     mut ordered_hands: Local<Vec<(Entity, u32)>>,
+    mut dragged: ResMut<DraggedItem>,
     mut sender: MessageSender,
+    mut commands: Commands,
 ) {
     let Ok((body, hand_data)) = bodies.single_mut() else {
         return;
@@ -834,27 +840,78 @@ fn hand_ui(
                 );
                 ordered_hands.sort_unstable_by_key(|(_, k)| *k);
 
-                for (_, &identity, hand, children) in
-                    hands.iter_many(ordered_hands.iter().map(|(e, _)| e))
-                {
-                    let mut held_item_name = None;
-                    let mut held_item_id = None;
-                    if let Some(children) = children {
-                        if let Some((item, identity)) = items.iter_many(children).next() {
-                            held_item_name = Some(item.name.as_str());
-                            held_item_id = Some(*identity);
+                let hand_entities: Vec<Entity> =
+                    ordered_hands.iter().map(|(entity, _)| *entity).collect();
+                for hand_entity in hand_entities {
+                    let Ok((_, &identity, hand, children)) = hands.get(hand_entity) else {
+                        continue;
+                    };
+
+                    // Copy out the held item so we no longer borrow `items` below.
+                    let held_item = children.and_then(|children| {
+                        items
+                            .iter_many(children)
+                            .next()
+                            .map(|(entity, item, &id, _)| {
+                                (entity, id, item.name.clone(), item.size)
+                            })
+                    });
+
+                    let name = held_item
+                        .as_ref()
+                        .map(|(_, _, name, _)| name.as_str())
+                        .unwrap_or("empty");
+                    let response = ui
+                        .selectable_label(
+                            identity == *hand_data.active_hand,
+                            format!("{}: {}", hand.side, name),
+                        )
+                        .interact(egui::Sense::click_and_drag());
+
+                    if let Some((item_entity, _, item_name, item_size)) = &held_item {
+                        item_drag_source(
+                            ui,
+                            &response,
+                            &mut dragged,
+                            *item_entity,
+                            *item_size,
+                            item_name,
+                        );
+                    }
+
+                    let occupied_by_other = held_item.as_ref().is_some_and(|(entity, ..)| {
+                        dragged
+                            .info
+                            .as_ref()
+                            .is_some_and(|info| *entity != info.entity)
+                    });
+                    if item_drop_zone(ui, response.rect, &mut dragged, !occupied_by_other) {
+                        let dragged_entity = dragged.info.as_ref().unwrap().entity;
+                        if let Ok((item_entity, _, &item_identity, mut stored)) =
+                            items.get_mut(dragged_entity)
+                        {
+                            commit_item_move(
+                                &mut dragged,
+                                &mut sender,
+                                &mut commands,
+                                item_entity,
+                                item_identity,
+                                &mut stored,
+                                hand_entity,
+                                identity,
+                                UVec2::ZERO,
+                            );
                         }
                     }
-                    let label = ui.selectable_label(
-                        identity == *hand_data.active_hand,
-                        format!("{}: {}", hand.side, held_item_name.unwrap_or("empty")),
-                    );
-                    if label.clicked() {
+
+                    // A plain click switches hand; right-click opens the item's interactions.
+                    if response.clicked() {
                         sender.send_to_server(&ChangeHandRequest { identity });
-                    } else if label.clicked_by(egui::PointerButton::Secondary) {
-                        // Request interaction list on right-click
-                        if let Some(target) = held_item_id {
-                            sender.send_to_server(&InteractionListRequest { target });
+                    } else if response.clicked_by(egui::PointerButton::Secondary) {
+                        if let Some((_, item_identity, ..)) = &held_item {
+                            sender.send_to_server(&InteractionListRequest {
+                                target: *item_identity,
+                            });
                         }
                     }
                 }

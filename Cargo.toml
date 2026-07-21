@@ -14,7 +14,7 @@ bevy_rapier3d = { path = "../bevy_rapier/bevy_rapier3d" }
 
 [features]
 default = ["client"]
-client = ["bevy/bevy_animation", "bevy/bevy_audio", "bevy/bevy_gilrs", "bevy/bevy_winit", "bevy/x11", "bevy/vorbis"]
+client = ["bevy/gltf_animation", "bevy/bevy_audio", "bevy/bevy_gilrs", "bevy/bevy_winit", "bevy/x11", "bevy/vorbis"]
 
 [dependencies]
 byond = { path = "crates/byond" }
@@ -44,6 +44,9 @@ smallvec = "*"
 base64 = "0.22"
 
 [patch.crates-io]
+# gltf 1.4.1 rejects valid accessors that have neither bufferView nor sparse (all-zero morph deltas).
+# Fixed upstream by gltf-rs#449 but unreleased; pin main until a release includes it.
+gltf = { git = "https://github.com/gltf-rs/gltf", rev = "50d65229477fe5f785c2c90df21eb59c93ea2261" }
 glamx = { path = "../glamx-ssnt" }
 bevy = { path = "../bevy" }
 bevy_a11y = { path = "../bevy/crates/bevy_a11y" }

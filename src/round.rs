@@ -153,11 +153,10 @@ fn start_round_timer(mut round_data: ResMut<RoundData>, server_time: Res<ServerN
 }
 
 #[derive(Resource)]
-struct PlayerAssets {
+pub(crate) struct PlayerAssets {
     #[allow(dead_code)]
     player_scene: Handle<ScenePatch>,
-    #[allow(dead_code)]
-    player_model: Option<Handle<Gltf>>,
+    pub(crate) player_model: Option<Handle<Gltf>>,
     #[allow(dead_code)]
     ghost_model: Option<Handle<Gltf>>,
 }

@@ -1,7 +1,8 @@
 bevy_transform::components::transform::Transform
 networking::transform::NetworkTransform
 ssnt::body::Limb {
-    attachment_position: glam::Vec3 { x: 0.0, y: 0.495, z: 0.0 },
+    attachment_position: glam::Vec3 { x: 0.0, y: 1.435, z: 0.0 },
+    bone: "head",
 }
 ssnt::items::Item {
     name: "Human Head",
@@ -12,17 +13,17 @@ physics::RigidBody {
 physics::Collider {
     kind: physics::ColliderType::Cuboid { hx: 0.1, hy: 0.2, hz: 0.1 },
 }
-bevy_mesh::components::Mesh3d("models/human.glb#Primitive:00 Body - Human Head/0")
-bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Skin/std")
 bevy_ecs::hierarchy::Children [
-    bevy_transform::components::transform::Transform {
-        translation: glam::Vec3 { x: 0.0, y: 0.0, z: 0.162 },
-    }
+    ssnt::body::LimbVisual
+    bevy_transform::components::transform::Transform
+    bevy_mesh::components::Mesh3d("models/human.glb#Primitive:00 Body - Human Head/0")
+    bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Skin/std"),
+    ssnt::body::LimbVisual
+    bevy_transform::components::transform::Transform
     bevy_mesh::components::Mesh3d("models/human.glb#Primitive:00 Body - Human Eyes/0")
-    bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Eye/std"),
-    bevy_transform::components::transform::Transform {
-        translation: glam::Vec3 { x: 0.0, y: -1.435, z: 0.0 },
-    }
+    bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Palette05/std"),
+    ssnt::body::LimbVisual
+    bevy_transform::components::transform::Transform
     bevy_mesh::components::Mesh3d("models/human.glb#Primitive:03 Hair - Fry/0")
-    bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Hair/std"),
+    bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Palette05/std"),
 ]

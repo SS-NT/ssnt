@@ -1,7 +1,8 @@
 bevy_transform::components::transform::Transform
 networking::transform::NetworkTransform
 ssnt::body::Limb {
-    attachment_position: glam::Vec3 { x: 0.240, y: 0.0, z: 0.0 },
+    attachment_position: glam::Vec3 { x: 0.658, y: 1.186, z: 0.0 },
+    bone: "hand_l",
 }
 ssnt::items::Item {
     name: "Human Hand Left",
@@ -21,5 +22,9 @@ physics::RigidBody {
 physics::Collider {
     kind: physics::ColliderType::Cuboid { hx: 0.1, hy: 0.07, hz: 0.07 },
 }
-bevy_mesh::components::Mesh3d("models/human.glb#Primitive:00 Body - Human Hand Left/0")
-bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Skin/std")
+bevy_ecs::hierarchy::Children [
+    ssnt::body::LimbVisual
+    bevy_transform::components::transform::Transform
+    bevy_mesh::components::Mesh3d("models/human.glb#Primitive:00 Body - Human Hand Left/0")
+    bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Skin/std")
+]

@@ -527,6 +527,7 @@ dependencies = [
  "bevy_derive",
  "bevy_ecs",
  "bevy_math",
+ "bevy_mesh",
  "bevy_platform",
  "bevy_reflect",
  "bevy_time",
@@ -1017,7 +1018,9 @@ name = "bevy_gltf"
 version = "0.19.0"
 dependencies = [
  "async-lock",
+ "atomicow",
  "base64",
+ "bevy_animation",
  "bevy_app",
  "bevy_asset",
  "bevy_camera",
@@ -1025,6 +1028,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_image",
  "bevy_light",
+ "bevy_log",
  "bevy_material",
  "bevy_math",
  "bevy_mesh",
@@ -3365,20 +3369,17 @@ dependencies = [
 [[package]]
 name = "gltf"
 version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3ce1918195723ce6ac74e80542c5a96a40c2b26162c1957a5cd70799b8cacf7"
+source = "git+https://github.com/gltf-rs/gltf?rev=50d65229477fe5f785c2c90df21eb59c93ea2261#50d65229477fe5f785c2c90df21eb59c93ea2261"
 dependencies = [
  "byteorder",
  "gltf-json",
- "lazy_static",
  "serde_json",
 ]
 
 [[package]]
 name = "gltf-derive"
 version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14070e711538afba5d6c807edb74bcb84e5dbb9211a3bf5dea0dfab5b24f4c51"
+source = "git+https://github.com/gltf-rs/gltf?rev=50d65229477fe5f785c2c90df21eb59c93ea2261#50d65229477fe5f785c2c90df21eb59c93ea2261"
 dependencies = [
  "inflections",
  "proc-macro2",
@@ -3389,8 +3390,7 @@ dependencies = [
 [[package]]
 name = "gltf-json"
 version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6176f9d60a7eab0a877e8e96548605dedbde9190a7ae1e80bbcc1c9af03ab14"
+source = "git+https://github.com/gltf-rs/gltf?rev=50d65229477fe5f785c2c90df21eb59c93ea2261#50d65229477fe5f785c2c90df21eb59c93ea2261"
 dependencies = [
  "gltf-derive",
  "serde",

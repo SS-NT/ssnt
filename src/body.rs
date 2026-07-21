@@ -1,18 +1,22 @@
-use std::fmt;
+use std::{fmt, time::Duration};
 
 use bevy::{
-    asset::LoadedFolder,
+    animation::{AnimatedBy, AnimationTargetId},
+    asset::{AssetId, LoadedFolder},
     ecs::{
         entity::{EntityMapper, MapEntities},
         hierarchy::ChildSpawnerCommands,
         reflect::ReflectMapEntities,
         system::{EntityCommands, SystemParam},
     },
-    platform::collections::HashSet,
+    gltf::{Gltf, GltfNode, GltfSkin},
+    mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes},
+    platform::collections::{HashMap, HashSet},
     prelude::*,
     reflect::TypePath,
 };
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use bevy_rapier3d::prelude::Velocity;
 use networking::{
     component::AppExt as ComponentAppExt,
     identity::{NetworkIdentities, NetworkIdentity},
@@ -33,9 +37,11 @@ use crate::{
         InteractionOption, InteractionSpecificity, InteractionStatus,
     },
     items::{
+        clothes::{Clothing, ClothingHolder},
         containers::{Container, MoveItem},
         Item, StoredItem, StoredItemClient,
     },
+    round::PlayerAssets,
 };
 
 mod ghost;
@@ -48,8 +54,11 @@ impl Plugin for BodyPlugin {
         app.register_type::<Body>()
             .register_type::<LimbSide>()
             .register_type::<Limb>()
+            .register_type::<LimbVisual>()
             .register_type::<Hand>()
             .register_type::<Cutting>()
+            .register_type::<LocomotionConfig>()
+            .register_type::<LocomotionState>()
             .add_network_message::<ChangeHandRequest>()
             .add_networked_component::<Hands, HandsClient>();
 
@@ -79,7 +88,23 @@ impl Plugin for BodyPlugin {
                 );
         } else {
             app.add_systems(EguiPrimaryContextPass, hand_ui)
-                .add_systems(Update, (client_update_limbs, client_hands_keybind));
+                .add_systems(
+                    Update,
+                    (
+                        client_update_limbs,
+                        client_hands_keybind,
+                        update_limb_visuals,
+                        (
+                            build_body_skeleton,
+                            skin_body_limbs,
+                            unskin_limbs,
+                            skin_clothing,
+                            unskin_clothing,
+                        )
+                            .chain(),
+                        drive_locomotion,
+                    ),
+                );
         }
 
         app.add_plugins((health::HealthPlugin, ghost::GhostPlugin));
@@ -132,7 +157,14 @@ impl fmt::Display for LimbSide {
 #[reflect(Component, Default)]
 pub struct Limb {
     attachment_position: Vec3,
+    /// Name of the rig bone this limb is primarily bound to.
+    bone: String,
 }
+
+/// Marks a limb's visual mesh child.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+pub struct LimbVisual;
 
 #[derive(Message)]
 struct LimbEvent {
@@ -148,16 +180,28 @@ enum LimbEventKind {
 
 fn process_new_limbs(
     mut bodies: Query<&mut Body, Changed<Body>>,
-    mut limbs: Query<(&Limb, &mut Transform)>,
+    limbs: Query<&Limb>,
+    parents: Query<&ChildOf>,
+    mut transforms: Query<&mut Transform>,
     mut writer: MessageWriter<LimbEvent>,
     mut commands: Commands,
 ) {
     for mut body in bodies.iter_mut() {
         body.added_limbs.retain(|&limb_entity| {
-            let Ok((limb, mut transform)) = limbs.get_mut(limb_entity) else {
+            let Ok(attachment) = limbs.get(limb_entity).map(|limb| limb.attachment_position) else {
                 return true;
             };
-            transform.translation = limb.attachment_position;
+            // attachment_position is body-relative; nest the limb via its transform
+            // relative to its parent limb
+            let parent_attachment = parents
+                .get(limb_entity)
+                .ok()
+                .and_then(|child_of| limbs.get(child_of.parent()).ok())
+                .map_or(Vec3::ZERO, |parent| parent.attachment_position);
+            let Ok(mut transform) = transforms.get_mut(limb_entity) else {
+                return true;
+            };
+            transform.translation = attachment - parent_attachment;
             commands
                 .entity(limb_entity)
                 .freeze(Some(ColliderGroup::AttachedLimbs));
@@ -219,6 +263,424 @@ fn client_update_limbs(
         body.limbs.insert(limb_entity);
     }
     // TODO: removed limbs
+}
+
+/// Offset each limb's visual child by the negated (body-relative) attachment, centring
+/// the shared-model-space mesh on the limb body.
+fn update_limb_visuals(
+    visuals: Query<(Entity, &ChildOf), With<LimbVisual>>,
+    limbs: Query<&Limb>,
+    mut transforms: Query<&mut Transform>,
+) {
+    for (visual, child_of) in &visuals {
+        let Ok(limb) = limbs.get(child_of.parent()) else {
+            continue;
+        };
+        let target = -limb.attachment_position;
+        if let Ok(mut transform) = transforms.get_mut(visual) {
+            if transform.translation != target {
+                transform.translation = target;
+            }
+        }
+    }
+}
+
+/// Shared skeleton for one body instance; every attached limb's `SkinnedMesh`
+/// references these same joints.
+#[derive(Component)]
+struct BodySkeleton {
+    joints: Vec<Entity>,
+    inverse_bindposes: Handle<SkinnedMeshInverseBindposes>,
+}
+
+/// A body whose skeleton still needs building once its rig glTF has loaded.
+#[derive(Component)]
+struct PendingSkeleton(Handle<Gltf>);
+
+/// Build a body's shared skeleton from its rig's glTF skin.
+fn build_body_skeleton(
+    pending: Query<(Entity, &PendingSkeleton)>,
+    gltfs: Res<Assets<Gltf>>,
+    skins: Res<Assets<GltfSkin>>,
+    nodes: Res<Assets<GltfNode>>,
+    configs: Query<&LocomotionConfig>,
+    mut graphs: ResMut<Assets<AnimationGraph>>,
+    mut commands: Commands,
+) {
+    for (body, PendingSkeleton(handle)) in &pending {
+        let Some(gltf) = gltfs.get(handle) else {
+            continue;
+        };
+        let Some(skin_handle) = gltf.skins.first() else {
+            continue;
+        };
+        let Some(skin) = skins.get(skin_handle) else {
+            continue;
+        };
+
+        // Bail until every joint node is loaded so we never spawn a partial skeleton.
+        let Some(node_refs) = skin
+            .joints
+            .iter()
+            .map(|handle| nodes.get(handle))
+            .collect::<Option<Vec<&GltfNode>>>()
+        else {
+            continue;
+        };
+
+        // One entity per joint, in skin order (matches the meshes' JOINTS_0 indices).
+        let mut node_to_entity: HashMap<AssetId<GltfNode>, Entity> = HashMap::default();
+        let mut joint_names: HashMap<AssetId<GltfNode>, Name> = HashMap::default();
+        let mut joints = Vec::with_capacity(node_refs.len());
+        for (handle, node) in skin.joints.iter().zip(&node_refs) {
+            let name = Name::new(node.name.clone());
+            let entity = commands.spawn((node.transform, name.clone())).id();
+            node_to_entity.insert(handle.id(), entity);
+            joint_names.insert(handle.id(), name);
+            joints.push(entity);
+        }
+
+        // Rebuild the bone hierarchy from each node's children.
+        let mut is_child: HashSet<AssetId<GltfNode>> = HashSet::default();
+        let mut parent_of: HashMap<AssetId<GltfNode>, AssetId<GltfNode>> = HashMap::default();
+        for (handle, node) in skin.joints.iter().zip(&node_refs) {
+            let parent = node_to_entity[&handle.id()];
+            for child in &node.children {
+                if let Some(&child_entity) = node_to_entity.get(&child.id()) {
+                    commands.entity(child_entity).insert(ChildOf(parent));
+                    is_child.insert(child.id());
+                    parent_of.insert(child.id(), handle.id());
+                }
+            }
+        }
+
+        // Joint transforms are relative to the armature node, which may carry a rotation,
+        // so we create an armature entity to put all the bones on
+        let root_joints: HashSet<AssetId<GltfNode>> = skin
+            .joints
+            .iter()
+            .map(|handle| handle.id())
+            .filter(|id| !is_child.contains(id))
+            .collect();
+        let armature_node = gltf
+            .nodes
+            .iter()
+            .filter_map(|handle| nodes.get(handle))
+            .find(|node| {
+                node.children
+                    .iter()
+                    .any(|child| root_joints.contains(&child.id()))
+            });
+        let armature_transform = armature_node.map_or(Transform::IDENTITY, |node| node.transform);
+        let armature_name =
+            Name::new(armature_node.map_or_else(String::new, |node| node.name.clone()));
+        let armature = commands.spawn((armature_transform, ChildOf(body))).id();
+        for id in &root_joints {
+            commands
+                .entity(node_to_entity[id])
+                .insert(ChildOf(armature));
+        }
+
+        // Tag every bone as an animation target of the body's player. The target id hashes the
+        // bone's name path from the armature.
+        for id in skin.joints.iter().map(|handle| handle.id()) {
+            let mut path = vec![joint_names[&id].clone()];
+            let mut cursor = parent_of.get(&id).copied();
+            while let Some(parent) = cursor {
+                path.push(joint_names[&parent].clone());
+                cursor = parent_of.get(&parent).copied();
+            }
+            path.push(armature_name.clone());
+            path.reverse();
+            commands
+                .entity(node_to_entity[&id])
+                .insert((AnimationTargetId::from_names(path.iter()), AnimatedBy(body)));
+        }
+
+        // Locomotion graph
+        let config = configs.get(body).cloned().unwrap_or_default();
+        let mut graph = AnimationGraph::new();
+        let mut states: Vec<ResolvedState> = config
+            .states
+            .iter()
+            .filter_map(|state| {
+                let Some(clip) = gltf.named_animations.get(state.animation.as_str()) else {
+                    warn!("Locomotion clip {:?} missing from rig", state.animation);
+                    return None;
+                };
+                Some(ResolvedState {
+                    clip: graph.add_clip(clip.clone(), 1.0, graph.root),
+                    min_speed: state.min_speed,
+                    reference_speed: state.reference_speed,
+                })
+            })
+            .collect();
+        if !states.is_empty() {
+            states.sort_by(|a, b| a.min_speed.total_cmp(&b.min_speed));
+            commands.entity(body).insert((
+                AnimationPlayer::default(),
+                AnimationGraphHandle(graphs.add(graph)),
+                AnimationTransitions::new(),
+                LocomotionAnimations {
+                    states,
+                    blend: Duration::from_secs_f32(config.blend_seconds),
+                },
+            ));
+        }
+
+        commands
+            .entity(body)
+            .remove::<PendingSkeleton>()
+            .insert(BodySkeleton {
+                joints,
+                inverse_bindposes: skin.inverse_bind_matrices.clone(),
+            });
+    }
+}
+
+/// Skin attached limbs' visual meshes, kicking off the skeleton build lazily on first
+/// need. Also handles reattaching a limb to another body.
+fn skin_body_limbs(
+    visuals: Query<(Entity, &ChildOf), (With<LimbVisual>, With<Mesh3d>, Without<SkinnedMesh>)>,
+    limbs: Query<&Limb>,
+    parents: Query<&ChildOf>,
+    hands: Query<(), With<Hand>>,
+    bodies: Query<(), With<Body>>,
+    skeletons: Query<&BodySkeleton>,
+    pending: Query<(), With<PendingSkeleton>>,
+    assets: Res<PlayerAssets>,
+    mut commands: Commands,
+) {
+    for (visual_entity, visual_parent) in &visuals {
+        let limb_entity = visual_parent.parent();
+        let Ok(limb) = limbs.get(limb_entity) else {
+            continue;
+        };
+        if limb.bone.is_empty() {
+            continue; // not rigged for skinning
+        }
+        if parents
+            .get(limb_entity)
+            .is_ok_and(|child_of| hands.contains(child_of.parent()))
+        {
+            continue; // held item, not an attached limb
+        }
+        let Some(body) = parents
+            .iter_ancestors(limb_entity)
+            .find(|&e| bodies.contains(e))
+        else {
+            continue;
+        };
+
+        match skeletons.get(body) {
+            // All limbs share the rig, so joints + bindposes are cloned wholesale.
+            Ok(skeleton) => {
+                commands.entity(visual_entity).insert(SkinnedMesh {
+                    inverse_bindposes: skeleton.inverse_bindposes.clone(),
+                    joints: skeleton.joints.clone(),
+                });
+            }
+            // No skeleton yet: build one for this body's rig.
+            Err(_) => {
+                if !pending.contains(body) {
+                    if let Some(rig) = assets.player_model.clone() {
+                        commands.entity(body).insert(PendingSkeleton(rig));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Drop skinning from a limb's visual meshes once the limb is no longer attached.
+fn unskin_limbs(
+    mut detached: RemovedComponents<ChildOf>,
+    reparented: Query<Entity, (With<Limb>, Changed<ChildOf>)>,
+    limbs: Query<(), With<Limb>>,
+    children: Query<&Children>,
+    skinned_visuals: Query<(), (With<LimbVisual>, With<SkinnedMesh>)>,
+    parents: Query<&ChildOf>,
+    hands: Query<(), With<Hand>>,
+    skeletons: Query<(), With<BodySkeleton>>,
+    mut commands: Commands,
+) {
+    let mut seen: HashSet<Entity> = HashSet::default();
+    for limb_entity in detached.read().chain(reparented.iter()) {
+        if !seen.insert(limb_entity) || !limbs.contains(limb_entity) {
+            continue;
+        }
+
+        let parent = parents.get(limb_entity).ok().map(ChildOf::parent);
+        let under_hand = parent.is_some_and(|p| hands.contains(p));
+        let attached = !under_hand
+            && parents
+                .iter_ancestors(limb_entity)
+                .any(|e| skeletons.contains(e));
+        if attached {
+            continue; // still an attached limb, keep it skinned
+        }
+
+        let Ok(limb_children) = children.get(limb_entity) else {
+            continue;
+        };
+        for &child in limb_children {
+            if skinned_visuals.contains(child) {
+                commands.entity(child).remove::<SkinnedMesh>();
+            }
+        }
+    }
+}
+
+/// Skin equipped clothing to the wearer's shared skeleton.
+fn skin_clothing(
+    clothing: Query<(Entity, &ChildOf), (With<Clothing>, With<Mesh3d>, Without<SkinnedMesh>)>,
+    holders: Query<(), With<ClothingHolder>>,
+    parents: Query<&ChildOf>,
+    bodies: Query<(), With<Body>>,
+    skeletons: Query<&BodySkeleton>,
+    pending: Query<(), With<PendingSkeleton>>,
+    assets: Res<PlayerAssets>,
+    mut commands: Commands,
+) {
+    for (clothing_entity, clothing_parent) in &clothing {
+        if !holders.contains(clothing_parent.parent()) {
+            continue; // not worn in a slot
+        }
+        let Some(body) = parents
+            .iter_ancestors(clothing_entity)
+            .find(|&e| bodies.contains(e))
+        else {
+            continue;
+        };
+
+        match skeletons.get(body) {
+            Ok(skeleton) => {
+                commands.entity(clothing_entity).insert(SkinnedMesh {
+                    inverse_bindposes: skeleton.inverse_bindposes.clone(),
+                    joints: skeleton.joints.clone(),
+                });
+            }
+            // No skeleton yet: build one for this body's rig.
+            Err(_) => {
+                if !pending.contains(body) {
+                    if let Some(rig) = assets.player_model.clone() {
+                        commands.entity(body).insert(PendingSkeleton(rig));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Drop skinning from clothing once it's no longer worn.
+fn unskin_clothing(
+    mut detached: RemovedComponents<ChildOf>,
+    reparented: Query<Entity, (With<Clothing>, Changed<ChildOf>)>,
+    skinned: Query<(), (With<Clothing>, With<SkinnedMesh>)>,
+    holders: Query<(), With<ClothingHolder>>,
+    parents: Query<&ChildOf>,
+    mut commands: Commands,
+) {
+    let mut seen: HashSet<Entity> = HashSet::default();
+    for clothing_entity in detached.read().chain(reparented.iter()) {
+        if !seen.insert(clothing_entity) || !skinned.contains(clothing_entity) {
+            continue;
+        }
+        let worn = parents
+            .get(clothing_entity)
+            .is_ok_and(|child_of| holders.contains(child_of.parent()));
+        if worn {
+            continue; // still worn, keep it skinned
+        }
+        commands.entity(clothing_entity).remove::<SkinnedMesh>();
+    }
+}
+
+#[derive(Reflect, Clone, Default)]
+#[reflect(Default)]
+pub struct LocomotionState {
+    /// Name of the animation clip in the rig's glTF.
+    pub animation: String,
+    /// Minimum horizontal speed (m/s) at which this state becomes active.
+    pub min_speed: f32,
+    /// Speed the clip was authored at; playback scales `speed / reference_speed` so footfalls
+    /// track the ground.
+    pub reference_speed: f32,
+}
+
+#[derive(Component, Reflect, Clone)]
+#[reflect(Component, Default)]
+pub struct LocomotionConfig {
+    pub states: Vec<LocomotionState>,
+    /// Crossfade duration (seconds) between states.
+    pub blend_seconds: f32,
+}
+
+impl Default for LocomotionConfig {
+    fn default() -> Self {
+        Self {
+            states: vec![LocomotionState {
+                animation: "HumanIdle".to_string(),
+                min_speed: 0.0,
+                reference_speed: 0.0,
+            }],
+            blend_seconds: 0.25,
+        }
+    }
+}
+
+/// A resolved locomotion state: graph node plus the speeds copied from its [`LocomotionState`].
+struct ResolvedState {
+    clip: AnimationNodeIndex,
+    min_speed: f32,
+    reference_speed: f32,
+}
+
+/// Locomotion states resolved against a body's animation graph, sorted by `min_speed`.
+#[derive(Component)]
+struct LocomotionAnimations {
+    states: Vec<ResolvedState>,
+    blend: Duration,
+}
+
+// Bounds on speed-matched playback so extreme velocities don't play a clip absurdly fast/slow.
+const PLAYBACK_MIN: f32 = 0.5;
+const PLAYBACK_MAX: f32 = 1.6;
+
+/// Drive each rigged body's animation from its horizontal speed, picking the fastest state it
+/// has reached and scaling that clip's playback so footfalls roughly track the ground.
+fn drive_locomotion(
+    mut bodies: Query<(
+        &Velocity,
+        &LocomotionAnimations,
+        &mut AnimationPlayer,
+        &mut AnimationTransitions,
+    )>,
+) {
+    for (velocity, anims, mut player, mut transitions) in &mut bodies {
+        let speed = velocity.linear.xz().length();
+        // States are sorted ascending, so the last match is the fastest reached state
+        let state = anims
+            .states
+            .iter()
+            .rev()
+            .find(|state| speed >= state.min_speed)
+            .unwrap_or(&anims.states[0]);
+        let playback = if state.reference_speed > 0.0 {
+            (speed / state.reference_speed).clamp(PLAYBACK_MIN, PLAYBACK_MAX)
+        } else {
+            1.0
+        };
+
+        if transitions.get_main_animation() != Some(state.clip) {
+            transitions
+                .play(&mut player, state.clip, anims.blend)
+                .repeat();
+        }
+        if let Some(active) = player.animation_mut(state.clip) {
+            active.set_speed(playback);
+        }
+    }
 }
 
 #[derive(Component, Reflect, Default)]

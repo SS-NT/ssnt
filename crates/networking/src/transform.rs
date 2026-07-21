@@ -884,13 +884,19 @@ fn apply_buffered_updates(
 /// Applies transform snapshots to entities without physics simulation
 fn sync_networked_transform(
     mut query: Query<
-        (&mut NetworkedTransform, &mut Transform),
+        (Entity, &mut NetworkedTransform, &mut Transform),
         (Without<RigidBody>, Without<ClientControlled>),
     >,
+    parents: Query<&ChildOf>,
+    controlled: Query<(), With<ClientControlled>>,
     network_time: Res<ClientNetworkTime>,
 ) {
     let current_tick = network_time.interpolated_tick();
-    for (mut networked, mut transform) in query.iter_mut() {
+    for (entity, mut networked, mut transform) in query.iter_mut() {
+        // Don't apply server poses to objects nested under a client-controlled object; the client owns their placement.
+        if nested_under_controlled(entity, &parents, &controlled) {
+            continue;
+        }
         let (next_snapshot, previous_snapshot) = match networked.relevant_snapshots(current_tick) {
             Some(u) => u,
             None => continue,
@@ -932,6 +938,16 @@ fn representative_collider(
         }
     }
     None
+}
+
+fn nested_under_controlled(
+    entity: Entity,
+    parents: &Query<&ChildOf>,
+    controlled: &Query<(), With<ClientControlled>>,
+) -> bool {
+    parents
+        .iter_ancestors(entity)
+        .any(|ancestor| controlled.contains(ancestor))
 }
 
 /// Climbs from a collider to the first ancestor (inclusive) satisfying `belongs`.
@@ -1180,6 +1196,8 @@ fn sync_networked_transform_physics(
         Option<&mut VisualError>,
         Option<&RigidBody>,
     )>,
+    parents: Query<&ChildOf>,
+    controlled_query: Query<(), With<ClientControlled>>,
     identities: Res<NetworkIdentities>,
     network_time: Res<ClientNetworkTime>,
     time: Res<Time>,
@@ -1290,8 +1308,10 @@ fn sync_networked_transform_physics(
             None => *next_snapshot,
         };
 
-        let ignore_position =
-            controlled && client_movement.map(|m| !m.is_added()).unwrap_or_default();
+        // Suppress the server's pose/velocity for objects nested under a client-controlled object;
+        // the client owns their placement. Parent and physics-state changes below still apply.
+        let ignore_position = nested_under_controlled(entity, &parents, &controlled_query)
+            || (controlled && client_movement.map(|m| !m.is_added()).unwrap_or_default());
         let parent_changed =
             snapshot.parent != parent.and_then(|p| identities.get_identity(p.parent()));
         // Smooth discontinuities instead of snapping: either the client simulated the body and

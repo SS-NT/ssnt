@@ -2,6 +2,14 @@ bevy_transform::components::transform::Transform
 networking::transform::NetworkTransform
 ssnt::Player
 ssnt::body::Body
+ssnt::body::LocomotionConfig {
+    states: [
+        ssnt::body::LocomotionState { animation: "HumanIdle", min_speed: 0.0, reference_speed: 0.0 },
+        ssnt::body::LocomotionState { animation: "HumanWalk", min_speed: 0.2, reference_speed: 2.0 },
+        ssnt::body::LocomotionState { animation: "HumanRun", min_speed: 3.0, reference_speed: 4.5 },
+    ],
+    blend_seconds: 0.25,
+}
 ssnt::body::health::OrganicBody
 physics::RigidBody {
     kind: physics::RigidBodyType::Dynamic,

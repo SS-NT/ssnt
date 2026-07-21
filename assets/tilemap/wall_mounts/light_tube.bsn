@@ -1,11 +1,11 @@
 bevy_transform::components::transform::Transform {
     rotation: glam::Quat { x: 0.0, y: 0.70710677, z: 0.0, w: -0.70710677 },
 }
-bevy_mesh::components::Mesh3d("models/tilemap/lights.glb#Mesh12/Primitive0")
+bevy_mesh::components::Mesh3d("models/tilemap/lights.glb#Primitive:LightTubeFrame/0")
 bevy_light::NotShadowCaster
 bevy_ecs::hierarchy::Children [
     bevy_transform::components::transform::Transform
-    bevy_mesh::components::Mesh3d("models/tilemap/lights.glb#Mesh9/Primitive0")
+    bevy_mesh::components::Mesh3d("models/tilemap/lights.glb#Primitive:LightTube/0")
     bevy_light::NotShadowCaster
     bevy_ecs::hierarchy::Children [
         bevy_transform::components::transform::Transform

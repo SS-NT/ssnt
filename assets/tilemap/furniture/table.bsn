@@ -1,15 +1,15 @@
 ssnt::construction::WrenchDeconstructable
-bevy_mesh::components::Mesh3d("models/tilemap/tables.glb#Mesh71/Primitive0")
+bevy_mesh::components::Mesh3d("models/tilemap/tables.glb#Primitive:TableMetalO/0")
 maps::adjacency::TilemapAdjacency {
     category: "table",
     meshes: maps::adjacency::AdjacencyVariants<bevy_asset::handle::Handle<bevy_mesh::mesh::Mesh>> {
-        default: "models/tilemap/tables.glb#Mesh71/Primitive0",
-        o: "models/tilemap/tables.glb#Mesh71/Primitive0",
-        u: "models/tilemap/tables.glb#Mesh63/Primitive0",
-        i: "models/tilemap/tables.glb#Mesh74/Primitive0",
-        l: "models/tilemap/tables.glb#Mesh72/Primitive0",
-        t: "models/tilemap/tables.glb#Mesh75/Primitive0",
-        x: "models/tilemap/tables.glb#Mesh77/Primitive0",
+        default: "models/tilemap/tables.glb#Primitive:TableMetalO/0",
+        o: "models/tilemap/tables.glb#Primitive:TableMetalO/0",
+        u: "models/tilemap/tables.glb#Primitive:TableMetalU/0",
+        i: "models/tilemap/tables.glb#Primitive:TableMetalI/0",
+        l: "models/tilemap/tables.glb#Primitive:TableMetalL1/0",
+        t: "models/tilemap/tables.glb#Primitive:TableMetalT1/0",
+        x: "models/tilemap/tables.glb#Primitive:TableMetalX1/0",
     },
 }
 bevy_ecs::hierarchy::Children [

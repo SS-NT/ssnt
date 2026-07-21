@@ -130,13 +130,18 @@ fn main() {
         NetworkRole::Client => {
             #[cfg(feature = "client")]
             app.add_plugins((
-                DefaultPlugins.set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Space Station Nanotrasen".to_owned(),
+                DefaultPlugins
+                    .set(WindowPlugin {
+                        primary_window: Some(Window {
+                            title: "Space Station Nanotrasen".to_owned(),
+                            ..Default::default()
+                        }),
                         ..Default::default()
+                    })
+                    .set(bevy::gltf::GltfPlugin {
+                        label_mode: bevy::gltf::GltfLabelMode::Names,
+                        ..default()
                     }),
-                    ..Default::default()
-                }),
                 networking_plugin,
                 camera::CameraPlugin,
                 EguiPlugin::default(),

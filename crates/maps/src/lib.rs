@@ -825,7 +825,7 @@ fn load_tilemap_assets(
 ) {
     let client_assets = network.is_client().then(|| ClientMapAssets {
         models: server.load_folder("models/tilemap"),
-        default_material: server.load("models/tilemap/walls windows.glb#Material0/std"),
+        default_material: server.load("models/tilemap/walls windows.glb#Material:Palette05/std"),
     });
 
     let assets = MapAssets {

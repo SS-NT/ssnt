@@ -12,17 +12,17 @@ physics::RigidBody {
 physics::Collider {
     kind: physics::ColliderType::Cuboid { hx: 0.1, hy: 0.2, hz: 0.1 },
 }
-bevy_mesh::components::Mesh3d("models/human.glb#Mesh9/Primitive0")
-bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material0/std")
+bevy_mesh::components::Mesh3d("models/human.glb#Primitive:00 Body - Human Head/0")
+bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Skin/std")
 bevy_ecs::hierarchy::Children [
     bevy_transform::components::transform::Transform {
         translation: glam::Vec3 { x: 0.0, y: 0.0, z: 0.162 },
     }
-    bevy_mesh::components::Mesh3d("models/human.glb#Mesh4/Primitive0")
-    bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material2/std"),
+    bevy_mesh::components::Mesh3d("models/human.glb#Primitive:00 Body - Human Eyes/0")
+    bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Eye/std"),
     bevy_transform::components::transform::Transform {
         translation: glam::Vec3 { x: 0.0, y: -1.435, z: 0.0 },
     }
-    bevy_mesh::components::Mesh3d("models/human.glb#Mesh23/Primitive0")
-    bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material4/std"),
+    bevy_mesh::components::Mesh3d("models/human.glb#Primitive:03 Hair - Fry/0")
+    bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Hair/std"),
 ]

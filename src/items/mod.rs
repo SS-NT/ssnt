@@ -101,7 +101,7 @@ fn load_item_assets(
 ) {
     let client_assets = network.is_client().then(|| ClientItemAssets {
         models: server.load_folder("models/items"),
-        default_material: server.load("models/items/wrenches.glb#Material0/std"),
+        default_material: server.load("models/items/wrenches.glb#Material:Palette05/std"),
     });
 
     let assets = ItemAssets {

@@ -13,8 +13,8 @@ physics::RigidBody {
 physics::Collider {
     kind: physics::ColliderType::Cuboid { hx: 0.1, hy: 0.3, hz: 0.1 },
 }
-bevy_mesh::components::Mesh3d("models/human.glb#Mesh12/Primitive0")
-bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material0/std")
+bevy_mesh::components::Mesh3d("models/human.glb#Primitive:00 Body - Human Torso/0")
+bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Skin/std")
 bevy_ecs::hierarchy::Children [
     networking::scene::NetworkedChild
     bevy_transform::components::transform::Transform {

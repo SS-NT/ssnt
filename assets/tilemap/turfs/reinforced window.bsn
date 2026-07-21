@@ -1,15 +1,15 @@
 bevy_transform::components::transform::Transform
-bevy_mesh::components::Mesh3d("models/tilemap/walls windows.glb#Mesh39/Primitive0")
+bevy_mesh::components::Mesh3d("models/tilemap/walls windows.glb#Primitive:Reinforced Window O/0")
 maps::adjacency::TilemapAdjacency {
     category: "wall",
     meshes: maps::adjacency::AdjacencyVariants<bevy_asset::handle::Handle<bevy_mesh::mesh::Mesh>> {
-        default: "models/tilemap/walls windows.glb#Mesh39/Primitive0",
-        o: "models/tilemap/walls windows.glb#Mesh39/Primitive0",
-        u: "models/tilemap/walls windows.glb#Mesh40/Primitive0",
-        i: "models/tilemap/walls windows.glb#Mesh41/Primitive0",
-        l: "models/tilemap/walls windows.glb#Mesh36/Primitive0",
-        t: "models/tilemap/walls windows.glb#Mesh37/Primitive0",
-        x: "models/tilemap/walls windows.glb#Mesh38/Primitive0",
+        default: "models/tilemap/walls windows.glb#Primitive:Reinforced Window O/0",
+        o: "models/tilemap/walls windows.glb#Primitive:Reinforced Window O/0",
+        u: "models/tilemap/walls windows.glb#Primitive:Reinforced Window C-1/0",
+        i: "models/tilemap/walls windows.glb#Primitive:Reinforced Window I-1/0",
+        l: "models/tilemap/walls windows.glb#Primitive:Reinforced Window L-1/0",
+        t: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1/0",
+        x: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1/0",
     },
 }
 bevy_ecs::hierarchy::Children [

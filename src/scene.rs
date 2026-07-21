@@ -56,7 +56,7 @@ impl Plugin for ScenePlugin {
             let default_material = app
                 .world()
                 .resource::<AssetServer>()
-                .load("models/items/wrenches.glb#Material0/std");
+                .load("models/items/wrenches.glb#Material:Palette05/std");
             app.insert_resource(ClientSceneAssets { default_material })
                 .add_systems(Update, initialize_scene_meshes);
         }

@@ -1,2 +1,2 @@
 bevy_transform::components::transform::Transform
-bevy_mesh::components::Mesh3d("models/tilemap/floors.glb#Mesh6/Primitive0")
+bevy_mesh::components::Mesh3d("models/tilemap/floors.glb#Primitive:FloorTileWhite/0")

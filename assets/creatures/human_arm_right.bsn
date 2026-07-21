@@ -12,5 +12,5 @@ physics::RigidBody {
 physics::Collider {
     kind: physics::ColliderType::Cuboid { hx: 0.2, hy: 0.07, hz: 0.07 },
 }
-bevy_mesh::components::Mesh3d("models/human.glb#Mesh2/Primitive0")
-bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material0/std")
+bevy_mesh::components::Mesh3d("models/human.glb#Primitive:00 Body - Human Arm Right/0")
+bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Skin/std")

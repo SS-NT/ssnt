@@ -1,6 +1,6 @@
 bevy_transform::components::transform::Transform
 networking::transform::NetworkTransform
-bevy_mesh::components::Mesh3d("models/human.glb#Mesh29/Primitive0")
+bevy_mesh::components::Mesh3d("models/human.glb#Primitive:Jumpsuit - Grey/0")
 ssnt::items::Item {
     name: "Assistant Jumpsuit",
 }

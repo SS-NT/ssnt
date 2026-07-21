@@ -744,6 +744,29 @@ impl<'w, 's> ClientHeldItem<'w, 's> {
     }
 }
 
+/// Returns the controlled body's active hand if it's free.
+#[derive(SystemParam)]
+pub struct ClientFreeHand<'w, 's> {
+    client_body: Query<'w, 's, &'static HandsClient, With<ClientControlled>>,
+    hands: Query<'w, 's, (Entity, &'static NetworkIdentity), With<Hand>>,
+    children: Query<'w, 's, &'static Children>,
+    items: Query<'w, 's, (), With<StoredItemClient>>,
+    identities: Res<'w, NetworkIdentities>,
+}
+
+impl ClientFreeHand<'_, '_> {
+    pub fn get_active_empty(&self) -> Option<(Entity, NetworkIdentity)> {
+        let hands = self.client_body.single().ok()?;
+        let active = self.identities.get_entity(hands.active_hand())?;
+        let (entity, &identity) = self.hands.get(active).ok()?;
+        let free = match self.children.get(entity) {
+            Ok(children) => self.items.iter_many(children).next().is_none(),
+            Err(_) => true,
+        };
+        free.then_some((entity, identity))
+    }
+}
+
 /// Updates the selected hand when limbs of a body get changed
 fn handle_hand_modification(
     mut bodies: Query<(Entity, &Body, Option<&mut Hands>), Changed<Body>>,

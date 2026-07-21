@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use utils::task::Tasks;
 
 use crate::{
+    body::ClientFreeHand,
     interaction::{
         ActiveInteraction, GenerateInteractionList, InteractionListEvents, InteractionOption,
         InteractionSpecificity, InteractionStatus,
@@ -90,6 +91,7 @@ fn container_ui(
     containers: Query<(&Container, &Children)>,
     identities: Res<NetworkIdentities>,
     mut dragged: ResMut<DraggedItem>,
+    free_hand: ClientFreeHand,
     mut sender: MessageSender,
     mut commands: Commands,
 ) {
@@ -229,11 +231,32 @@ fn container_ui(
                         egui::vec2(SLOT_SIZE.x * size.x as f32, SLOT_SIZE.y * size.y as f32),
                     )
                     .translate(grid_rect.left_top().to_vec2());
-                    let response = ui.interact(item_rect, id, egui::Sense::drag());
+                    let response = ui.interact(item_rect, id, egui::Sense::click_and_drag());
                     if response.dragged() {
                         item_drag_source(ui, &response, &mut dragged, *item_entity, *size, name);
                     } else {
                         draw_item(ui, item_rect, name);
+                    }
+
+                    // A plain click takes the item into a free hand.
+                    if response.clicked() {
+                        if let Some((hand_entity, hand_identity)) = free_hand.get_active_empty() {
+                            if let Ok((item_entity, &item_identity, _, mut stored)) =
+                                items.get_mut(*item_entity)
+                            {
+                                commit_item_move(
+                                    &mut dragged,
+                                    &mut sender,
+                                    &mut commands,
+                                    item_entity,
+                                    item_identity,
+                                    &mut stored,
+                                    hand_entity,
+                                    hand_identity,
+                                    UVec2::ZERO,
+                                );
+                            }
+                        }
                     }
                 }
             });

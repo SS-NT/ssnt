@@ -491,6 +491,13 @@ fn update_transform(
             continue;
         };
 
+        // Drop per-client state for connections that stopped observing. Their client despawned the
+        // entity, so when they observe again they're treated as new and get a full update instead of
+        // a delta from a snapshot they no longer have.
+        for connection in visibility.removed_observers() {
+            networked.client_data.remove(connection);
+        }
+
         // TODO: We could group clients by their acked sequence
         for connection in visibility.observers() {
             let client_data = networked.client_data.entry(*connection).or_default();

@@ -25,6 +25,7 @@ impl Plugin for ItemPlugin {
                 Update,
                 (
                     client_initialize_spawned_items,
+                    client_parent_stored_items,
                     client_update_item_visibility,
                 ),
             );
@@ -149,6 +150,21 @@ fn client_initialize_spawned_items(
         process_entity(root);
         for child in children_query.iter_descendants(root) {
             process_entity(child);
+        }
+    }
+}
+
+fn client_parent_stored_items(
+    query: Query<(Entity, &StoredItemClient, Option<&ChildOf>), Changed<StoredItemClient>>,
+    identities: Res<NetworkIdentities>,
+    mut commands: Commands,
+) {
+    for (entity, stored, current_parent) in query.iter() {
+        let Some(container_entity) = identities.get_entity(*stored.container) else {
+            continue;
+        };
+        if current_parent.map(ChildOf::parent) != Some(container_entity) {
+            commands.entity(entity).insert(ChildOf(container_entity));
         }
     }
 }

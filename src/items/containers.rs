@@ -3,11 +3,11 @@ use bevy::{
     prelude::*,
 };
 use networking::{
-    identity::NetworkIdentity,
+    identity::{NetworkIdentities, NetworkIdentity},
     is_server,
     spawning::ClientControls,
     visibility::{NetworkVisibilities, VisibilitySystem},
-    NetworkSet, Players,
+    ConnectionId, NetworkSet, Players,
 };
 use physics::PhysicsEntityCommands;
 use utils::task::{Task, Tasks};
@@ -16,6 +16,7 @@ use super::{Item, StoredItem};
 
 mod ui;
 
+use ui::ContainerUi;
 pub(crate) use ui::{
     commit_item_move, item_drag_source, item_drop_zone, ContainerDropSet, DraggedItem,
 };
@@ -299,11 +300,33 @@ fn cleanup_deleted_entities(
 fn item_in_container_visibility(
     items: Query<(&StoredItem, &NetworkIdentity)>,
     containers: Query<(Entity, Option<&DisplayContainer>), With<Container>>,
+    container_uis: Query<&ContainerUi>,
+    identities: Res<NetworkIdentities>,
     mut visibilities: ResMut<NetworkVisibilities>,
     parents: Query<&ChildOf>,
     controls: Res<ClientControls>,
     players: Res<Players>,
+    mut ui_viewers: Local<HashMap<Entity, Vec<ConnectionId>>>,
 ) {
+    // Players with the container's UI open observe its items regardless of where the
+    // container is (e.g. after it's dropped out of the player's hands).
+    ui_viewers.clear();
+    for ui in container_uis.iter() {
+        let Some(container_entity) = identities.get_entity(*ui.container) else {
+            continue;
+        };
+        let Some(connection) = controls
+            .controlling_player(ui.viewer)
+            .and_then(|player| players.get_connection(&player))
+        else {
+            continue;
+        };
+        ui_viewers
+            .entry(container_entity)
+            .or_default()
+            .push(connection);
+    }
+
     for (item, identity) in items.iter() {
         let Some(visibility) = visibilities.get_mut(*identity) else {
             continue;
@@ -325,7 +348,12 @@ fn item_in_container_visibility(
                 visibility.add_observer(connection);
             }
 
-            // TODO: Handle players looking into the container (having UI open)
+            // Players viewing this container through an open UI
+            if let Some(connections) = ui_viewers.get(&container_entity) {
+                for &connection in connections {
+                    visibility.add_observer(connection);
+                }
+            }
         }
     }
 }

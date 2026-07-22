@@ -59,8 +59,9 @@ impl Plugin for ContainerUiPlugin {
 
 #[derive(Component, TypePath, Networked)]
 #[networked(client = "ContainerUiClient")]
-struct ContainerUi {
-    container: NetworkVar<NetworkIdentity>,
+pub(super) struct ContainerUi {
+    pub(super) container: NetworkVar<NetworkIdentity>,
+    pub(super) viewer: Entity,
 }
 
 #[derive(Component, TypePath, Default, Networked)]
@@ -500,6 +501,7 @@ fn view_interaction(
                 NetworkUi,
                 ContainerUi {
                     container: (*identity).into(),
+                    viewer: source,
                 },
                 AlwaysVisible::single(source),
             ))

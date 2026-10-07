@@ -8,6 +8,7 @@ mod communication;
 mod components;
 mod config;
 mod construction;
+mod customization;
 mod debug;
 mod interaction;
 mod items;
@@ -174,6 +175,7 @@ fn main() {
         construction::ConstructionPlugin,
         combat::CombatPlugin,
         communication::CommunicationPlugin,
+        customization::CustomizationPlugin,
     ))
     .add_plugins((ui::UiPlugin,))
     .insert_resource(args)

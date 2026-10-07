@@ -1,0 +1,6 @@
+ssnt::customization::AppearanceOptionDefinition {
+    id: "none",
+    name: "None",
+    feature: ssnt::customization::AppearanceFeature::FacialHair,
+    default: true,
+}

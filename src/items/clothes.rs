@@ -57,6 +57,19 @@ impl Plugin for ClothingPlugin {
 pub struct Clothing {
     clothing_type: String,
     attachment_offset: Vec3,
+    /// Rig-bone names (see [`Limb::bone`]) of the body parts to hide while this is worn,
+    /// preventing skin from clipping through the clothing. Empty hides nothing.
+    hidden_body_parts: Vec<String>,
+}
+
+impl Clothing {
+    pub fn clothing_type(&self) -> &str {
+        &self.clothing_type
+    }
+
+    pub fn hidden_body_parts(&self) -> &[String] {
+        &self.hidden_body_parts
+    }
 }
 
 /// A body part on which clothing can be worn.
@@ -64,6 +77,12 @@ pub struct Clothing {
 #[reflect(Component, Default)]
 pub struct ClothingHolder {
     clothing_type: String,
+}
+
+impl ClothingHolder {
+    pub fn clothing_type(&self) -> &str {
+        &self.clothing_type
+    }
 }
 
 pub struct EquipClothing {

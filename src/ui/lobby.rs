@@ -1,4 +1,5 @@
 use crate::{
+    customization::SelectedJobClient,
     job::{JobDefinition, SelectJobMessage},
     round::{RequestJoin, RoundDataClient, RoundState, StartRoundRequest},
     GameState,
@@ -62,6 +63,7 @@ fn job_ui(
     jobs: Res<Assets<JobDefinition>>,
     asset_server: Res<AssetServer>,
     mut sender: MessageSender,
+    mut client_job: ResMut<SelectedJobClient>,
     mut selected_job: Local<Option<AssetId<JobDefinition>>>,
     mut sorted_jobs: Local<Vec<AssetId<JobDefinition>>>,
 ) {
@@ -88,6 +90,7 @@ fn job_ui(
         });
 
     if previous_job != *selected_job {
+        client_job.selected = *selected_job;
         let path = selected_job
             .and_then(|id| asset_server.get_path(id))
             .map(|p| p.to_string());

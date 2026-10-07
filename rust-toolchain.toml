@@ -1,0 +1,3 @@
+[toolchain]
+# Bevy 0.19 requires rustc >= 1.95; the repo's default toolchain (1.94.1) is too old.
+channel = "stable"

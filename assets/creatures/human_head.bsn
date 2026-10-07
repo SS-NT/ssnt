@@ -4,6 +4,7 @@ ssnt::body::Limb {
     attachment_position: glam::Vec3 { x: 0.0, y: 1.435, z: 0.0 },
     bone: "head",
 }
+ssnt::customization::AppearanceOptionHolder
 ssnt::items::Item {
     name: "Human Head",
 }
@@ -21,9 +22,5 @@ bevy_ecs::hierarchy::Children [
     ssnt::body::LimbVisual
     bevy_transform::components::transform::Transform
     bevy_mesh::components::Mesh3d("models/human.glb#Primitive:00 Body - Human Eyes/0")
-    bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Palette05/std"),
-    ssnt::body::LimbVisual
-    bevy_transform::components::transform::Transform
-    bevy_mesh::components::Mesh3d("models/human.glb#Primitive:03 Hair - Fry/0")
     bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Palette05/std"),
 ]

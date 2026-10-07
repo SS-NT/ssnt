@@ -6,6 +6,7 @@ ssnt::items::Item {
 }
 ssnt::items::clothes::Clothing {
     clothing_type: "torso",
+    hidden_body_parts: ["chest", "upper_arm_l", "upper_arm_r", "thigh_l", "thigh_r"],
 }
 physics::RigidBody {
     kind: physics::RigidBodyType::Dynamic,

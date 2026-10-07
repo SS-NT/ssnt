@@ -1,0 +1,10 @@
+ssnt::customization::AppearanceOptionDefinition {
+    id: "default",
+    name: "Default",
+    feature: ssnt::customization::AppearanceFeature::Eyebrows,
+    default: true,
+}
+ssnt::body::LimbVisual
+bevy_transform::components::transform::Transform
+bevy_mesh::components::Mesh3d("models/human.glb#Primitive:02 Brow - Default/0")
+bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/human.glb#Material:Palette05/std")

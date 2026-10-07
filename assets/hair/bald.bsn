@@ -1,0 +1,6 @@
+ssnt::customization::AppearanceOptionDefinition {
+    id: "bald",
+    name: "Bald",
+    feature: ssnt::customization::AppearanceFeature::Hair,
+    default: false,
+}

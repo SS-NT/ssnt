@@ -157,11 +157,9 @@ fn spawn_network_scenes(world: &mut World) {
                             // TODO: DONT INSERT NORMAL GRID COMPONENT AND STUFF!!
                             NetworkCommand { entity: child }.apply(world);
                         }
-                    } else {
-                        let parent_identity = *world
-                            .entity(*entity)
-                            .get::<NetworkIdentity>()
-                            .expect("network scene should always have a network identity");
+                    } else if let Some(parent_identity) =
+                        world.entity(*entity).get::<NetworkIdentity>().copied()
+                    {
                         // On the client we can rely on the child identities being sequential
                         let mut next_identity = parent_identity.next();
                         for &child in networked_children.iter() {
@@ -172,6 +170,7 @@ fn spawn_network_scenes(world: &mut World) {
                             next_identity = next_identity.next();
                         }
                     }
+                    // A client-local scene has no network identity, its children simply stay un-networked.
                 }
 
                 // Emit scene event

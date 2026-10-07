@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::{
     body::SpawnCreature,
+    customization::SelectedAppearances,
     items::clothes::{EquipClothing, EquipClothingSystem},
     job::{JobDefinition, SelectedJobs},
     movement::ForcePositionMessage,
@@ -170,6 +171,7 @@ struct SpawnsInProgress {
 fn spawn_players_roundstart(
     selected_jobs: Res<SelectedJobs>,
     job_data: Res<Assets<JobDefinition>>,
+    appearances: Res<SelectedAppearances>,
     players: Res<Players>,
     mut spawns: ResMut<SpawnsInProgress>,
     mut spawning: ResMut<Tasks<SpawnCreature>>,
@@ -182,6 +184,7 @@ fn spawn_players_roundstart(
 
         let spawn_id = spawning.create(SpawnCreature {
             archetype: "human".into(),
+            appearance: appearances.get(connection),
         });
 
         spawns.spawn_tasks.insert(spawn_id, player.id);
@@ -196,6 +199,7 @@ fn spawn_player_latejoin(
     mut messages: MessageReader<MessageEvent<RequestJoin>>,
     selected_jobs: Res<SelectedJobs>,
     job_data: Res<Assets<JobDefinition>>,
+    appearances: Res<SelectedAppearances>,
     players: Res<Players>,
     mut spawns: ResMut<SpawnsInProgress>,
     mut spawning: ResMut<Tasks<SpawnCreature>>,
@@ -211,6 +215,7 @@ fn spawn_player_latejoin(
 
         let spawn_id = spawning.create(SpawnCreature {
             archetype: "human".into(),
+            appearance: appearances.get(event.connection),
         });
 
         spawns.spawn_tasks.insert(spawn_id, player.id);
@@ -270,6 +275,7 @@ fn handle_player_body_spawned(
 #[allow(clippy::too_many_arguments)]
 fn finalise_player_spawn(
     players: Res<Players>,
+    appearances: Res<SelectedAppearances>,
     maps: Query<&TileMap>,
     selected_jobs: Res<SelectedJobs>,
     job_data: Res<Assets<JobDefinition>>,
@@ -304,12 +310,19 @@ fn finalise_player_spawn(
                 return false;
             };
 
-            let Some(name) = players
+            let Some(username) = players
                 .players()
                 .get(&connection)
                 .map(|p| p.username.clone())
             else {
                 return false;
+            };
+            let appearance = appearances.get(connection);
+            let character_name = appearance.name.trim();
+            let name = if character_name.is_empty() {
+                username
+            } else {
+                character_name.to_owned()
             };
 
             let Some(job) = selected_jobs.get(connection, &job_data) else {

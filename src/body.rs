@@ -27,11 +27,12 @@ use networking::{
     variable::{NetworkVar, ServerVar},
     Networked, Players,
 };
-use physics::{ColliderGroup, PhysicsEntityCommands};
+use physics::{ColliderGroup, Frozen, PhysicsEntityCommands};
 use serde::{Deserialize, Serialize};
 use utils::task::*;
 
 use crate::{
+    customization::{Appearance, CharacterAppearance},
     interaction::{
         ActiveInteraction, GenerateInteractionList, InteractionListEvents, InteractionListRequest,
         InteractionOption, InteractionSpecificity, InteractionStatus,
@@ -103,6 +104,7 @@ impl Plugin for BodyPlugin {
                             unskin_limbs,
                             skin_clothing,
                             unskin_clothing,
+                            update_hidden_body_parts,
                         )
                             .chain(),
                         drive_locomotion,
@@ -164,9 +166,16 @@ pub struct Limb {
     bone: String,
 }
 
+impl Limb {
+    pub(crate) fn local_translation(&self, parent: Option<&Limb>) -> Vec3 {
+        self.attachment_position - parent.map_or(Vec3::ZERO, |parent| parent.attachment_position)
+    }
+}
+
 /// Marks a limb's visual mesh child.
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, Default)]
+#[require(Visibility = Visibility::Hidden)]
 pub struct LimbVisual;
 
 #[derive(Message)]
@@ -191,20 +200,19 @@ fn process_new_limbs(
 ) {
     for mut body in bodies.iter_mut() {
         body.added_limbs.retain(|&limb_entity| {
-            let Ok(attachment) = limbs.get(limb_entity).map(|limb| limb.attachment_position) else {
+            let Ok(limb) = limbs.get(limb_entity) else {
                 return true;
             };
             // attachment_position is body-relative; nest the limb via its transform
             // relative to its parent limb
-            let parent_attachment = parents
+            let parent = parents
                 .get(limb_entity)
                 .ok()
-                .and_then(|child_of| limbs.get(child_of.parent()).ok())
-                .map_or(Vec3::ZERO, |parent| parent.attachment_position);
+                .and_then(|child_of| limbs.get(child_of.parent()).ok());
             let Ok(mut transform) = transforms.get_mut(limb_entity) else {
                 return true;
             };
-            transform.translation = attachment - parent_attachment;
+            transform.translation = limb.local_translation(parent);
             commands
                 .entity(limb_entity)
                 .freeze(Some(ColliderGroup::AttachedLimbs));
@@ -596,6 +604,62 @@ fn unskin_clothing(
             continue; // still worn, keep it skinned
         }
         commands.entity(clothing_entity).remove::<SkinnedMesh>();
+    }
+}
+
+/// Hide limb visuals covered by worn clothing so skin doesn't clip through clothes.
+///
+/// Each worn [`Clothing`] lists the [`Limb::bone`] names it covers; a limb is hidden when
+/// any worn item covers it, and revealed once nothing does. Recomputed from scratch per body
+/// whenever clothing is equipped, moved, or removed, so overlapping items compose correctly.
+fn update_hidden_body_parts(
+    changed_clothing: Query<(), (With<Clothing>, Or<(Added<Clothing>, Changed<ChildOf>)>)>,
+    added_limb_visuals: Query<(), Added<LimbVisual>>,
+    mut removed_children: RemovedComponents<ChildOf>,
+    bodies: Query<Entity, With<Body>>,
+    children: Query<&Children>,
+    clothing: Query<(&Clothing, &ChildOf)>,
+    holders: Query<(), With<ClothingHolder>>,
+    limb_visuals: Query<&ChildOf, With<LimbVisual>>,
+    limbs: Query<&Limb>,
+    mut visibility: Query<&mut Visibility>,
+) {
+    // Scene-backed clothing and limb visuals can resolve in either order during spawning.
+    let any_removed = removed_children.read().count() > 0;
+    if changed_clothing.is_empty() && added_limb_visuals.is_empty() && !any_removed {
+        return;
+    }
+
+    for body in &bodies {
+        // Union of bones covered by every item currently worn in a slot on this body.
+        let mut hidden: HashSet<String> = HashSet::default();
+        for descendant in children.iter_descendants(body) {
+            if let Ok((cloth, parent)) = clothing.get(descendant) {
+                if holders.contains(parent.parent()) {
+                    hidden.extend(cloth.hidden_body_parts().iter().cloned());
+                }
+            }
+        }
+
+        // Apply the result to each limb visual under this body.
+        for descendant in children.iter_descendants(body) {
+            let Ok(visual_parent) = limb_visuals.get(descendant) else {
+                continue;
+            };
+            let hide = limbs
+                .get(visual_parent.parent())
+                .is_ok_and(|limb| hidden.contains(&limb.bone));
+            let target = if hide {
+                Visibility::Hidden
+            } else {
+                Visibility::Inherited
+            };
+            if let Ok(mut vis) = visibility.get_mut(descendant) {
+                if *vis != target {
+                    *vis = target;
+                }
+            }
+        }
     }
 }
 
@@ -1012,6 +1076,8 @@ struct BodyAssets {
 /// Task to create the body of a given creature archetype
 pub struct SpawnCreature {
     pub archetype: String,
+    /// The customized appearance to apply and network to observers.
+    pub appearance: CharacterAppearance,
 }
 
 impl Task for SpawnCreature {
@@ -1033,95 +1099,104 @@ fn spawn_limb<'a>(
     })
 }
 
+/// Spawns the full limb hierarchy for a human body and returns the root entity.
+pub(crate) fn build_human_creature(
+    commands: &mut Commands,
+    server: &AssetServer,
+    frozen: bool,
+) -> Entity {
+    let mut creature = commands.spawn(NetworkSceneBundle {
+        scene: server.load("creatures/player.bsn").into(),
+        ..Default::default()
+    });
+    let mut limbs = HashSet::default();
+    creature.with_children(|builder| {
+        let torso = spawn_limb(builder, server, "human_torso")
+            .with_children(|builder| {
+                // Head
+                let head = spawn_limb(builder, server, "human_head")
+                    .with_children(|builder| {
+                        let brain = spawn_limb(builder, server, "organic_brain").id();
+                        limbs.insert(brain);
+                    })
+                    .id();
+                limbs.insert(head);
+
+                // Arms
+                let arm_left = spawn_limb(builder, server, "human_arm_left")
+                    .with_children(|builder| {
+                        let hand_left = spawn_limb(builder, server, "human_hand_left").id();
+                        limbs.insert(hand_left);
+                    })
+                    .id();
+                limbs.insert(arm_left);
+                let arm_right = spawn_limb(builder, server, "human_arm_right")
+                    .with_children(|builder| {
+                        let hand_right = spawn_limb(builder, server, "human_hand_right").id();
+                        limbs.insert(hand_right);
+                    })
+                    .id();
+                limbs.insert(arm_right);
+
+                // Legs
+                let leg_left = spawn_limb(builder, server, "human_leg_left")
+                    .with_children(|builder| {
+                        let foot_left = spawn_limb(builder, server, "human_foot_left").id();
+                        limbs.insert(foot_left);
+                    })
+                    .id();
+                limbs.insert(leg_left);
+                let leg_right = spawn_limb(builder, server, "human_leg_right")
+                    .with_children(|builder| {
+                        let foot_right = spawn_limb(builder, server, "human_foot_right").id();
+                        limbs.insert(foot_right);
+                    })
+                    .id();
+                limbs.insert(leg_right);
+
+                let heart = spawn_limb(builder, server, "organic_heart").id();
+                limbs.insert(heart);
+                let lung = spawn_limb(builder, server, "organic_lung").id();
+                limbs.insert(lung);
+            })
+            .id();
+        limbs.insert(torso);
+    });
+    let limb_list: Vec<Entity> = limbs.iter().copied().collect();
+    creature.insert(Body {
+        limbs,
+        added_limbs: limb_list.clone(),
+        ..Default::default()
+    });
+    let creature_entity = creature.id();
+
+    if frozen {
+        commands.entity(creature_entity).insert(Frozen);
+        for limb in limb_list {
+            commands.entity(limb).insert(Frozen);
+        }
+    }
+
+    creature_entity
+}
+
 fn create_creature(
     mut tasks: ResMut<Tasks<SpawnCreature>>,
     server: Res<AssetServer>,
     mut commands: Commands,
 ) {
     tasks.process(|data| {
-        let mut creature = commands.spawn(NetworkSceneBundle {
-            scene: server.load("creatures/player.bsn").into(),
-            ..Default::default()
-        });
         // TODO: Replace with species configuration in assets
-        match data.archetype.as_str() {
-            "human" => {
-                let mut limbs = HashSet::default();
-                creature.with_children(|builder| {
-                    let torso = spawn_limb(builder, server.as_ref(), "human_torso")
-                        .with_children(|builder| {
-                            // Head
-                            let head = spawn_limb(builder, server.as_ref(), "human_head")
-                                .with_children(|builder| {
-                                    let brain =
-                                        spawn_limb(builder, server.as_ref(), "organic_brain").id();
-                                    limbs.insert(brain);
-                                })
-                                .id();
-                            limbs.insert(head);
-
-                            // Arms
-                            let arm_left = spawn_limb(builder, server.as_ref(), "human_arm_left")
-                                .with_children(|builder| {
-                                    let hand_left =
-                                        spawn_limb(builder, server.as_ref(), "human_hand_left")
-                                            .id();
-                                    limbs.insert(hand_left);
-                                })
-                                .id();
-                            limbs.insert(arm_left);
-                            let arm_right = spawn_limb(builder, server.as_ref(), "human_arm_right")
-                                .with_children(|builder| {
-                                    let hand_right =
-                                        spawn_limb(builder, server.as_ref(), "human_hand_right")
-                                            .id();
-                                    limbs.insert(hand_right);
-                                })
-                                .id();
-                            limbs.insert(arm_right);
-
-                            // Legs
-                            let leg_left = spawn_limb(builder, server.as_ref(), "human_leg_left")
-                                .with_children(|builder| {
-                                    let foot_left =
-                                        spawn_limb(builder, server.as_ref(), "human_foot_left")
-                                            .id();
-                                    limbs.insert(foot_left);
-                                })
-                                .id();
-                            limbs.insert(leg_left);
-                            let leg_right = spawn_limb(builder, server.as_ref(), "human_leg_right")
-                                .with_children(|builder| {
-                                    let foot_right =
-                                        spawn_limb(builder, server.as_ref(), "human_foot_right")
-                                            .id();
-                                    limbs.insert(foot_right);
-                                })
-                                .id();
-                            limbs.insert(leg_right);
-
-                            let heart = spawn_limb(builder, server.as_ref(), "organic_heart").id();
-                            limbs.insert(heart);
-                            let lung = spawn_limb(builder, server.as_ref(), "organic_lung").id();
-                            limbs.insert(lung);
-                        })
-                        .id();
-                    limbs.insert(torso);
-                });
-                let added_limbs = limbs.iter().copied().collect();
-                creature.insert(Body {
-                    limbs,
-                    added_limbs,
-                    ..Default::default()
-                });
-            }
+        let root = match data.archetype.as_str() {
+            "human" => build_human_creature(&mut commands, server.as_ref(), false),
             _ => todo!(),
-        }
+        };
+        commands
+            .entity(root)
+            .insert(Appearance::new(data.appearance));
 
         bevy::log::info!("Created creature");
-        SpawnCreatureResult {
-            root: creature.id(),
-        }
+        SpawnCreatureResult { root }
     });
 }
 

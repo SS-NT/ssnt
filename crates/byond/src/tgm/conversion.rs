@@ -1,7 +1,17 @@
-use bevy::{math::UVec2, platform::collections::HashMap};
+use bevy::{
+    math::{IVec2, UVec2},
+    platform::collections::HashMap,
+};
 
 use super::{Tile, TileMap, Value};
 use maps::{Direction, TileData, TileMapData, DIRECTIONS};
+
+const DOOR_CONNECTING_TURFS: [&str; 4] = [
+    "tilemap/turfs/wall.bsn",
+    "tilemap/turfs/reinforced wall.bsn",
+    "tilemap/turfs/window.bsn",
+    "tilemap/turfs/reinforced window.bsn",
+];
 
 pub fn to_map_data(tilemap: &TileMap) -> TileMapData {
     let size = tilemap.size();
@@ -64,6 +74,47 @@ pub fn to_map_data(tilemap: &TileMap) -> TileMapData {
         }
     }
 
+    let is_door = |tile: &TileData| {
+        tile.furniture
+            .as_deref()
+            .is_some_and(|f| f.contains("airlock"))
+    };
+    let is_door_connecting = |position: IVec2| {
+        if position.min_element() < 0 || position.x >= size.x as i32 || position.y >= size.y as i32
+        {
+            return false;
+        }
+        temporary_tiles[(position.x + position.y * size.x as i32) as usize]
+            .as_ref()
+            .is_some_and(|tile| {
+                is_door(tile)
+                    || tile
+                        .turf
+                        .as_deref()
+                        .is_some_and(|turf| DOOR_CONNECTING_TURFS.contains(&turf))
+            })
+    };
+    let door_directions: Vec<_> = (0..temporary_tiles.len())
+        .filter(|&index| temporary_tiles[index].as_ref().is_some_and(is_door))
+        .filter_map(|index| {
+            let position = IVec2::new(
+                (index % size.x as usize) as i32,
+                (index / size.x as usize) as i32,
+            );
+            let blocked_on_axis = |direction: Direction| {
+                is_door_connecting(position + IVec2::from(direction))
+                    && is_door_connecting(position - IVec2::from(direction))
+            };
+            (blocked_on_axis(Direction::North) && !blocked_on_axis(Direction::East))
+                .then_some((index, Direction::East))
+        })
+        .collect();
+    for (index, direction) in door_directions {
+        if let Some(tile) = &mut temporary_tiles[index] {
+            tile.furniture_direction = direction;
+        }
+    }
+
     TileMapData {
         size,
         tiles: temporary_tiles
@@ -78,6 +129,7 @@ fn tile_to_data(tile: &Tile) -> TileData {
     TileData {
         turf: get_turf_path(tile),
         furniture: get_furniture_path(tile),
+        furniture_direction: Direction::North,
         high_mounts: get_high_mounts_path(tile),
     }
 }

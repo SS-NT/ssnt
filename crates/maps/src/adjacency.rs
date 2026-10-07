@@ -156,3 +156,18 @@ pub(crate) struct TilemapAdjacency {
     pub category: String,
     pub meshes: AdjacencyVariants<Handle<Mesh>>,
 }
+
+/// Lets tile objects of a category connect to the two sides along this one's local x axis.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+pub(crate) struct AdjacencyConnector {
+    pub category: String,
+}
+
+/// Child of an [`AdjacencyConnector`] that is only visible if something connects on its side.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+pub(crate) struct ConnectorFrame {
+    /// Whether the frame is on the local positive x side
+    pub positive: bool,
+}

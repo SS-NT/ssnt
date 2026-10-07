@@ -1,6 +1,6 @@
 use std::ops::Neg;
 
-use adjacency::{AdjacencyInformation, TilemapAdjacency};
+use adjacency::{AdjacencyConnector, AdjacencyInformation, ConnectorFrame, TilemapAdjacency};
 use arrayvec::ArrayVec;
 use bevy::{
     asset::LoadedFolder,
@@ -207,8 +207,9 @@ pub fn tile_neighbours(position: UVec2) -> impl Iterator<Item = (Direction, UVec
         .map(|(dir, p)| (dir, p.as_uvec2()))
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Direction {
+    #[default]
     North = 0,
     East,
     South,
@@ -348,20 +349,27 @@ impl<T> From<[Option<T>; DIRECTIONS.len()]> for TileLayerData<T> {
 pub struct TileData {
     pub turf: Option<String>,
     pub furniture: Option<String>,
+    pub furniture_direction: Direction,
     pub high_mounts: [Option<String>; 4],
 }
 
 impl TileData {
-    fn layers(&self) -> impl Iterator<Item = (TileLayer, TileLayerData<String>)> {
+    fn layers(&self) -> impl Iterator<Item = (TileLayer, TileLayerData<String>, Direction)> {
         [
-            (TileLayer::Turf, TileLayerData::Single(self.turf.clone())),
+            (
+                TileLayer::Turf,
+                TileLayerData::Single(self.turf.clone()),
+                Direction::North,
+            ),
             (
                 TileLayer::Furniture,
                 TileLayerData::Single(self.furniture.clone()),
+                self.furniture_direction,
             ),
             (
                 TileLayer::HighMount,
                 TileLayerData::Directional(self.high_mounts.clone()),
+                Direction::North,
             ),
         ]
         .into_iter()
@@ -440,6 +448,8 @@ struct TileEntity {
     )]
     tilemap: NetworkVar<Entity>,
     path: NetworkVar<TileEntityPath>,
+    /// Facing of entities in single slot layers
+    direction: NetworkVar<Direction>,
 }
 
 impl TileEntity {
@@ -461,6 +471,7 @@ struct TileEntityClient {
     #[networked(updated = "Self::on_path_update")]
     path: ServerVar<TileEntityPath>,
     old_path: Option<TileEntityPath>,
+    direction: ServerVar<Direction>,
 }
 
 impl TileEntityClient {
@@ -492,7 +503,7 @@ fn spawn_from_data(
             let mut tile_ref = TileReference::default();
 
             // Spawn tile entities for each layer
-            for (layer, layer_data) in tile_data.layers() {
+            for (layer, layer_data, single_direction) in tile_data.layers() {
                 let mut spawn_object =
                     |asset_path, index_in_layer, direction: Direction| -> Entity {
                         let scene = server.load::<ScenePatch>(asset_path);
@@ -517,6 +528,7 @@ fn spawn_from_data(
                                         index_in_layer,
                                     }
                                     .into(),
+                                    direction: direction.into(),
                                 },
                             ))
                             .id();
@@ -526,7 +538,7 @@ fn spawn_from_data(
 
                 match layer_data {
                     TileLayerData::Single(Some(p)) => {
-                        let entity = spawn_object(p, None, Direction::North);
+                        let entity = spawn_object(p, None, single_direction);
                         tile_ref.set(layer, TileLayerData::Single(Some(entity)));
                     }
                     TileLayerData::Directional(paths) => {
@@ -681,9 +693,10 @@ fn client_update_tile_entities(
             new_transform.translation.x += tile_path.position.x as f32;
             new_transform.translation.z += tile_path.position.y as f32;
 
-            let direction: Direction = (tile_path.index_in_layer.unwrap_or_default() as usize)
-                .try_into()
-                .unwrap();
+            let direction: Direction = match tile_path.index_in_layer {
+                Some(i) => (i as usize).try_into().unwrap(),
+                None => tile_entity.direction.get().copied().unwrap_or_default(),
+            };
             // TODO: This will break if object gets moved
             new_transform.rotation *= direction.rotate_around(Vec3::Y);
             commands.entity(entity).insert(new_transform);
@@ -739,65 +752,98 @@ fn client_mark_deleted_tile_entities(
     }
 }
 
+const ADJACENCY_LAYERS: [TileLayer; 2] = [TileLayer::Turf, TileLayer::Furniture];
+
 fn client_update_adjacencies(
     mut tilemaps: Query<&mut TileMapClient>,
     mut adjacents_mut: Query<(&TilemapAdjacency, &mut Mesh3d, &mut Transform)>,
+    mut frames: Query<(&ConnectorFrame, &mut Visibility)>,
     adjacencies: Query<&TilemapAdjacency>,
+    connectors: Query<
+        (&AdjacencyConnector, &Transform, Option<&Children>),
+        Without<TilemapAdjacency>,
+    >,
 ) {
     for mut tilemap in tilemaps.iter_mut() {
         let tilemap = tilemap.as_mut();
-        for (dirty_position, layer) in tilemap.dirty_tiles.drain() {
-            for direction in DIRECTIONS
-                .iter()
-                .copied()
-                .map(IVec2::from)
-                .chain(std::iter::once(IVec2::ZERO))
-            {
-                let position = dirty_position.as_ivec2() + direction;
-                // Check for out-of-bounds
-                if position.min_element() < 0 {
-                    continue;
-                }
+        let positions: HashSet<IVec2> = tilemap
+            .dirty_tiles
+            .drain()
+            .filter(|(_, layer)| ADJACENCY_LAYERS.contains(layer))
+            .flat_map(|(position, _)| {
+                DIRECTIONS
+                    .iter()
+                    .copied()
+                    .map(IVec2::from)
+                    .chain(std::iter::once(IVec2::ZERO))
+                    .map(move |offset| position.as_ivec2() + offset)
+            })
+            .filter(|position| position.min_element() >= 0)
+            .collect();
 
-                let adjacent_tile = match tilemap.tiles.get(&position.as_uvec2()) {
-                    Some(t) => t,
-                    None => continue,
-                };
+        let entities_at = |position: IVec2| {
+            (position.min_element() >= 0)
+                .then(|| tilemap.tiles.get(&position.as_uvec2()))
+                .flatten()
+                .into_iter()
+                .flat_map(|tile| {
+                    ADJACENCY_LAYERS.map(|layer| match tile.get(layer) {
+                        TileLayerData::Single(entity) => entity,
+                        _ => None,
+                    })
+                })
+                .flatten()
+        };
+        let adjacent_at = |position: IVec2, category: &str| {
+            entities_at(position).any(|e| adjacencies.get(e).is_ok_and(|a| a.category == category))
+        };
+        let connects = |position: IVec2, direction: Direction, category: &str| {
+            let target = position + IVec2::from(direction);
+            adjacent_at(target, category)
+                || entities_at(target).any(|e| {
+                    connectors.get(e).is_ok_and(|(c, transform, _)| {
+                        let axis = transform.rotation * Vec3::X;
+                        let direction = IVec2::from(direction).as_vec2();
+                        c.category == category
+                            && Vec2::new(axis.x, axis.z).dot(direction).abs() > 0.5
+                    })
+                })
+        };
 
-                let tile_entity = match adjacent_tile.get(layer) {
-                    TileLayerData::Single(Some(t)) => t,
-                    _ => continue,
-                };
-
-                let (adjacency_settings, mut mesh_handle, mut transform) =
-                    match adjacents_mut.get_mut(tile_entity) {
-                        Ok(q) => q,
-                        Err(_) => continue,
-                    };
-
-                let mut adjacency_info = AdjacencyInformation::default();
-                for direction in DIRECTIONS {
-                    let adjacent_position = position + IVec2::from(direction);
-                    // Check for out-of-bounds
-                    if adjacent_position.min_element() < 0 {
-                        continue;
-                    }
-
-                    if let Some(tile_ref) = tilemap.tiles.get(&adjacent_position.as_uvec2()) {
-                        // TODO: Support cross-layer checks
-                        if let TileLayerData::Single(Some(adjacent_entity)) = tile_ref.get(layer) {
-                            if let Ok(info) = adjacencies.get(adjacent_entity) {
-                                if adjacency_settings.category == info.category {
-                                    adjacency_info.add(direction);
-                                }
-                            }
+        for position in positions {
+            for entity in entities_at(position) {
+                if let Ok((adjacency_settings, mut mesh_handle, mut transform)) =
+                    adjacents_mut.get_mut(entity)
+                {
+                    let mut adjacency_info = AdjacencyInformation::default();
+                    for direction in DIRECTIONS {
+                        if connects(position, direction, &adjacency_settings.category) {
+                            adjacency_info.add(direction);
                         }
                     }
-                }
 
-                let (handle, rotation) = adjacency_settings.meshes.get(adjacency_info);
-                *mesh_handle = Mesh3d(handle);
-                transform.rotation = rotation;
+                    let (handle, rotation) = adjacency_settings.meshes.get(adjacency_info);
+                    *mesh_handle = Mesh3d(handle);
+                    transform.rotation = rotation;
+                } else if let Ok((connector, transform, Some(children))) = connectors.get(entity) {
+                    for child in children {
+                        let Ok((frame, mut visibility)) = frames.get_mut(*child) else {
+                            continue;
+                        };
+                        let side =
+                            transform.rotation * if frame.positive { Vec3::X } else { Vec3::NEG_X };
+                        let direction =
+                            Direction::from(Vec2::new(side.x, side.z).round().as_ivec2());
+                        *visibility = if adjacent_at(
+                            position + IVec2::from(direction),
+                            &connector.category,
+                        ) {
+                            Visibility::Inherited
+                        } else {
+                            Visibility::Hidden
+                        };
+                    }
+                }
             }
         }
     }
@@ -841,6 +887,8 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         app.add_systems(Startup, load_tilemap_assets)
             .register_type::<TilemapAdjacency>()
+            .register_type::<AdjacencyConnector>()
+            .register_type::<ConnectorFrame>()
             .register_type::<adjacency::AdjacencyVariants<Handle<Mesh>>>()
             .add_networked_component::<TileEntity, TileEntityClient>()
             .add_networked_component::<TileMap, TileMapClient>();

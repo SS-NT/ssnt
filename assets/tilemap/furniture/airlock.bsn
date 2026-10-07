@@ -1,1 +1,19 @@
 bevy_mesh::components::Mesh3d("models/tilemap/doors.glb#Primitive:Airlock/0")
+maps::adjacency::AdjacencyConnector {
+    category: "wall",
+}
+bevy_ecs::hierarchy::Children [
+    bevy_transform::components::transform::Transform {
+        translation: glam::Vec3 { x: 1.0, y: 0.0, z: 0.0 },
+        rotation: glam::Quat { x: 0.0, y: -0.70710677, z: 0.0, w: 0.70710677 },
+    }
+    bevy_mesh::components::Mesh3d("models/tilemap/walls windows.glb#Primitive:Door Frame/0")
+    maps::adjacency::ConnectorFrame { positive: true },
+
+    bevy_transform::components::transform::Transform {
+        translation: glam::Vec3 { x: -1.0, y: 0.0, z: 0.0 },
+        rotation: glam::Quat { x: 0.0, y: 0.70710677, z: 0.0, w: 0.70710677 },
+    }
+    bevy_mesh::components::Mesh3d("models/tilemap/walls windows.glb#Primitive:Door Frame/0")
+    maps::adjacency::ConnectorFrame { positive: false },
+]

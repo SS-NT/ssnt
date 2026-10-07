@@ -112,15 +112,15 @@ impl Plugin for BodyPlugin {
                 );
         }
 
-        app.add_plugins((health::HealthPlugin, ghost::GhostPlugin));
-
-        app.insert_resource(BodyAssets {
-            scenes: app
-                .world()
-                .resource::<AssetServer>()
-                .load_folder("creatures"),
-        });
+        app.add_plugins((health::HealthPlugin, ghost::GhostPlugin))
+            .add_systems(Startup, load_assets);
     }
+}
+
+fn load_assets(mut commands: Commands, server: Res<AssetServer>) {
+    commands.insert_resource(BodyAssets {
+        scenes: server.load_folder("creatures"),
+    });
 }
 
 #[derive(Component, Default, Reflect)]

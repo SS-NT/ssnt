@@ -10,6 +10,7 @@ mod config;
 mod construction;
 mod customization;
 mod debug;
+mod doors;
 mod interaction;
 mod items;
 mod job;
@@ -177,7 +178,7 @@ fn main() {
         communication::CommunicationPlugin,
         customization::CustomizationPlugin,
     ))
-    .add_plugins((ui::UiPlugin,))
+    .add_plugins((ui::UiPlugin, doors::DoorPlugin))
     .insert_resource(args)
     .add_systems(Startup, setup_shared)
     .run();

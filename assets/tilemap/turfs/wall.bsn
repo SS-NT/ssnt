@@ -19,5 +19,6 @@ bevy_ecs::hierarchy::Children [
     }
     physics::Collider {
         kind: physics::ColliderType::Cuboid { hx: 0.5, hy: 1.0, hz: 0.5 },
+        group: physics::ColliderGroup::Structures,
     },
 ]

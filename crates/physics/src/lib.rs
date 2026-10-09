@@ -188,20 +188,33 @@ pub enum ColliderGroup {
     Default,
     CharacterColliders,
     AttachedLimbs,
+    /// Static parts of the station like walls
+    Structures,
+    /// Sliding door panels, which pass through structures and other door panels
+    DoorPanels,
 }
 
 pub const DEFAULT_GROUP: Group = Group::GROUP_1;
+pub const CHARACTER_GROUP: Group = Group::GROUP_2;
 pub const LIMB_GROUP: Group = Group::GROUP_3;
+pub const STRUCTURE_GROUP: Group = Group::GROUP_4;
+pub const DOOR_PANEL_GROUP: Group = Group::GROUP_5;
 pub const RAYCASTING_GROUP: Group = Group::GROUP_32;
+
+const DOOR_PANEL_FILTER: Group = Group::ALL
+    .difference(STRUCTURE_GROUP)
+    .difference(DOOR_PANEL_GROUP);
 
 impl From<ColliderGroup> for CollisionGroups {
     fn from(value: ColliderGroup) -> Self {
         match value {
             ColliderGroup::Default => CollisionGroups::new(DEFAULT_GROUP, Group::ALL),
             // Colliders on characters (pushing and blocking)
-            ColliderGroup::CharacterColliders => CollisionGroups::new(Group::GROUP_2, Group::ALL),
+            ColliderGroup::CharacterColliders => CollisionGroups::new(CHARACTER_GROUP, Group::ALL),
             // Limbs attached to bodies collide with raycasts
             ColliderGroup::AttachedLimbs => CollisionGroups::new(LIMB_GROUP, RAYCASTING_GROUP),
+            ColliderGroup::Structures => CollisionGroups::new(STRUCTURE_GROUP, Group::ALL),
+            ColliderGroup::DoorPanels => CollisionGroups::new(DOOR_PANEL_GROUP, DOOR_PANEL_FILTER),
         }
     }
 }
@@ -212,8 +225,10 @@ impl TryFrom<CollisionGroups> for ColliderGroup {
     fn try_from(value: CollisionGroups) -> Result<Self, Self::Error> {
         match (value.memberships, value.filters) {
             (DEFAULT_GROUP, Group::ALL) => Ok(ColliderGroup::Default),
-            (Group::GROUP_2, Group::ALL) => Ok(ColliderGroup::CharacterColliders),
+            (CHARACTER_GROUP, Group::ALL) => Ok(ColliderGroup::CharacterColliders),
             (LIMB_GROUP, RAYCASTING_GROUP) => Ok(ColliderGroup::AttachedLimbs),
+            (STRUCTURE_GROUP, Group::ALL) => Ok(ColliderGroup::Structures),
+            (DOOR_PANEL_GROUP, DOOR_PANEL_FILTER) => Ok(ColliderGroup::DoorPanels),
             _ => {
                 bevy::log::info!("Error converting collision groups {:?}", value);
                 Err(())

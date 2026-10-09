@@ -761,6 +761,12 @@ impl BufferedTransformUpdates {
     }
 }
 
+/// Prevents clients from simulating a networked body to predict interactions or extrapolate gaps.
+/// Use for bodies driven by server-only logic, which a client simulation would get wrong.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+pub struct NoClientSimulation;
+
 /// Marker component for entities allowing movement to be sent from clients.
 #[derive(Component, TypePath, Networked)]
 #[networked(client = "ClientMovementClient")]
@@ -999,7 +1005,7 @@ fn predict_interacted_objects(
             Option<&mut Velocity>,
             Option<&mut VisualError>,
         ),
-        Without<ClientControlled>,
+        (Without<ClientControlled>, Without<NoClientSimulation>),
     >,
     colliders: Query<(&Collider, &GlobalTransform)>,
     child_query: Query<&Children>,
@@ -1202,6 +1208,7 @@ fn sync_networked_transform_physics(
         Has<ClientControlled>,
         Option<&mut VisualError>,
         Option<&RigidBody>,
+        Has<NoClientSimulation>,
     )>,
     parents: Query<&ChildOf>,
     controlled_query: Query<(), With<ClientControlled>>,
@@ -1225,6 +1232,7 @@ fn sync_networked_transform_physics(
         controlled,
         visual_error,
         rigid_body,
+        no_simulation,
     ) in query.iter_mut()
     {
         let was_simulating = networked_transform
@@ -1289,6 +1297,7 @@ fn sync_networked_transform_physics(
                     if gap > GAP_SIMULATE_MIN_TICKS
                         && moving
                         && !controlled
+                        && !no_simulation
                         && !networked_transform.disabled
                         && !networked_transform.frozen
                         && networked_transform.client_body != Some(ClientBody::Dynamic)
@@ -1369,6 +1378,7 @@ fn sync_networked_transform_physics(
             .physics
             .map(|p| p.collider_group != networked_transform.collider_group)
             .unwrap_or_default();
+        let mut current_body = rigid_body.copied();
         if disabled_changed || frozen_changed || collider_group_changed {
             let new_group = collider_group_changed
                 .then(|| snapshot.physics.map(|p| p.collider_group))
@@ -1384,6 +1394,7 @@ fn sync_networked_transform_physics(
                 });
             } else if was_frozen {
                 commands.entity(entity).unfreeze(new_group);
+                current_body = Some(RigidBody::Dynamic);
             } else {
                 commands.queue(SetPhysicsCommand {
                     entity,
@@ -1406,7 +1417,7 @@ fn sync_networked_transform_physics(
         if !controlled
             && !disabled
             && !frozen
-            && rigid_body.copied() != Some(RigidBody::KinematicPositionBased)
+            && current_body != Some(RigidBody::KinematicPositionBased)
         {
             commands
                 .entity(entity)
@@ -1465,6 +1476,7 @@ pub(crate) struct TransformPlugin;
 impl Plugin for TransformPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<NetworkTransform>()
+            .register_type::<NoClientSimulation>()
             .add_networked_component::<ClientMovement, ClientMovementClient>();
 
         if app

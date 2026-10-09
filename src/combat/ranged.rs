@@ -95,7 +95,10 @@ fn shoot_gun(
 
         let filter = QueryFilter::new().groups(CollisionGroups::new(
             physics::RAYCASTING_GROUP,
-            physics::DEFAULT_GROUP | physics::LIMB_GROUP,
+            physics::DEFAULT_GROUP
+                | physics::LIMB_GROUP
+                | physics::STRUCTURE_GROUP
+                | physics::DOOR_PANEL_GROUP,
         ));
         if let Some((hit_entity, toi)) = rapier
             .single()

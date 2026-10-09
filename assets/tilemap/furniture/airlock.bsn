@@ -1,7 +1,7 @@
-bevy_mesh::components::Mesh3d("models/tilemap/doors.glb#Primitive:Airlock/0")
 maps::adjacency::AdjacencyConnector {
     category: "wall",
 }
+ssnt::doors::Door
 bevy_ecs::hierarchy::Children [
     bevy_transform::components::transform::Transform {
         translation: glam::Vec3 { x: 1.0, y: 0.0, z: 0.0 },
@@ -16,4 +16,26 @@ bevy_ecs::hierarchy::Children [
     }
     bevy_mesh::components::Mesh3d("models/tilemap/walls windows.glb#Primitive:Door Frame/0")
     maps::adjacency::ConnectorFrame { positive: false },
+
+    networking::scene::NetworkedChild
+    networking::transform::NetworkTransform
+    networking::transform::NoClientSimulation
+    bevy_transform::components::transform::Transform
+    bevy_mesh::components::Mesh3d("models/tilemap/doors.glb#Primitive:Airlock/0")
+    ssnt::doors::DoorPanel
+    physics::Frozen
+    physics::RigidBody {
+        kind: physics::RigidBodyType::Dynamic,
+    }
+    bevy_rapier3d::dynamics::rigid_body::Velocity
+    bevy_rapier3d::dynamics::rigid_body::ReadMassProperties
+    bevy_ecs::hierarchy::Children [
+        bevy_transform::components::transform::Transform {
+            translation: glam::Vec3 { x: 0.0, y: 0.98, z: 0.0 },
+        }
+        physics::Collider {
+            kind: physics::ColliderType::Cuboid { hx: 0.48, hy: 0.95, hz: 0.13 },
+            group: physics::ColliderGroup::DoorPanels,
+        },
+    ],
 ]

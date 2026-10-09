@@ -23,11 +23,7 @@ impl Plugin for ItemPlugin {
         if !is_server(app) {
             app.add_systems(
                 Update,
-                (
-                    client_initialize_spawned_items,
-                    client_parent_stored_items,
-                    client_update_item_visibility,
-                ),
+                (client_parent_stored_items, client_update_item_visibility),
             );
         }
         app.add_plugins((ContainerPlugin, ClothingPlugin));
@@ -94,13 +90,13 @@ impl StoredItemClient {
 #[derive(Resource)]
 pub struct ItemAssets {
     pub definitions: Handle<LoadedFolder>,
+    #[allow(dead_code)]
     client: Option<ClientItemAssets>,
 }
 
 struct ClientItemAssets {
     #[allow(dead_code)]
     models: Handle<LoadedFolder>,
-    default_material: Handle<StandardMaterial>,
 }
 
 fn load_item_assets(
@@ -110,7 +106,6 @@ fn load_item_assets(
 ) {
     let client_assets = network.is_client().then(|| ClientItemAssets {
         models: server.load_folder("models/items"),
-        default_material: server.load("models/items/wrenches.glb#Material:Palette05/std"),
     });
 
     let assets = ItemAssets {
@@ -118,40 +113,6 @@ fn load_item_assets(
         client: client_assets,
     };
     commands.insert_resource(assets);
-}
-
-// TODO: Remove once scenes support composition
-/// Adds some bundles to spawned tile scenes, so we don't need to specify them every time
-fn client_initialize_spawned_items(
-    new: Query<Entity, Added<Item>>,
-    children_query: Query<&Children>,
-    existing_meshes: Query<
-        (&Mesh3d, Option<&Transform>),
-        Without<MeshMaterial3d<StandardMaterial>>,
-    >,
-    assets: Res<ItemAssets>,
-    mut commands: Commands,
-) {
-    let Some(assets) = assets.client.as_ref() else {
-        return;
-    };
-
-    let mut process_entity = |entity| {
-        if let Ok((mesh, transform)) = existing_meshes.get(entity) {
-            commands.entity(entity).insert((
-                mesh.clone(),
-                MeshMaterial3d(assets.default_material.clone()),
-                transform.cloned().unwrap_or_default(),
-            ));
-        }
-    };
-
-    for root in new.iter() {
-        process_entity(root);
-        for child in children_query.iter_descendants(root) {
-            process_entity(child);
-        }
-    }
 }
 
 fn client_parent_stored_items(

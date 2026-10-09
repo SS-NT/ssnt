@@ -1,6 +1,8 @@
 use std::ops::Neg;
 
-use adjacency::{AdjacencyConnector, AdjacencyInformation, ConnectorFrame, TilemapAdjacency};
+use adjacency::{
+    AdjacencyConnector, AdjacencyInformation, AdjacencyMesh, ConnectorFrame, TilemapAdjacency,
+};
 use arrayvec::ArrayVec;
 use bevy::{
     asset::LoadedFolder,
@@ -622,7 +624,11 @@ impl Command for DespawnTileEntityCommand {
 fn client_initialize_tile_objects(
     new: Query<Entity, Added<TileEntityClient>>,
     children_query: Query<&Children>,
-    existing_meshes: Query<(&Mesh3d, Option<&Transform>)>,
+    existing_meshes: Query<(
+        &Mesh3d,
+        Option<&Transform>,
+        Has<MeshMaterial3d<StandardMaterial>>,
+    )>,
     tile_entities: Query<&TileEntityClient>,
     mut tilemaps: Query<&mut TileMapClient>,
     assets: Res<MapAssets>,
@@ -633,12 +639,12 @@ fn client_initialize_tile_objects(
     };
 
     let mut process_entity = |entity| {
-        if let Ok((mesh, transform)) = existing_meshes.get(entity) {
-            commands.entity(entity).insert((
-                mesh.clone(),
-                MeshMaterial3d(assets.default_material.clone()),
-                transform.cloned().unwrap_or_default(),
-            ));
+        if let Ok((mesh, transform, has_material)) = existing_meshes.get(entity) {
+            let mut entity = commands.entity(entity);
+            entity.insert((mesh.clone(), transform.cloned().unwrap_or_default()));
+            if !has_material {
+                entity.insert(MeshMaterial3d(assets.default_material.clone()));
+            }
         }
     };
 
@@ -756,7 +762,13 @@ const ADJACENCY_LAYERS: [TileLayer; 2] = [TileLayer::Turf, TileLayer::Furniture]
 
 fn client_update_adjacencies(
     mut tilemaps: Query<&mut TileMapClient>,
-    mut adjacents_mut: Query<(&TilemapAdjacency, &mut Mesh3d, &mut Transform)>,
+    mut adjacents_mut: Query<(
+        &TilemapAdjacency,
+        &mut Mesh3d,
+        &mut Transform,
+        Option<&Children>,
+    )>,
+    mut adjacency_meshes: Query<(&AdjacencyMesh, &mut Mesh3d), Without<TilemapAdjacency>>,
     mut frames: Query<(&ConnectorFrame, &mut Visibility)>,
     adjacencies: Query<&TilemapAdjacency>,
     connectors: Query<
@@ -812,7 +824,7 @@ fn client_update_adjacencies(
 
         for position in positions {
             for entity in entities_at(position) {
-                if let Ok((adjacency_settings, mut mesh_handle, mut transform)) =
+                if let Ok((adjacency_settings, mut mesh_handle, mut transform, children)) =
                     adjacents_mut.get_mut(entity)
                 {
                     let mut adjacency_info = AdjacencyInformation::default();
@@ -825,6 +837,13 @@ fn client_update_adjacencies(
                     let (handle, rotation) = adjacency_settings.meshes.get(adjacency_info);
                     *mesh_handle = Mesh3d(handle);
                     transform.rotation = rotation;
+
+                    for child in children.into_iter().flatten() {
+                        if let Ok((child_meshes, mut child_mesh)) = adjacency_meshes.get_mut(*child)
+                        {
+                            *child_mesh = Mesh3d(child_meshes.meshes.get(adjacency_info).0);
+                        }
+                    }
                 } else if let Ok((connector, transform, Some(children))) = connectors.get(entity) {
                     for child in children {
                         let Ok((frame, mut visibility)) = frames.get_mut(*child) else {
@@ -888,6 +907,7 @@ impl Plugin for MapPlugin {
         app.add_systems(Startup, load_tilemap_assets)
             .register_type::<TilemapAdjacency>()
             .register_type::<AdjacencyConnector>()
+            .register_type::<AdjacencyMesh>()
             .register_type::<ConnectorFrame>()
             .register_type::<adjacency::AdjacencyVariants<Handle<Mesh>>>()
             .add_networked_component::<TileEntity, TileEntityClient>()

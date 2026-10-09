@@ -107,6 +107,7 @@ fn main() {
                     "bevy_mesh::components::Mesh3d".to_owned(),
                     "bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>".to_owned(),
                     "maps::adjacency::TilemapAdjacency".to_owned(),
+                    "maps::adjacency::AdjacencyMesh".to_owned(),
                 ]
                 .into_iter()
                 .collect(),

@@ -67,7 +67,7 @@ impl<T> Surrounded<T> {
 }
 
 /// Stores in what directions an object is surrounded.
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct AdjacencyInformation {
     /// Represents a bitfield of the neighbours presence.
     /// Starts at the tile right above and goes clockwise.
@@ -154,6 +154,13 @@ impl AdjacencyInformation {
 pub(crate) struct TilemapAdjacency {
     // TODO: Allow multiple categories to mesh together
     pub category: String,
+    pub meshes: AdjacencyVariants<Handle<Mesh>>,
+}
+
+/// Child of a [`TilemapAdjacency`] whose mesh follows the variant chosen for its parent.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+pub(crate) struct AdjacencyMesh {
     pub meshes: AdjacencyVariants<Handle<Mesh>>,
 }
 

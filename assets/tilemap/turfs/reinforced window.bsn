@@ -13,6 +13,21 @@ maps::adjacency::TilemapAdjacency {
     },
 }
 bevy_ecs::hierarchy::Children [
+    bevy_transform::components::transform::Transform
+    bevy_mesh::components::Mesh3d("models/tilemap/walls windows.glb#Primitive:Reinforced Window O/1")
+    bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/tilemap/walls windows.glb#Material:Palette05 Glass/std")
+    maps::adjacency::AdjacencyMesh {
+        meshes: maps::adjacency::AdjacencyVariants<bevy_asset::handle::Handle<bevy_mesh::mesh::Mesh>> {
+            default: "models/tilemap/walls windows.glb#Primitive:Reinforced Window O/1",
+            o: "models/tilemap/walls windows.glb#Primitive:Reinforced Window O/1",
+            u: "models/tilemap/walls windows.glb#Primitive:Reinforced Window C-1/1",
+            i: "models/tilemap/walls windows.glb#Primitive:Reinforced Window I-1/1",
+            l: "models/tilemap/walls windows.glb#Primitive:Reinforced Window L-1/1",
+            t: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1/1",
+            x: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1/1",
+        },
+    },
+
     bevy_transform::components::transform::Transform {
         translation: glam::Vec3 { x: 0.0, y: 1.0, z: 0.0 },
     }

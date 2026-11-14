@@ -1,7 +1,8 @@
 use std::ops::Neg;
 
 use adjacency::{
-    AdjacencyConnector, AdjacencyInformation, AdjacencyMesh, ConnectorFrame, TilemapAdjacency,
+    AdjacencyConnector, AdjacencyInformation, AdjacencyMesh, AdjacencyMeshTemplate, AdjacencyRules,
+    Connection, ConnectorFrame, TilemapAdjacency,
 };
 use arrayvec::ArrayVec;
 use bevy::{
@@ -768,12 +769,15 @@ fn client_update_adjacencies(
         &mut Transform,
         Option<&Children>,
     )>,
-    mut adjacency_meshes: Query<(&AdjacencyMesh, &mut Mesh3d), Without<TilemapAdjacency>>,
+    mut adjacency_meshes: Query<
+        (&AdjacencyMesh, &mut Mesh3d, &mut Transform),
+        Without<TilemapAdjacency>,
+    >,
     mut frames: Query<(&ConnectorFrame, &mut Visibility)>,
     adjacencies: Query<&TilemapAdjacency>,
     connectors: Query<
         (&AdjacencyConnector, &Transform, Option<&Children>),
-        Without<TilemapAdjacency>,
+        (Without<TilemapAdjacency>, Without<AdjacencyMesh>),
     >,
 ) {
     for mut tilemap in tilemaps.iter_mut() {
@@ -806,42 +810,48 @@ fn client_update_adjacencies(
                 })
                 .flatten()
         };
-        let adjacent_at = |position: IVec2, category: &str| {
-            entities_at(position).any(|e| adjacencies.get(e).is_ok_and(|a| a.category == category))
-        };
-        let connects = |position: IVec2, direction: Direction, category: &str| {
+        let connects = |position: IVec2, direction: Direction, rules: &AdjacencyRules| {
             let target = position + IVec2::from(direction);
-            adjacent_at(target, category)
-                || entities_at(target).any(|e| {
-                    connectors.get(e).is_ok_and(|(c, transform, _)| {
-                        let axis = transform.rotation * Vec3::X;
-                        let direction = IVec2::from(direction).as_vec2();
-                        c.category == category
-                            && Vec2::new(axis.x, axis.z).dot(direction).abs() > 0.5
-                    })
-                })
+            entities_at(target).find_map(|e| {
+                if let Ok(other) = adjacencies.get(e) {
+                    return rules.connection(&other.0.category, &other.0.connects_to);
+                }
+                let (connector, transform, _) = connectors.get(e).ok()?;
+                let axis = transform.rotation * Vec3::X;
+                let direction = IVec2::from(direction).as_vec2();
+                if Vec2::new(axis.x, axis.z).dot(direction).abs() > 0.5 {
+                    rules.connection(&connector.category, &[])
+                } else {
+                    None
+                }
+            })
         };
 
         for position in positions {
             for entity in entities_at(position) {
-                if let Ok((adjacency_settings, mut mesh_handle, mut transform, children)) =
+                if let Ok((adjacency, mut mesh_handle, mut transform, children)) =
                     adjacents_mut.get_mut(entity)
                 {
                     let mut adjacency_info = AdjacencyInformation::default();
                     for direction in DIRECTIONS {
-                        if connects(position, direction, &adjacency_settings.category) {
-                            adjacency_info.add(direction);
+                        match connects(position, direction, &adjacency.0) {
+                            Some(Connection::Seamless) => adjacency_info.add(direction),
+                            Some(Connection::Capped) => adjacency_info.add_capped(direction),
+                            None => {}
                         }
                     }
 
-                    let (handle, rotation) = adjacency_settings.meshes.get(adjacency_info);
+                    let (handle, rotation) = adjacency.0.meshes.get(adjacency_info);
                     *mesh_handle = Mesh3d(handle);
                     transform.rotation = rotation;
 
                     for child in children.into_iter().flatten() {
-                        if let Ok((child_meshes, mut child_mesh)) = adjacency_meshes.get_mut(*child)
+                        if let Ok((child_meshes, mut child_mesh, mut child_transform)) =
+                            adjacency_meshes.get_mut(*child)
                         {
-                            *child_mesh = Mesh3d(child_meshes.meshes.get(adjacency_info).0);
+                            let (handle, child_rotation) = child_meshes.0.get(adjacency_info);
+                            *child_mesh = Mesh3d(handle);
+                            child_transform.rotation = rotation.inverse() * child_rotation;
                         }
                     }
                 } else if let Ok((connector, transform, Some(children))) = connectors.get(entity) {
@@ -853,10 +863,12 @@ fn client_update_adjacencies(
                             transform.rotation * if frame.positive { Vec3::X } else { Vec3::NEG_X };
                         let direction =
                             Direction::from(Vec2::new(side.x, side.z).round().as_ivec2());
-                        *visibility = if adjacent_at(
-                            position + IVec2::from(direction),
-                            &connector.category,
-                        ) {
+                        let connected = entities_at(position + IVec2::from(direction)).any(|e| {
+                            adjacencies.get(e).is_ok_and(|other| {
+                                other.0.connection(&connector.category, &[]).is_some()
+                            })
+                        });
+                        *visibility = if connected {
                             Visibility::Inherited
                         } else {
                             Visibility::Hidden
@@ -907,7 +919,9 @@ impl Plugin for MapPlugin {
         app.add_systems(Startup, load_tilemap_assets)
             .register_type::<TilemapAdjacency>()
             .register_type::<AdjacencyConnector>()
+            .register_type::<AdjacencyRules>()
             .register_type::<AdjacencyMesh>()
+            .register_type::<AdjacencyMeshTemplate>()
             .register_type::<ConnectorFrame>()
             .register_type::<adjacency::AdjacencyVariants<Handle<Mesh>>>()
             .add_networked_component::<TileEntity, TileEntityClient>()

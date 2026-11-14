@@ -1,15 +1,48 @@
 bevy_transform::components::transform::Transform
 bevy_mesh::components::Mesh3d("models/tilemap/walls windows.glb#Primitive:Reinforced Window O/0")
 maps::adjacency::TilemapAdjacency {
-    category: "wall",
-    meshes: maps::adjacency::AdjacencyVariants<bevy_asset::handle::Handle<bevy_mesh::mesh::Mesh>> {
-        default: "models/tilemap/walls windows.glb#Primitive:Reinforced Window O/0",
-        o: "models/tilemap/walls windows.glb#Primitive:Reinforced Window O/0",
-        u: "models/tilemap/walls windows.glb#Primitive:Reinforced Window C-1/0",
-        i: "models/tilemap/walls windows.glb#Primitive:Reinforced Window I-1/0",
-        l: "models/tilemap/walls windows.glb#Primitive:Reinforced Window L-1/0",
-        t: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1/0",
-        x: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1/0",
+    category: "reinforced window",
+    connects_to: ["wall"],
+    meshes: maps::adjacency::AdjacencyMeshes {
+        variants: maps::adjacency::AdjacencyVariants<bevy_asset::handle::Handle<bevy_mesh::mesh::Mesh>> {
+            default: "models/tilemap/walls windows.glb#Primitive:Reinforced Window O/0",
+            o: "models/tilemap/walls windows.glb#Primitive:Reinforced Window O/0",
+            u: "models/tilemap/walls windows.glb#Primitive:Reinforced Window C-1/0",
+            i: "models/tilemap/walls windows.glb#Primitive:Reinforced Window I-1/0",
+            l: "models/tilemap/walls windows.glb#Primitive:Reinforced Window L-1/0",
+            t: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1/0",
+            x: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1/0",
+        },
+        capped: maps::adjacency::CappedVariants {
+            u: [
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window C-1B/0" },
+            ],
+            i: [
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window I-1C/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true, south: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window I-1B/0" },
+            ],
+            l: [
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window L-1B/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { east: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window L-1C/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true, east: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window L-1D/0" },
+            ],
+            t: [
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { west: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1B/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1C/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { east: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1D/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { west: true, north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1E/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { east: true, west: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1F/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { east: true, north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1G/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { east: true, west: true, north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1H/0" },
+            ],
+            x: [
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { west: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1B/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { west: true, north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1C/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { east: true, west: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1D/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { west: true, north: true, south: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1E/0" },
+                maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true, east: true, south: true, west: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1F/0" },
+            ],
+        },
     },
 }
 bevy_ecs::hierarchy::Children [
@@ -17,14 +50,46 @@ bevy_ecs::hierarchy::Children [
     bevy_mesh::components::Mesh3d("models/tilemap/walls windows.glb#Primitive:Reinforced Window O/1")
     bevy_pbr::mesh_material::MeshMaterial3d<bevy_pbr::pbr_material::StandardMaterial>("models/tilemap/walls windows.glb#Material:Palette05 Glass/std")
     maps::adjacency::AdjacencyMesh {
-        meshes: maps::adjacency::AdjacencyVariants<bevy_asset::handle::Handle<bevy_mesh::mesh::Mesh>> {
-            default: "models/tilemap/walls windows.glb#Primitive:Reinforced Window O/1",
-            o: "models/tilemap/walls windows.glb#Primitive:Reinforced Window O/1",
-            u: "models/tilemap/walls windows.glb#Primitive:Reinforced Window C-1/1",
-            i: "models/tilemap/walls windows.glb#Primitive:Reinforced Window I-1/1",
-            l: "models/tilemap/walls windows.glb#Primitive:Reinforced Window L-1/1",
-            t: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1/1",
-            x: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1/1",
+        meshes: maps::adjacency::AdjacencyMeshes {
+            variants: maps::adjacency::AdjacencyVariants<bevy_asset::handle::Handle<bevy_mesh::mesh::Mesh>> {
+                default: "models/tilemap/walls windows.glb#Primitive:Reinforced Window O/1",
+                o: "models/tilemap/walls windows.glb#Primitive:Reinforced Window O/1",
+                u: "models/tilemap/walls windows.glb#Primitive:Reinforced Window C-1/1",
+                i: "models/tilemap/walls windows.glb#Primitive:Reinforced Window I-1/1",
+                l: "models/tilemap/walls windows.glb#Primitive:Reinforced Window L-1/1",
+                t: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1/1",
+                x: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1/1",
+            },
+            capped: maps::adjacency::CappedVariants {
+                u: [
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window C-1B/1" },
+                ],
+                i: [
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window I-1C/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true, south: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window I-1B/1" },
+                ],
+                l: [
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window L-1B/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { east: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window L-1C/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true, east: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window L-1D/1" },
+                ],
+                t: [
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { west: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1B/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1C/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { east: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1D/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { west: true, north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1E/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { east: true, west: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1F/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { east: true, north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1G/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { east: true, west: true, north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window T-1H/1" },
+                ],
+                x: [
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { west: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1B/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { west: true, north: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1C/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { east: true, west: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1D/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { west: true, north: true, south: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1E/1" },
+                    maps::adjacency::CappedMesh { caps: maps::adjacency::Sides { north: true, east: true, south: true, west: true }, mesh: "models/tilemap/walls windows.glb#Primitive:Reinforced Window X-1F/1" },
+                ],
+            },
         },
     },
 

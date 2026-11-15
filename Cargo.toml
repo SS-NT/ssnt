@@ -15,6 +15,7 @@ bevy_rapier3d = { path = "../bevy_rapier/bevy_rapier3d" }
 [features]
 default = ["client"]
 client = ["bevy/gltf_animation", "bevy/bevy_audio", "bevy/bevy_gilrs", "bevy/bevy_winit", "bevy/x11", "bevy/vorbis"]
+profile = ["bevy/trace_chrome"]
 
 [dependencies]
 byond = { path = "crates/byond" }

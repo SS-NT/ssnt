@@ -1,6 +1,7 @@
 bevy_transform::components::transform::Transform
 ssnt::construction::WrenchDeconstructable
 bevy_mesh::components::Mesh3d("models/tilemap/walls windows.glb#Primitive:Wall O/0")
+ssnt::scene::ShadowCaster
 maps::adjacency::TilemapAdjacency {
     category: "wall",
     meshes: maps::adjacency::AdjacencyMeshes {

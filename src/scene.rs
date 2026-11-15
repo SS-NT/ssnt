@@ -1,6 +1,11 @@
 use bevy::{asset::AssetApp, light::NotShadowCaster, prelude::*};
 use networking::is_client;
 
+/// Opts a mesh entity into casting shadows. Meshes without it get [`NotShadowCaster`] on the client.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+pub struct ShadowCaster;
+
 #[derive(Resource)]
 struct ClientSceneAssets {
     default_material: Handle<StandardMaterial>,
@@ -13,18 +18,22 @@ fn initialize_scene_meshes(
             Entity,
             Has<MeshMaterial3d<StandardMaterial>>,
             Has<Visibility>,
+            Has<ShadowCaster>,
         ),
         Added<Mesh3d>,
     >,
     assets: Res<ClientSceneAssets>,
 ) {
-    for (entity, has_material, has_visibility) in &new_meshes {
+    for (entity, has_material, has_visibility, casts_shadows) in &new_meshes {
         let mut entity = commands.entity(entity);
         if !has_material {
             entity.insert(MeshMaterial3d(assets.default_material.clone()));
         }
         if !has_visibility {
             entity.insert(Visibility::default());
+        }
+        if !casts_shadows {
+            entity.insert(NotShadowCaster);
         }
     }
 }
@@ -46,6 +55,7 @@ impl Plugin for ScenePlugin {
             .register_type::<Visibility>()
             .register_type::<PointLight>()
             .register_type::<NotShadowCaster>()
+            .register_type::<ShadowCaster>()
             .register_type::<Transform>()
             .register_type::<GlobalTransform>()
             .register_type::<Vec3>()

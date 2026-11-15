@@ -10,7 +10,8 @@ bevy_ecs::hierarchy::Children [
     bevy_ecs::hierarchy::Children [
         bevy_transform::components::transform::Transform
         bevy_light::point_light::PointLight {
-            shadow_maps_enabled: false,
+            range: 10.0,
+            shadow_maps_enabled: true,
         }
         bevy_camera::visibility::Visibility::Inherited,
     ],

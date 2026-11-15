@@ -158,6 +158,13 @@ fn main() {
             .add_systems(Startup, setup_client)
             .add_systems(Update, (set_camera_target, clean_entities_on_disconnect))
             .init_state::<GameState>();
+
+            #[cfg(all(feature = "client", feature = "profile"))]
+            app.add_plugins((
+                bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
+                bevy::render::diagnostic::RenderDiagnosticsPlugin,
+                bevy::diagnostic::LogDiagnosticsPlugin::default(),
+            ));
             #[cfg(not(feature = "client"))]
             panic!("Compiled without client support");
         }
@@ -276,6 +283,7 @@ fn setup_client(
         brightness: 0.1,
         ..Default::default()
     });
+    commands.insert_resource(bevy::light::PointLightShadowMap { size: 512 });
 
     let temporary_camera_target = commands.spawn(GlobalTransform::default()).id();
 
